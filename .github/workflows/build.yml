@@ -71,7 +71,9 @@ jobs:
             examples/rust-cart
 
       # souther-compiler comes from Maven Central at the release pom.xml's `souther.version` names.
-      - run: mvn --batch-mode test
+      # Through verify and not test: the launcher's tests run the generators' jars, which the reactor
+      # packs before it, as the command runs any generator's jar.
+      - run: mvn --batch-mode verify
 
       # What an application does, with no Java calling the API: the command line builds a library
       # and its binding, Composer installs the runtime from its path, and PHP calls the library.
@@ -115,6 +117,11 @@ jobs:
       # The same cart from Go, over raoh-go and SQLite, and what the Go runtime refuses where Rust's
       # types do.
       - run: scripts/go-cart-example.sh
+
+      # The testkit on the path a released one takes, rehearsed for this platform: a project with the
+      # API and the testkit of a publication and nothing of this clone builds a library and tests a
+      # generator. release.yml runs the same acceptance on the publication it is about to release.
+      - run: scripts/testkit-rehearsal.sh
 
   # Every souther issue this repository names is a premise that the pinned souther does not yet
   # answer it, and the code around the reference works around the gap. A premise the pin has

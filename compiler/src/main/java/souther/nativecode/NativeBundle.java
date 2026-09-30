@@ -25,6 +25,10 @@ import java.util.zip.ZipInputStream;
  * SHA-256 this compiler was released with, since a release asset is not something that cannot be
  * replaced; and holds exactly those three files, so that an archive that names a path outside its own
  * directory cannot write there.
+ *
+ * <p>The bundle as it was fetched is kept beside what was unpacked from it, and a kept driver is used
+ * only where the kept bundle still matches the checksum and the three files are still what it holds.
+ * Anything else is taken as not kept: fetched again, or refused offline.
  */
 final class NativeBundle {
 
@@ -32,6 +36,9 @@ final class NativeBundle {
     static final String ARCHIVE = "libsouther_native_runtime.a";
     static final String REQUIREMENTS = "libsouther_native_runtime.link";
     private static final Set<String> FILES = Set.of(DRIVER, ARCHIVE, REQUIREMENTS);
+
+    /** The bundle as it was fetched, kept beside what was unpacked from it. */
+    static final String KEPT = "bundle.zip";
 
     /**
      * The platforms a release publishes a bundle for, which the release workflow builds and
@@ -67,17 +74,23 @@ final class NativeBundle {
         String version = fetching.release();
         String platform = platform();
         Path dir = fetching.cache().resolve("native").resolve(version).resolve(platform);
-        if (kept(dir)) {
-            return dir.resolve(DRIVER);
-        }
-        if (fetching.offline()) {
-            throw new NotFetched("the driver for " + platform + " " + version
-                    + " is not kept, and this is offline");
-        }
         String expected = fetching.checksums().get(ReleaseChecksums.bundle(platform));
         if (expected == null) {
             throw new NotFetched("this compiler was released with no checksum for the driver for "
                     + platform + ", so it will not take one");
+        }
+        try {
+            if (kept(dir, expected)) {
+                return dir.resolve(DRIVER);
+            }
+            // What is there is not what was fetched: never run, and asked for again.
+            delete(dir);
+        } catch (IOException e) {
+            throw new NotFetched("could not read the kept driver in " + dir + ": " + e.getMessage(), e);
+        }
+        if (fetching.offline()) {
+            throw new NotFetched("the driver for " + platform + " " + version
+                    + " is not kept, and this is offline");
         }
         String base = fetching.releases().toString().replaceAll("/+$", "");
         URI bundle = URI.create(base + "/v" + version + "/souther-native-" + version + "-"
@@ -97,7 +110,8 @@ final class NativeBundle {
             Path staging = Files.createTempDirectory(dir.getParent(), platform + ".partial");
             try {
                 unpack(bytes, staging);
-                place(staging, dir);
+                Files.write(staging.resolve(KEPT), bytes);
+                place(staging, dir, expected);
             } finally {
                 delete(staging);
             }
@@ -109,9 +123,33 @@ final class NativeBundle {
         return dir.resolve(DRIVER);
     }
 
-    private static boolean kept(Path dir) {
-        return Files.isExecutable(dir.resolve(DRIVER)) && Files.isRegularFile(dir.resolve(ARCHIVE))
-                && Files.isRegularFile(dir.resolve(REQUIREMENTS));
+    /**
+     * Whether {@code dir} holds a bundle whose SHA-256 is {@code expected}, unpacked into exactly the
+     * three files it holds, each as it holds it.
+     */
+    private static boolean kept(Path dir, String expected) throws IOException {
+        Path bundle = dir.resolve(KEPT);
+        if (!Files.isRegularFile(bundle) || !Files.isExecutable(dir.resolve(DRIVER))) {
+            return false;
+        }
+        byte[] bytes = Files.readAllBytes(bundle);
+        if (!Fetching.sha256(bytes).equals(expected)) {
+            return false;
+        }
+        Set<String> seen = new HashSet<>();
+        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(bytes))) {
+            for (ZipEntry entry = zip.getNextEntry(); entry != null; entry = zip.getNextEntry()) {
+                Path file = dir.resolve(entry.getName());
+                if (!FILES.contains(entry.getName()) || !seen.add(entry.getName())
+                        || !Files.isRegularFile(file)
+                        || !java.util.Arrays.equals(Files.readAllBytes(file), zip.readAllBytes())) {
+                    return false;
+                }
+            }
+        }
+        try (Stream<Path> held = Files.list(dir)) {
+            return seen.equals(FILES) && held.count() == FILES.size() + 1;
+        }
     }
 
     private static void unpack(byte[] bundle, Path into) throws IOException {
@@ -135,11 +173,11 @@ final class NativeBundle {
     }
 
     /** Puts what was unpacked where it is kept, in one move, unless another command already did. */
-    private static void place(Path staging, Path dir) throws IOException {
+    private static void place(Path staging, Path dir, String expected) throws IOException {
         try {
             Files.move(staging, dir, StandardCopyOption.ATOMIC_MOVE);
         } catch (FileAlreadyExistsException | DirectoryNotEmptyException e) {
-            if (!kept(dir)) {
+            if (!kept(dir, expected)) {
                 throw e;
             }
         } catch (AtomicMoveNotSupportedException e) {

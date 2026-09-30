@@ -12,11 +12,6 @@ import java.util.Map;
 public final class RustBindingGenerator implements BindingGenerator {
 
     @Override
-    public String id() {
-        return "rust";
-    }
-
-    @Override
     public void preflight(Map<String, String> options) {
         RustBindings.refuseAhead(crate(options));
     }
@@ -28,6 +23,12 @@ public final class RustBindingGenerator implements BindingGenerator {
     }
 
     private static String crate(Map<String, String> options) {
+        for (String key : options.keySet()) {
+            if (!key.equals("crate")) {
+                throw new NotBindable("the Rust binding takes no option \"" + key + "\"; it takes"
+                        + " crate");
+            }
+        }
         String crate = options.get("crate");
         if (crate == null) {
             throw new NotBindable("--rust wants --crate, the name of the crate the binding is");

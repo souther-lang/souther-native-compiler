@@ -1,10 +1,12 @@
 package souther.bindings.rust;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.nativecode.Generated;
-import souther.nativecode.Checked;
-import souther.nativecode.NativeCompiler;
+
+
 
 import java.nio.file.Path;
 import java.util.List;
@@ -87,8 +89,8 @@ class ARustHostHandsOverAndReadsBackAListTest {
 
     @Test
     void aListIsASliceHandedOverAndAVecHandedBack(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library =
-                NativeCompiler.library(Checked.of(List.of(CART)), into.resolve("native"));
+        TestLibrary library =
+                SoutherBindingTest.compile(into.resolve("native"), CART);
         Generated binding =
                 RustHost.generated(library, into.resolve("binding"), "cart-binding");
 

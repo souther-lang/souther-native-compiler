@@ -1,16 +1,29 @@
 #!/usr/bin/env bash
 # The command as a clone runs it, from wherever the caller is: builds what it needs (the launcher
-# and the modules under it, and the Rust driver the compiler hands a program to), then runs it with
-# the arguments given. Every caller in this repository runs the command through this, so how a clone
-# starts it is written once.
+# and the modules under it, the jars of the generators, and the Rust driver the compiler hands a
+# program to), then runs it with the arguments given. Every caller in this repository runs the
+# command through this, so how a clone starts it is written once.
 #
 # Its paths are read from the directory it is run in, and it ends with what the command ends with.
-# The driver is named by its place in the clone, since that is not where the caller is.
+# The driver and each generator's jar are named by their place in the clone, since that is not where
+# the caller is. The generators are not on the class path: the command loads each jar it is handed as
+# it loads any generator's, and a clone's build is not a release, so it reads these names.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
-mvn --batch-mode --quiet -f "$root/pom.xml" -pl launcher -am process-classes >&2
+mvn --batch-mode --quiet -f "$root/pom.xml" -pl launcher -am package -DskipTests >&2
+
+# Each generator's jar, which the launcher's build wrote down, named for the command by its id.
+generators=()
+IFS=':' read -r -a jars <<< "$(cat "$root/launcher/target/generators.txt")"
+for jar in "${jars[@]}"; do
+    name="$(basename "$jar")"
+    id="${name#souther-binding-}"
+    id="${id%%-*}"
+    generators+=("-Dsouther.generator.$id=$jar")
+done
 
 exec java "-Dsouther.native.driver=$root/native/target/debug/souther-native-driver" \
+    "${generators[@]}" \
     -cp "$(cat "$root/launcher/target/runtime-classpath.txt")" souther.nativecode.Main "$@"

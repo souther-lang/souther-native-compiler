@@ -1,10 +1,12 @@
 package souther.bindings.rust;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.nativecode.Generated;
-import souther.nativecode.Checked;
-import souther.nativecode.NativeCompiler;
+
+
 
 import java.nio.file.Path;
 import java.util.List;
@@ -174,8 +176,8 @@ class ARustHostCallsALibraryThroughItsBindingTest {
 
     @Test
     void aRustApplicationUsesTheModelThroughItsGeneratedCrate(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library =
-                NativeCompiler.library(Checked.of(List.of(SHOP)), into.resolve("native"));
+        TestLibrary library =
+                SoutherBindingTest.compile(into.resolve("native"), SHOP);
         Generated binding = RustHost.generated(library, into.resolve("acme"), "acme");
 
         String said = RustHost.ran(into, binding, "acme", HOST,

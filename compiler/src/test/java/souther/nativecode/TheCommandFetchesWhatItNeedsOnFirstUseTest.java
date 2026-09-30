@@ -119,8 +119,34 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             assertThat(into.resolve("second/out/fetched.txt")).exists();
             assertThat(served.asked).as("the jar is asked for once, and nothing beside it")
                     .containsOnlyKeys(JAR).containsEntry(JAR, 1);
-            assertThat(into.resolve("cache/generators/souther-binding-php-" + VERSION + ".jar"))
-                    .exists();
+            assertThat(kept(into, "php", checksums.get(ReleaseChecksums.generator("php"))))
+                    .as("kept under its coordinate and its digest").exists();
+        }
+    }
+
+    /**
+     * A kept jar is hashed again each time it is used: one that no longer matches is never run, and is
+     * fetched again, or refused where the command is offline.
+     */
+    @Test
+    void aKeptJarThatNoLongerMatchesIsFetchedAgainOrRefusedOffline(@TempDir Path into)
+            throws Exception {
+        try (Served served = new Served()) {
+            Map<String, String> checksums = served.serveGenerator();
+            Fetching fetching = fetching(served, into.resolve("cache"), VERSION, checksums);
+            Path kept = kept(into, "php", checksums.get(ReleaseChecksums.generator("php")));
+
+            assertThat(build(into, "first", fetching).ended()).isZero();
+            Files.write(kept, bytes("changed where it was kept"));
+            Ran offline = build(into, "offline", fetching, "--offline");
+            Ran again = build(into, "again", fetching);
+
+            assertThat(offline.ended()).isEqualTo(2);
+            assertThat(offline.said()).contains("is not kept, and this is offline");
+            assertThat(again.ended()).as(again.said()).isZero();
+            assertThat(served.asked).containsEntry(JAR, 2);
+            assertThat(Fetching.sha256(Files.readAllBytes(kept)))
+                    .isEqualTo(checksums.get(ReleaseChecksums.generator("php")));
         }
     }
 
@@ -133,9 +159,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     void aJarThatProvidesNoGeneratorIsTheFetchesRefusalAndNoGeneratorsFailure(@TempDir Path into)
             throws Exception {
         try (Served served = new Served()) {
-            ByteArrayOutputStream empty = new ByteArrayOutputStream();
-            new JarOutputStream(empty).close();
-            byte[] jar = empty.toByteArray();
+            byte[] jar = GeneratorJar.providing("php").bytes();
             served.files.put(JAR, jar);
             Map<String, String> checksums =
                     Map.of(ReleaseChecksums.generator("php"), Fetching.sha256(jar));
@@ -143,7 +167,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             Ran ran = build(into, "built", fetching(served, into.resolve("cache"), VERSION, checksums));
 
             assertThat(ran.ended()).as(ran.said()).isEqualTo(2);
-            assertThat(ran.said()).contains("provides no generator for \"php\"")
+            assertThat(ran.said()).contains("provides 0 generators")
                     .doesNotContain("generator failed");
         }
     }
@@ -164,7 +188,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             Ran ran = build(into, "built", fetching(served, into.resolve("cache"), VERSION, checksums));
 
             assertThat(ran.ended()).isEqualTo(2);
-            assertThat(ran.said()).contains("does not match the checksum this compiler was released with");
+            assertThat(ran.said()).contains("does not match the SHA-256 it was named with");
             Path generators = into.resolve("cache/generators");
             assertThat(Files.exists(generators) ? list(generators) : List.<Path>of())
                     .as("nothing is kept").isEmpty();
@@ -197,7 +221,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
 
             assertThat(nothingKept.ended()).isEqualTo(2);
             assertThat(nothingKept.said()).contains("offline")
-                    .contains("org.souther-lang:souther-binding-php");
+                    .contains("org.souther-lang:souther-binding-php:" + VERSION);
             assertThat(served.asked).as("offline asked for nothing, and the fetch once")
                     .containsEntry(JAR, 1);
             assertThat(fetched.ended()).as(fetched.said()).isZero();
@@ -225,12 +249,12 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     void fetchWritesNothingButFetchesWhatIsMissing(@TempDir Path into) throws Exception {
         try (Served served = new Served()) {
             Map<String, String> checksums = new java.util.HashMap<>(served.serveGenerator());
-            byte[] rust = "a jar".getBytes(StandardCharsets.UTF_8);
+            byte[] rust = bytes("a jar");
             String rustJar = "/maven/org/souther-lang/souther-binding-rust/" + VERSION
                     + "/souther-binding-rust-" + VERSION + ".jar";
             served.files.put(rustJar, rust);
             checksums.put(ReleaseChecksums.generator("rust"), Fetching.sha256(rust));
-            byte[] go = "a jar of Go".getBytes(StandardCharsets.UTF_8);
+            byte[] go = bytes("a jar of Go");
             served.files.put("/maven/org/souther-lang/souther-binding-go/" + VERSION
                     + "/souther-binding-go-" + VERSION + ".jar", go);
             checksums.put(ReleaseChecksums.generator("go"), Fetching.sha256(go));
@@ -241,9 +265,9 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             assertThat(ran.printed()).contains("the driver is this build's own")
                     .contains("the PHP generator").contains("the Rust generator")
                     .contains("the Go generator");
-            assertThat(into.resolve("cache/generators/souther-binding-php-" + VERSION + ".jar")).exists();
-            assertThat(into.resolve("cache/generators/souther-binding-rust-" + VERSION + ".jar")).exists();
-            assertThat(into.resolve("cache/generators/souther-binding-go-" + VERSION + ".jar")).exists();
+            for (String id : List.of("php", "rust", "go")) {
+                assertThat(kept(into, id, checksums.get(ReleaseChecksums.generator(id)))).exists();
+            }
         }
     }
 
@@ -270,6 +294,30 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             assertThat(driver.resolveSibling(NativeBundle.ARCHIVE)).hasContent("archive");
             assertThat(driver.resolveSibling(NativeBundle.REQUIREMENTS)).hasContent("-lm\n");
             assertThat(served.asked).containsEntry(bundleAt(), 1);
+        }
+    }
+
+    /**
+     * A kept driver is used only where the bundle it was unpacked from still matches the checksum and
+     * it is still what the bundle holds: one changed where it was kept is fetched again.
+     */
+    @Test
+    void aKeptDriverThatIsNotWhatWasFetchedIsFetchedAgain(@TempDir Path into) throws Exception {
+        try (Served served = new Served()) {
+            byte[] bundle = bundle(Map.of(NativeBundle.DRIVER, "#!/bin/sh\n",
+                    NativeBundle.ARCHIVE, "archive", NativeBundle.REQUIREMENTS, "-lm\n"));
+            Fetching fetching = releasedWith(served, into, bundle);
+            served.files.put(bundleAt(), bundle);
+
+            Path driver = NativeBundle.locate(fetching);
+            Files.writeString(driver, "#!/bin/sh\necho replaced\n");
+            NativeBundle.locate(fetching);
+            assertThat(driver).hasContent("#!/bin/sh\n");
+            Files.write(driver.resolveSibling(NativeBundle.KEPT), bytes("not the bundle"));
+            NativeBundle.locate(fetching);
+
+            assertThat(served.asked).containsEntry(bundleAt(), 3);
+            assertThat(NativeBundle.locate(fetching.withOffline(true))).isEqualTo(driver);
         }
     }
 
@@ -453,12 +501,17 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
         return run(fetching, command);
     }
 
-    private static Ran run(Fetching fetching, String... command) throws NotInstalled {
+    /** Where the jar of the {@code id} generator of this release, whose digest is {@code sha256}, is kept. */
+    private static Path kept(Path into, String id, String sha256) {
+        return into.resolve("cache/generators/org/souther-lang/souther-binding-" + id + "/" + VERSION
+                + "/" + sha256 + ".jar");
+    }
+
+    private static Ran run(Fetching fetching, String... command) {
         ByteArrayOutputStream printed = new ByteArrayOutputStream();
         ByteArrayOutputStream said = new ByteArrayOutputStream();
         int ended = Main.run(command, new PrintStream(printed, true, StandardCharsets.UTF_8),
-                new PrintStream(said, true, StandardCharsets.UTF_8), Bindings.of(List.of()),
-                fetching);
+                new PrintStream(said, true, StandardCharsets.UTF_8), fetching);
         return new Ran(ended, printed.toString(StandardCharsets.UTF_8),
                 said.toString(StandardCharsets.UTF_8));
     }
@@ -487,18 +540,6 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
 
     /** A jar of the generator a test serves, found the way a real one is: through its service file. */
     private static byte[] jar() throws IOException {
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (JarOutputStream jar = new JarOutputStream(out)) {
-            jar.putNextEntry(new JarEntry("META-INF/services/souther.bindings.BindingGenerator"));
-            jar.write(bytes(FetchedGenerator.class.getName() + "\n"));
-            jar.closeEntry();
-            String entry = FetchedGenerator.class.getName().replace('.', '/') + ".class";
-            jar.putNextEntry(new JarEntry(entry));
-            try (InputStream in = FetchedGenerator.class.getClassLoader().getResourceAsStream(entry)) {
-                jar.write(in.readAllBytes());
-            }
-            jar.closeEntry();
-        }
-        return out.toByteArray();
+        return GeneratorJar.of("php", FetchedGenerator.class).bytes();
     }
 }

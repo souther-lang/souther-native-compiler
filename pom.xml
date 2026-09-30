@@ -51,11 +51,18 @@
              release workflow's first pass, which builds the generators whose checksums are to be
              written into the compiler, and throws that compiler away. -->
         <souther.skipReleaseCheck>false</souther.skipReleaseCheck>
+        <!-- What the standard generators' jars say they are compatible with (BindingApi): the major of
+             souther-bindings-api they are compiled against, and the ABI generations the code they write
+             is for. Held to BindingApi.MAJOR and ManifestReader.ABI by the launcher's tests, which load
+             the jars as the command does and are refused otherwise. -->
+        <souther.bindings.api>1</souther.bindings.api>
+        <souther.abi.generations>9</souther.abi.generations>
     </properties>
 
     <modules>
         <module>bindings/api</module>
         <module>compiler</module>
+        <module>bindings/testkit</module>
         <module>bindings/php/generator</module>
         <module>bindings/rust/generator</module>
         <module>bindings/go/generator</module>

@@ -87,16 +87,13 @@ public final class PublicReach {
 
     /** Every public type declared at the top of a file in the generators' packages. */
     private static List<Class<?>> publicTopLevelTypes(Class<?> anchor) throws Exception {
-        Path classes = Path.of(anchor.getProtectionDomain().getCodeSource().getLocation()
-                .toURI());
+        Path classes = Classes.of(anchor);
         Path under = classes.resolve(ROOT.replace('.', '/'));
         List<Class<?>> types = new ArrayList<>();
         try (Stream<Path> files = Files.walk(under)) {
             for (Path file : files.filter(it -> it.toString().endsWith(".class")
                     && !it.getFileName().toString().contains("$")).sorted().toList()) {
-                String name = classes.relativize(file).toString()
-                        .replace(file.getFileSystem().getSeparator(), ".")
-                        .replaceAll("\\.class$", "");
+                String name = Classes.nameOf(classes, file);
                 Class<?> type = Class.forName(name);
                 if (Modifier.isPublic(type.getModifiers())) {
                     types.add(type);

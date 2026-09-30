@@ -13,7 +13,7 @@
 
     <artifactId>souther-native-launcher</artifactId>
     <name>Souther Native Launcher</name>
-    <description>The command with the generators installed: the compiler together with the PHP and the Rust binding. Not published.</description>
+    <description>The command as a clone runs it: the compiler, handed the jars of the PHP, the Rust and the Go generator this build made, which it loads as it loads any generator's jar. Not published.</description>
 
     <properties>
         <!-- What the release publishes is what a user of the compiler fetches, and a launcher is what a
@@ -21,6 +21,10 @@
         <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
+    <!-- The generators are built before this and are not on its class path: provided, so that the
+         reactor builds their jars first and the runtime class path the command runs with leaves them
+         out. The command is handed each jar by -Dsouther.generator.<id> (scripts/souther-native, and
+         the tests below), and loads it as it loads any generator's jar, behind its own loader. -->
     <dependencies>
         <dependency>
             <groupId>org.souther-lang</groupId>
@@ -31,25 +35,39 @@
             <groupId>org.souther-lang</groupId>
             <artifactId>souther-binding-php</artifactId>
             <version>${project.version}</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.souther-lang</groupId>
             <artifactId>souther-binding-rust</artifactId>
             <version>${project.version}</version>
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.souther-lang</groupId>
             <artifactId>souther-binding-go</artifactId>
             <version>${project.version}</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 
     <build>
         <plugins>
-            <!-- What the command runs with, written down for `scripts/souther-native`: the compiler
-                 and the generators as this build has them, and what they need. A launcher that is
-                 a set of dependencies has nothing to package, and the command is run from where the
-                 modules are built rather than from an installed copy of them. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <souther.generator.php>${maven.multiModuleProjectDirectory}/bindings/php/generator/target/souther-binding-php-${project.version}.jar</souther.generator.php>
+                        <souther.generator.rust>${maven.multiModuleProjectDirectory}/bindings/rust/generator/target/souther-binding-rust-${project.version}.jar</souther.generator.rust>
+                        <souther.generator.go>${maven.multiModuleProjectDirectory}/bindings/go/generator/target/souther-binding-go-${project.version}.jar</souther.generator.go>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <!-- What the command runs with, written down for `scripts/souther-native`: the compiler as
+                 this build has it, and what it needs, and no generator. A launcher that is a set of
+                 dependencies has nothing to package, and the command is run from where the modules
+                 are built rather than from an installed copy of them. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-dependency-plugin</artifactId>
@@ -63,6 +81,20 @@
                         <configuration>
                             <includeScope>runtime</includeScope>
                             <outputFile>${project.build.directory}/runtime-classpath.txt</outputFile>
+                        </configuration>
+                    </execution>
+                    <!-- And the jars of the generators, which the command is handed and not given on
+                         its class path. -->
+                    <execution>
+                        <id>generators</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>build-classpath</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>provided</includeScope>
+                            <includeGroupIds>org.souther-lang</includeGroupIds>
+                            <outputFile>${project.build.directory}/generators.txt</outputFile>
                         </configuration>
                     </execution>
                 </executions>

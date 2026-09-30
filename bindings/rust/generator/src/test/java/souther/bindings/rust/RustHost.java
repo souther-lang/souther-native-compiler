@@ -1,12 +1,11 @@
 package souther.bindings.rust;
 
+import souther.bindings.testkit.TestLibrary;
 import souther.bindings.BindingInput;
 import souther.bindings.Declarations;
-import souther.nativecode.BindingDirectory;
-import souther.nativecode.Generated;
-import souther.bindings.Manifest;
 import souther.nativecode.ManifestReader;
 import souther.nativecode.NativeCompiler;
+import souther.nativecode.Generated;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -44,13 +43,23 @@ final class RustHost {
     }
 
     /** The binding of {@code library} generated into {@code into} as the crate {@code crate}. */
+    static Generated generated(TestLibrary library, Path into, String crate)
+            throws IOException {
+        Files.createDirectories(into);
+        RustBindings.generate(library.bindingInput(), into, crate);
+        return Generated.of(into);
+    }
+
+    /**
+     * From a library the compiler built from a document no checked program writes, which is nothing
+     * the testkit builds.
+     */
     static Generated generated(NativeCompiler.Library library, Path into, String crate)
             throws IOException {
-        BindingInput input = new BindingInput(ManifestReader.read(library.manifest()),
-                Declarations.at(library.declarations()));
-        // Written and put in place as the command does.
-        return Generated.of(BindingDirectory.written(into, "rust",
-                staging -> RustBindings.generate(input, staging, crate)));
+        Files.createDirectories(into);
+        RustBindings.generate(new BindingInput(ManifestReader.read(library.manifest()),
+                Declarations.at(library.declarations())), into, crate);
+        return Generated.of(into);
     }
 
     /**

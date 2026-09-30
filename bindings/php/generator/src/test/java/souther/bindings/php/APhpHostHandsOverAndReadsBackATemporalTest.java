@@ -1,10 +1,12 @@
 package souther.bindings.php;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.nativecode.Generated;
-import souther.nativecode.Checked;
-import souther.nativecode.NativeCompiler;
+
+
 import souther.nativecode.Php;
 import souther.nativecode.Repository;
 
@@ -163,8 +165,8 @@ class APhpHostHandsOverAndReadsBackATemporalTest {
 
     @Test
     void aTemporalCrossesAsTheRuntimesClassWhereverItStands(@TempDir Path into) throws Exception {
-        NativeCompiler.Library library =
-                NativeCompiler.library(Checked.of(List.of(CALENDAR)), into.resolve("native"));
+        TestLibrary library =
+                SoutherBindingTest.compile(into.resolve("native"), CALENDAR);
         Generated binding =
                 LibraryBinding.generated(library, into.resolve("php"), "Acme\\Calendar");
         Path host = into.resolve("host.php");

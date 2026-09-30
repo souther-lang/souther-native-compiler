@@ -93,6 +93,23 @@ public final class NativeCompiler {
     }
 
     /**
+     * As {@link #library(CheckedProgram, List, Path)}, handed to {@code driver} and not to the one
+     * {@link #DRIVER_PROPERTY} names: for a caller that chose its driver itself, as the testkit does.
+     */
+    public static Library library(CheckedProgram program, List<byte[]> alongside, Path into,
+                                  Path driver) throws IOException, InterruptedException {
+        return library(ProgramWriter.written(program), alongside, into, driver);
+    }
+
+    /**
+     * The driver of this release for this platform, fetched and kept where it is not, and held to the
+     * checksum the release carries for it; refused where this is not a release.
+     */
+    public static Path releasedDriver() throws IOException {
+        return NativeBundle.locate(Fetching.standard());
+    }
+
+    /**
      * The library a transport document is built into, reaching no other build's object.
      * Package-visible for a test that asks what a binding makes of a document no checked program of
      * today's language writes, as {@link #driven} is for an object.
@@ -103,6 +120,11 @@ public final class NativeCompiler {
 
     private static Library library(String document, List<byte[]> alongside, Path into)
             throws IOException, InterruptedException {
+        return library(document, alongside, into, driver());
+    }
+
+    private static Library library(String document, List<byte[]> alongside, Path into,
+                                   Path driver) throws IOException, InterruptedException {
         Path handed = Files.createTempDirectory("souther-native-alongside");
         try {
             List<String> arguments = new ArrayList<>(
@@ -113,7 +135,7 @@ public final class NativeCompiler {
                 arguments.add("--with");
                 arguments.add(object.toString());
             }
-            byte[] said = run(document, arguments);
+            byte[] said = run(document, arguments, driver);
             // Where the driver wrote each, one to a line, which is how what a shared library is
             // called on this host is said by the side that named it.
             List<Path> written =
@@ -138,13 +160,12 @@ public final class NativeCompiler {
      * driver does with a document no checked program of today's language writes.
      */
     static byte[] driven(String document) throws IOException, InterruptedException {
-        return run(document, List.of());
+        return run(document, List.of(), driver());
     }
 
     /** What the driver writes on stdout when handed the document with these arguments. */
-    private static byte[] run(String document, List<String> arguments)
+    private static byte[] run(String document, List<String> arguments, Path driver)
             throws IOException, InterruptedException {
-        Path driver = driver();
         if (!Files.isExecutable(driver)) {
             throw new IOException("no driver at " + driver.toAbsolutePath()
                     + ", which `cargo build` in native/ writes");

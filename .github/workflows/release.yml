@@ -111,6 +111,12 @@ jobs:
 
       - run: scripts/verify-release-build.sh maven-repo "$VERSION" "$CHECKSUMS"
 
+      # The testkit as an author outside this repository has it: a project depending on the API and the
+      # testkit in this publication, and on nothing else of it, builds a library with the driver it
+      # fetches from these bundles and tests a generator. Before anything is published, so a testkit
+      # that cannot do that is never released.
+      - run: scripts/testkit-acceptance.sh maven-repo "$VERSION" dist
+
       # What Maven Central is to be given. It is the only copy of a compiler that carries these
       # checksums: they are not committed, so a rebuild from the tag has none, and a release version is
       # not built without them.

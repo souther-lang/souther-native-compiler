@@ -62,7 +62,7 @@ public final class Owning {
      * The module a package is in is the module its own tests hold to it.
      */
     public static Set<String> collectionsIn(Class<?> anchor, String packageName) throws Exception {
-        Path classes = Path.of(anchor.getProtectionDomain().getCodeSource().getLocation().toURI());
+        Path classes = Classes.of(anchor);
         Path under = classes.resolve(packageName.replace('.', '/'));
         Set<String> components = new TreeSet<>();
         try (Stream<Path> files = Files.list(under)) {

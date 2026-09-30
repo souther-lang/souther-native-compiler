@@ -1,7 +1,8 @@
 package souther.bindings.php;
 
+import souther.bindings.testkit.SoutherBindingTest;
 import souther.nativecode.Generated;
-import souther.nativecode.Checked;
+
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.bindings.Manifest;
@@ -13,7 +14,7 @@ import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.Owning;
 import souther.nativecode.Documents;
-import souther.nativecode.NativeCompiler;
+
 
 import java.nio.file.Path;
 import java.util.List;
@@ -30,12 +31,11 @@ class WhatAPhpRecordHoldsIsItsOwnTest {
 
     @Test
     void everyCollectionAPhpRecordHoldsIsItsOwn(@TempDir Path into) throws Exception {
-        Generated generated = LibraryBinding.generated(NativeCompiler.library(
-                Checked.of(List.of("""
+        Generated generated = LibraryBinding.generated(SoutherBindingTest.compile(into.resolve("native"), """
                         module m exposing ( Kept )
 
                         data Kept = Int
-                        """)), into.resolve("native")), into.resolve("php"), "Acme");
+                        """), into.resolve("php"), "Acme");
         Type.Union either = new Type.Union(List.of(
                 new Case.Declared("m", "Found"), new Case.Declared("m", "Missing")));
         Crossing.Member found = new Crossing.Member(Crossing.Whole.product("\\Acme\\M\\Found"),

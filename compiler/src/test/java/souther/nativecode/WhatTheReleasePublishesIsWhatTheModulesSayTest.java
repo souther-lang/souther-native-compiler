@@ -14,8 +14,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The release deploys the whole reactor, so what it publishes is whatever a module does not opt out
- * of. What is to be published is the compiler, the API, the generators the catalog names, and the pom
- * they share; a module that says it is not published (the launcher, which a clone runs the command
+ * of. What is to be published is the compiler, the API, the testkit a generator's author tests with,
+ * the generators the catalog names, and the pom they share; a module that says it is not published (the launcher, which a clone runs the command
  * with) is to say it to Maven as well, and the sentence and the setting are held to each other.
  */
 class WhatTheReleasePublishesIsWhatTheModulesSayTest {
@@ -36,13 +36,13 @@ class WhatTheReleasePublishesIsWhatTheModulesSayTest {
     }
 
     @Test
-    void whatIsDeployedIsTheParentTheApiTheCompilerAndTheGeneratorsTheCatalogNames() throws IOException {
+    void whatIsDeployedIsTheParentTheApiTheTestkitTheCompilerAndTheGeneratorsTheCatalogNames() throws IOException {
         TreeSet<String> published = new TreeSet<>();
         published.add(rootArtifact());
         modules().stream().filter(module -> !module.skipsDeploy()).forEach(module -> published.add(module.artifact()));
 
         TreeSet<String> expected = new TreeSet<>(List.of(rootArtifact(), "souther-bindings-api",
-                "souther-native-compiler"));
+                "souther-bindings-testkit", "souther-native-compiler"));
         KnownBindings.all().forEach(kind -> expected.add(kind.artifact().split(":")[1]));
         assertThat(published).isEqualTo(expected);
     }

@@ -1,12 +1,13 @@
 package souther.bindings.go;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import souther.bindings.BindingInput;
 import souther.bindings.Declarations;
-import souther.nativecode.BindingDirectory;
-import souther.nativecode.Generated;
-import souther.bindings.Manifest;
 import souther.nativecode.ManifestReader;
 import souther.nativecode.NativeCompiler;
+import souther.nativecode.Generated;
+
 import souther.nativecode.Repository;
 
 import java.io.IOException;
@@ -40,13 +41,23 @@ final class GoHost {
     }
 
     /** The binding of {@code library} generated into {@code into} as the package {@code importPath}. */
+    static Generated generated(TestLibrary library, Path into, String importPath)
+            throws IOException {
+        Files.createDirectories(into);
+        GoBindings.generate(library.bindingInput(), into, importPath);
+        return Generated.of(into);
+    }
+
+    /**
+     * From a library the compiler built from a document no checked program writes, which is nothing
+     * the testkit builds.
+     */
     static Generated generated(NativeCompiler.Library library, Path into, String importPath)
             throws IOException {
-        BindingInput input = new BindingInput(ManifestReader.read(library.manifest()),
-                Declarations.at(library.declarations()));
-        // Written and put in place as the command does.
-        return Generated.of(BindingDirectory.written(into, "go",
-                staging -> GoBindings.generate(input, staging, importPath)));
+        Files.createDirectories(into);
+        GoBindings.generate(new BindingInput(ManifestReader.read(library.manifest()),
+                Declarations.at(library.declarations())), into, importPath);
+        return Generated.of(into);
     }
 
     /**
@@ -61,8 +72,7 @@ final class GoHost {
     /** As above, for a library of several modules, each written as a source. */
     static String ran(Path into, List<String> modules, String importPath, String main)
             throws IOException, InterruptedException {
-        NativeCompiler.Library library = NativeCompiler.library(
-                souther.nativecode.Checked.of(modules), into.resolve("native"));
+        TestLibrary library = SoutherBindingTest.compile(into.resolve("native"), modules.toArray(String[]::new));
         Generated binding = generated(library, into.resolve("binding"), importPath);
         return ran(into, binding, importPath, main, List.of(library.library().toString()));
     }

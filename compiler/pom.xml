@@ -21,6 +21,15 @@
             <artifactId>souther-bindings-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- Classes, which walks what a type was loaded from whether the reactor hands a directory or
+             a jar. -->
+        <dependency>
+            <groupId>org.souther-lang</groupId>
+            <artifactId>souther-bindings-api</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.souther-lang</groupId>
             <artifactId>souther-compiler</artifactId>

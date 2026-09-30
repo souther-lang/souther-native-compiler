@@ -14,10 +14,19 @@ import java.util.ServiceConfigurationError;
  */
 final class GeneratorFailed extends Exception {
 
-    GeneratorFailed(KnownBindings.Kind kind, Throwable cause) {
-        super("the " + kind.display() + " generator failed, and wrote nothing: "
-                + cause.getClass().getName() + (cause.getMessage() == null ? ""
-                : ": " + cause.getMessage()), cause);
+    GeneratorFailed(String generator, Throwable cause) {
+        super(generator + " failed, and wrote nothing: " + said(cause), cause);
+    }
+
+    /**
+     * What {@code cause} was, as one line: a generator that could not be made is said by what its
+     * constructor threw, which {@link java.util.ServiceLoader} wraps.
+     */
+    private static String said(Throwable cause) {
+        Throwable thrown = cause instanceof ServiceConfigurationError && cause.getCause() != null
+                ? cause.getCause() : cause;
+        return thrown.getClass().getName()
+                + (thrown.getMessage() == null ? "" : ": " + thrown.getMessage());
     }
 
     /** Work that calls into a generator's code. */
@@ -27,16 +36,17 @@ final class GeneratorFailed extends Exception {
     }
 
     /**
-     * What {@code work}, a call into the {@code kind} generator's code, answers; a refusal as it
-     * was thrown, and anything else it threw, loading it among them, as that generator's failure.
+     * What {@code work}, a call into the code of {@code generator} (as the command names it),
+     * answers; a refusal as it was thrown, and anything else it threw, constructing it among them,
+     * as that generator's failure.
      */
-    static <T> T asking(KnownBindings.Kind kind, Work<T> work) throws GeneratorFailed {
+    static <T> T asking(String generator, Work<T> work) throws GeneratorFailed {
         try {
             return work.run();
         } catch (NotBindable refused) {
             throw refused;
         } catch (IOException | RuntimeException | LinkageError | ServiceConfigurationError e) {
-            throw new GeneratorFailed(kind, e);
+            throw new GeneratorFailed(generator, e);
         }
     }
 }

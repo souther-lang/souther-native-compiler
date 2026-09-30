@@ -1,0 +1,625 @@
+major 1
+abstract BindingGenerator = generate(BindingInput, java.nio.file.Path, java.util.Map<java.lang.String, java.lang.String>) -> void throws java.io.IOException,preflight(java.util.Map<java.lang.String, java.lang.String>) -> void
+abstract Declarations = copyTo(java.nio.file.Path) -> void throws java.io.IOException
+constructor BindingInput(Manifest, Declarations)
+constructor Claimed(java.lang.String)
+constructor Manifest.Answer(Manifest.Type, @Nullable Manifest.UnionAnswer)
+constructor Manifest.Behavior(java.lang.String, Manifest.Parameters, Manifest.Answer, Manifest.Reach<Manifest.Call>)
+constructor Manifest.Call(Manifest.Function, Manifest.Crossings)
+constructor Manifest.Case.Declared(java.lang.String, java.lang.String)
+constructor Manifest.Case.Language(java.lang.String)
+constructor Manifest.Case.Primitive(Manifest.Primitive)
+constructor Manifest.CaseCrossing(Manifest.Case, Manifest.Function, @Nullable Manifest.Function)
+constructor Manifest.Construct(Manifest.Function, java.util.List<ValueCrossing>)
+constructor Manifest.Construction(java.lang.String, java.util.List<Manifest.Required>, @Nullable Manifest.Function)
+constructor Manifest.Crossings(java.util.List<ValueCrossing>, ValueCrossing)
+constructor Manifest.Declaration.Newtype(java.lang.String, Manifest.Field, Manifest.Reach<Manifest.Construct>, @Nullable Manifest.Function, @Nullable Manifest.Function, @Nullable Manifest.Function)
+constructor Manifest.Declaration.Product(java.lang.String, java.util.List<Manifest.Field>, Manifest.Reach<Manifest.Construct>, @Nullable Manifest.Function, @Nullable Manifest.Function, @Nullable Manifest.Function)
+constructor Manifest.Declaration.Sum(java.lang.String, java.util.List<Manifest.Case.Declared>, @Nullable Manifest.Function, @Nullable Manifest.Function, @Nullable Manifest.Function, @Nullable Manifest.Function)
+constructor Manifest.Declaration.Unit(java.lang.String, Manifest.Reach<Manifest.Construct>, @Nullable Manifest.Function, @Nullable Manifest.Function, @Nullable Manifest.Function)
+constructor Manifest.Field(java.lang.String, Manifest.Type, Manifest.Reach<Manifest.Read>)
+constructor Manifest.Function(java.lang.String, java.util.List<Manifest.Parameter>, @Nullable Manifest.Word)
+constructor Manifest.FunctionCrossing(Manifest.Signature, @Nullable Manifest.Function, @Nullable Manifest.FunctionMaking)
+constructor Manifest.FunctionMaking(Manifest.Implementation, java.lang.String)
+constructor Manifest.Implementation(java.lang.String, java.util.List<Manifest.Parameter>, Manifest.Word)
+constructor Manifest.Injection(java.lang.String, java.util.List<Manifest.NamedParameter>, Manifest.Type, Manifest.Crossings, Manifest.Implementation, java.lang.String)
+constructor Manifest.ListCrossing(Manifest.Shape, @Nullable Manifest.Function, @Nullable Manifest.ListRead)
+constructor Manifest.ListRead(Manifest.Function, Manifest.Function)
+constructor Manifest.Module(java.lang.String, java.util.List<Manifest.Behavior>, java.util.List<Manifest.Construction>, java.util.List<Manifest.Injection>, java.util.List<Manifest.PublishedValue>, java.util.List<Manifest.Declaration>, java.util.List<Manifest.ListCrossing>, java.util.List<Manifest.FunctionCrossing>)
+constructor Manifest.NamedParameter(java.lang.String, Manifest.Type)
+constructor Manifest.Parameter(Manifest.Parameter.Mode, Manifest.Word)
+constructor Manifest.Parameters.Named(java.util.List<Manifest.NamedParameter>)
+constructor Manifest.Parameters.Positional(java.util.List<Manifest.Type>)
+constructor Manifest.PublishedValue(java.lang.String, Manifest.Type, Manifest.Reach<Manifest.Call>)
+constructor Manifest.Reach.Available(T)
+constructor Manifest.Reach.Unavailable()
+constructor Manifest.Read(Manifest.Function, ValueCrossing)
+constructor Manifest.Required(java.lang.String, java.lang.String)
+constructor Manifest.Shape.FunctionOf(Manifest.Signature)
+constructor Manifest.Shape.Leaf(Manifest.Word)
+constructor Manifest.Shape.ListOf(Manifest.Shape)
+constructor Manifest.Shape.Option(Manifest.Shape)
+constructor Manifest.Shape.Product(java.util.List<Manifest.Shape>)
+constructor Manifest.Signature(java.util.List<Manifest.Shape>, Manifest.Shape)
+constructor Manifest.Type.Declared(java.lang.String, java.lang.String)
+constructor Manifest.Type.Function(java.util.List<Manifest.Type>, Manifest.Type)
+constructor Manifest.Type.ListOf(Manifest.Type)
+constructor Manifest.Type.MapOf(Manifest.Type, Manifest.Type)
+constructor Manifest.Type.Never()
+constructor Manifest.Type.Nothing()
+constructor Manifest.Type.Option(Manifest.Type)
+constructor Manifest.Type.Primitive(Manifest.Primitive)
+constructor Manifest.Type.SetOf(Manifest.Type)
+constructor Manifest.Type.Tuple(java.util.List<Manifest.Type>)
+constructor Manifest.Type.Union(java.util.List<Manifest.Case>)
+constructor Manifest.UnionAnswer(java.util.List<Manifest.Case>, @Nullable Manifest.Function)
+constructor NotBindable(java.lang.String)
+constructor ValueCrossing.FunctionValue(Manifest.Type.Function, java.util.List<ValueCrossing>, ValueCrossing, Manifest.FunctionCrossing)
+constructor ValueCrossing.Handle(Manifest.Type.Declared, Manifest.Word)
+constructor ValueCrossing.Listed(Manifest.Type, ValueCrossing, Manifest.ListCrossing)
+constructor ValueCrossing.Optional(Manifest.Type.Option, ValueCrossing)
+constructor ValueCrossing.Primitive(Manifest.Type.Primitive, Manifest.Word)
+constructor ValueCrossing.Tuple(Manifest.Type.Tuple, java.util.List<ValueCrossing>)
+constructor ValueCrossing.Union(Manifest.Type.Union, Manifest.Word)
+enum Manifest.Parameter.Mode = GIVEN,ROOM,SLICE
+enum Manifest.Primitive = INT,STRING,BOOL,DECIMAL,RATIONAL,DATE,TIME,DATETIME,INSTANT
+enum Manifest.Representation = U8,U32,I32,I64,ADDRESS
+enum Manifest.Way = GIVEN,HANDED
+enum Manifest.Word = STATUS,INT,BOOL,CASE,OUTCOME,COUNT,SCOPE,BYTES,VALUE,STRING,DECIMAL,DATE,TIME,DATETIME,INSTANT,DECODED,ISSUE,LIST,REQUIREMENTS,CAPABILITY,USERDATA,FUNCTION
+field static final BindingApi.ABI_GENERATIONS : java.lang.String = Souther-Abi-Generations
+field static final BindingApi.API : java.lang.String = Souther-Binding-Api
+field static final BindingApi.ID : java.lang.String = Souther-Binding-Id
+field static final BindingApi.MAJOR : int = 1
+field static final Manifest.Parameter.Mode.GIVEN : Manifest.Parameter.Mode
+field static final Manifest.Parameter.Mode.ROOM : Manifest.Parameter.Mode
+field static final Manifest.Parameter.Mode.SLICE : Manifest.Parameter.Mode
+field static final Manifest.Primitive.BOOL : Manifest.Primitive
+field static final Manifest.Primitive.DATE : Manifest.Primitive
+field static final Manifest.Primitive.DATETIME : Manifest.Primitive
+field static final Manifest.Primitive.DECIMAL : Manifest.Primitive
+field static final Manifest.Primitive.INSTANT : Manifest.Primitive
+field static final Manifest.Primitive.INT : Manifest.Primitive
+field static final Manifest.Primitive.RATIONAL : Manifest.Primitive
+field static final Manifest.Primitive.STRING : Manifest.Primitive
+field static final Manifest.Primitive.TIME : Manifest.Primitive
+field static final Manifest.Representation.ADDRESS : Manifest.Representation
+field static final Manifest.Representation.I32 : Manifest.Representation
+field static final Manifest.Representation.I64 : Manifest.Representation
+field static final Manifest.Representation.U32 : Manifest.Representation
+field static final Manifest.Representation.U8 : Manifest.Representation
+field static final Manifest.Shape.Leaf.WORDS : java.util.List<Manifest.Word>
+field static final Manifest.Way.GIVEN : Manifest.Way
+field static final Manifest.Way.HANDED : Manifest.Way
+field static final Manifest.Word.BOOL : Manifest.Word
+field static final Manifest.Word.BYTES : Manifest.Word
+field static final Manifest.Word.CAPABILITY : Manifest.Word
+field static final Manifest.Word.CASE : Manifest.Word
+field static final Manifest.Word.COUNT : Manifest.Word
+field static final Manifest.Word.DATE : Manifest.Word
+field static final Manifest.Word.DATETIME : Manifest.Word
+field static final Manifest.Word.DECIMAL : Manifest.Word
+field static final Manifest.Word.DECODED : Manifest.Word
+field static final Manifest.Word.FUNCTION : Manifest.Word
+field static final Manifest.Word.INSTANT : Manifest.Word
+field static final Manifest.Word.INT : Manifest.Word
+field static final Manifest.Word.ISSUE : Manifest.Word
+field static final Manifest.Word.LIST : Manifest.Word
+field static final Manifest.Word.OUTCOME : Manifest.Word
+field static final Manifest.Word.REQUIREMENTS : Manifest.Word
+field static final Manifest.Word.SCOPE : Manifest.Word
+field static final Manifest.Word.STATUS : Manifest.Word
+field static final Manifest.Word.STRING : Manifest.Word
+field static final Manifest.Word.TIME : Manifest.Word
+field static final Manifest.Word.USERDATA : Manifest.Word
+field static final Manifest.Word.VALUE : Manifest.Word
+method BindingInput.declarations() -> Declarations
+method BindingInput.manifest() -> Manifest
+method Claimed.claim(java.lang.String, java.lang.String) -> java.lang.String
+method Claimed.has(java.lang.String) -> boolean
+method Manifest.Answer.type() -> Manifest.Type
+method Manifest.Answer.union() -> @Nullable Manifest.UnionAnswer
+method Manifest.Behavior.answers() -> Manifest.Answer
+method Manifest.Behavior.call() -> Manifest.Reach<Manifest.Call>
+method Manifest.Behavior.name() -> java.lang.String
+method Manifest.Behavior.parameters() -> Manifest.Parameters
+method Manifest.Call.crossings() -> Manifest.Crossings
+method Manifest.Call.function() -> Manifest.Function
+method Manifest.Case.Declared.module() -> java.lang.String
+method Manifest.Case.Declared.name() -> java.lang.String
+method Manifest.Case.Language.name() -> java.lang.String
+method Manifest.Case.Primitive.primitive() -> Manifest.Primitive
+method Manifest.CaseCrossing.holds() -> @Nullable Manifest.Word
+method Manifest.CaseCrossing.make() -> Manifest.Function
+method Manifest.CaseCrossing.of() -> Manifest.Case
+method Manifest.CaseCrossing.read() -> @Nullable Manifest.Function
+method Manifest.Construct.function() -> Manifest.Function
+method Manifest.Construct.takes() -> java.util.List<ValueCrossing>
+method Manifest.Construction.bind() -> @Nullable Manifest.Function
+method Manifest.Construction.name() -> java.lang.String
+method Manifest.Construction.requires() -> java.util.List<Manifest.Required>
+method Manifest.Crossings.answers() -> ValueCrossing
+method Manifest.Crossings.signature() -> Manifest.Signature
+method Manifest.Crossings.takes() -> java.util.List<ValueCrossing>
+method Manifest.Declaration.Newtype.construct() -> Manifest.Reach<Manifest.Construct>
+method Manifest.Declaration.Newtype.decode() -> @Nullable Manifest.Function
+method Manifest.Declaration.Newtype.decodeHost() -> @Nullable Manifest.Function
+method Manifest.Declaration.Newtype.encode() -> @Nullable Manifest.Function
+method Manifest.Declaration.Newtype.field() -> Manifest.Field
+method Manifest.Declaration.Newtype.fields() -> java.util.List<Manifest.Field>
+method Manifest.Declaration.Newtype.name() -> java.lang.String
+method Manifest.Declaration.Product.construct() -> Manifest.Reach<Manifest.Construct>
+method Manifest.Declaration.Product.decode() -> @Nullable Manifest.Function
+method Manifest.Declaration.Product.decodeHost() -> @Nullable Manifest.Function
+method Manifest.Declaration.Product.encode() -> @Nullable Manifest.Function
+method Manifest.Declaration.Product.fields() -> java.util.List<Manifest.Field>
+method Manifest.Declaration.Product.name() -> java.lang.String
+method Manifest.Declaration.Sum.cases() -> java.util.List<Manifest.Case.Declared>
+method Manifest.Declaration.Sum.decode() -> @Nullable Manifest.Function
+method Manifest.Declaration.Sum.decodeHost() -> @Nullable Manifest.Function
+method Manifest.Declaration.Sum.encode() -> @Nullable Manifest.Function
+method Manifest.Declaration.Sum.fields() -> java.util.List<Manifest.Field>
+method Manifest.Declaration.Sum.name() -> java.lang.String
+method Manifest.Declaration.Sum.which() -> @Nullable Manifest.Function
+method Manifest.Declaration.Unit.construct() -> Manifest.Reach<Manifest.Construct>
+method Manifest.Declaration.Unit.decode() -> @Nullable Manifest.Function
+method Manifest.Declaration.Unit.decodeHost() -> @Nullable Manifest.Function
+method Manifest.Declaration.Unit.encode() -> @Nullable Manifest.Function
+method Manifest.Declaration.Unit.fields() -> java.util.List<Manifest.Field>
+method Manifest.Declaration.Unit.name() -> java.lang.String
+method Manifest.Field.name() -> java.lang.String
+method Manifest.Field.read() -> Manifest.Reach<Manifest.Read>
+method Manifest.Field.type() -> Manifest.Type
+method Manifest.Function.answers() -> @Nullable Manifest.Word
+method Manifest.Function.name() -> java.lang.String
+method Manifest.Function.takes() -> java.util.List<Manifest.Parameter>
+method Manifest.FunctionCrossing.call() -> @Nullable Manifest.Function
+method Manifest.FunctionCrossing.make() -> @Nullable Manifest.FunctionMaking
+method Manifest.FunctionCrossing.signature() -> Manifest.Signature
+method Manifest.FunctionMaking.implement() -> java.lang.String
+method Manifest.FunctionMaking.implementation() -> Manifest.Implementation
+method Manifest.Implementation.answers() -> Manifest.Word
+method Manifest.Implementation.takes() -> java.util.List<Manifest.Parameter>
+method Manifest.Implementation.type() -> java.lang.String
+method Manifest.Injection.answers() -> Manifest.Type
+method Manifest.Injection.crossings() -> Manifest.Crossings
+method Manifest.Injection.implement() -> java.lang.String
+method Manifest.Injection.implementation() -> Manifest.Implementation
+method Manifest.Injection.name() -> java.lang.String
+method Manifest.Injection.parameters() -> java.util.List<Manifest.NamedParameter>
+method Manifest.ListCrossing.construct() -> @Nullable Manifest.Function
+method Manifest.ListCrossing.element() -> Manifest.Shape
+method Manifest.ListCrossing.read() -> @Nullable Manifest.ListRead
+method Manifest.ListRead.at() -> Manifest.Function
+method Manifest.ListRead.length() -> Manifest.Function
+method Manifest.Module.behaviors() -> java.util.List<Manifest.Behavior>
+method Manifest.Module.constructions() -> java.util.List<Manifest.Construction>
+method Manifest.Module.declarations() -> java.util.List<Manifest.Declaration>
+method Manifest.Module.functions() -> java.util.List<Manifest.FunctionCrossing>
+method Manifest.Module.injections() -> java.util.List<Manifest.Injection>
+method Manifest.Module.lists() -> java.util.List<Manifest.ListCrossing>
+method Manifest.Module.name() -> java.lang.String
+method Manifest.Module.values() -> java.util.List<Manifest.PublishedValue>
+method Manifest.NamedParameter.name() -> java.lang.String
+method Manifest.NamedParameter.type() -> Manifest.Type
+method Manifest.Parameter.mode() -> Manifest.Parameter.Mode
+method Manifest.Parameter.word() -> Manifest.Word
+method Manifest.Parameters.Named.parameters() -> java.util.List<Manifest.NamedParameter>
+method Manifest.Parameters.Named.types() -> java.util.List<Manifest.Type>
+method Manifest.Parameters.Positional.types() -> java.util.List<Manifest.Type>
+method Manifest.Primitive.spelt() -> java.lang.String
+method Manifest.PublishedValue.name() -> java.lang.String
+method Manifest.PublishedValue.read() -> Manifest.Reach<Manifest.Call>
+method Manifest.PublishedValue.type() -> Manifest.Type
+method Manifest.Reach.Available.it() -> T
+method Manifest.Reach.available() -> @Nullable T
+method Manifest.Read.answers() -> ValueCrossing
+method Manifest.Read.function() -> Manifest.Function
+method Manifest.Required.key() -> java.lang.String
+method Manifest.Required.module() -> java.lang.String
+method Manifest.Required.name() -> java.lang.String
+method Manifest.Shape.FunctionOf.signature() -> Manifest.Signature
+method Manifest.Shape.FunctionOf.words() -> java.util.List<Manifest.Word>
+method Manifest.Shape.Leaf.word() -> Manifest.Word
+method Manifest.Shape.Leaf.words() -> java.util.List<Manifest.Word>
+method Manifest.Shape.ListOf.element() -> Manifest.Shape
+method Manifest.Shape.ListOf.words() -> java.util.List<Manifest.Word>
+method Manifest.Shape.Option.of() -> Manifest.Shape
+method Manifest.Shape.Option.words() -> java.util.List<Manifest.Word>
+method Manifest.Shape.Product.of() -> java.util.List<Manifest.Shape>
+method Manifest.Shape.Product.words() -> java.util.List<Manifest.Word>
+method Manifest.Signature.answers() -> Manifest.Shape
+method Manifest.Signature.takes() -> java.util.List<Manifest.Shape>
+method Manifest.Type.Declared.module() -> java.lang.String
+method Manifest.Type.Declared.name() -> java.lang.String
+method Manifest.Type.Function.answers() -> Manifest.Type
+method Manifest.Type.Function.takes() -> java.util.List<Manifest.Type>
+method Manifest.Type.ListOf.of() -> Manifest.Type
+method Manifest.Type.MapOf.key() -> Manifest.Type
+method Manifest.Type.MapOf.value() -> Manifest.Type
+method Manifest.Type.Option.of() -> Manifest.Type
+method Manifest.Type.Primitive.primitive() -> Manifest.Primitive
+method Manifest.Type.SetOf.of() -> Manifest.Type
+method Manifest.Type.Tuple.of() -> java.util.List<Manifest.Type>
+method Manifest.Type.Union.cases() -> java.util.List<Manifest.Case>
+method Manifest.UnionAnswer.cases() -> java.util.List<Manifest.Case>
+method Manifest.UnionAnswer.which() -> @Nullable Manifest.Function
+method Manifest.Way.turned() -> Manifest.Way
+method Manifest.Word.representation() -> Manifest.Representation
+method Manifest.cases() -> java.util.List<Manifest.CaseCrossing>
+method Manifest.crossing(Manifest.Case) -> Manifest.CaseCrossing
+method Manifest.modules() -> java.util.List<Manifest.Module>
+method Manifest.outcomes() -> java.util.Map<java.lang.String, java.lang.Integer>
+method Manifest.statuses() -> java.util.Map<java.lang.String, java.lang.Integer>
+method ValueCrossing.FunctionValue.answers() -> ValueCrossing
+method ValueCrossing.FunctionValue.crosses(Manifest.Way) -> boolean
+method ValueCrossing.FunctionValue.crossing() -> Manifest.FunctionCrossing
+method ValueCrossing.FunctionValue.shape() -> Manifest.Shape.FunctionOf
+method ValueCrossing.FunctionValue.takes() -> java.util.List<ValueCrossing>
+method ValueCrossing.FunctionValue.type() -> Manifest.Type.Function
+method ValueCrossing.Handle.shape() -> Manifest.Shape
+method ValueCrossing.Handle.type() -> Manifest.Type.Declared
+method ValueCrossing.Handle.word() -> Manifest.Word
+method ValueCrossing.Listed.crosses(Manifest.Way) -> boolean
+method ValueCrossing.Listed.crossing() -> Manifest.ListCrossing
+method ValueCrossing.Listed.element() -> ValueCrossing
+method ValueCrossing.Listed.shape() -> Manifest.Shape
+method ValueCrossing.Listed.type() -> Manifest.Type
+method ValueCrossing.Optional.of() -> ValueCrossing
+method ValueCrossing.Optional.shape() -> Manifest.Shape
+method ValueCrossing.Optional.type() -> Manifest.Type.Option
+method ValueCrossing.Primitive.shape() -> Manifest.Shape
+method ValueCrossing.Primitive.type() -> Manifest.Type.Primitive
+method ValueCrossing.Primitive.word() -> Manifest.Word
+method ValueCrossing.Tuple.members() -> java.util.List<ValueCrossing>
+method ValueCrossing.Tuple.shape() -> Manifest.Shape
+method ValueCrossing.Tuple.type() -> Manifest.Type.Tuple
+method ValueCrossing.Union.shape() -> Manifest.Shape
+method ValueCrossing.Union.type() -> Manifest.Type.Union
+method ValueCrossing.Union.word() -> Manifest.Word
+method abstract BindingGenerator.generate(BindingInput, java.nio.file.Path, java.util.Map<java.lang.String, java.lang.String>) -> void throws java.io.IOException
+method abstract BindingGenerator.preflight(java.util.Map<java.lang.String, java.lang.String>) -> void
+method abstract Declarations.copyTo(java.nio.file.Path) -> void throws java.io.IOException
+method abstract Manifest.Declaration.decode() -> @Nullable Manifest.Function
+method abstract Manifest.Declaration.decodeHost() -> @Nullable Manifest.Function
+method abstract Manifest.Declaration.encode() -> @Nullable Manifest.Function
+method abstract Manifest.Declaration.fields() -> java.util.List<Manifest.Field>
+method abstract Manifest.Declaration.name() -> java.lang.String
+method abstract Manifest.Parameters.types() -> java.util.List<Manifest.Type>
+method abstract Manifest.Shape.words() -> java.util.List<Manifest.Word>
+method abstract ValueCrossing.shape() -> Manifest.Shape
+method abstract ValueCrossing.type() -> Manifest.Type
+method final BindingInput.equals(java.lang.Object) -> boolean
+method final BindingInput.hashCode() -> int
+method final BindingInput.toString() -> java.lang.String
+method final Manifest.Answer.equals(java.lang.Object) -> boolean
+method final Manifest.Answer.hashCode() -> int
+method final Manifest.Answer.toString() -> java.lang.String
+method final Manifest.Behavior.equals(java.lang.Object) -> boolean
+method final Manifest.Behavior.hashCode() -> int
+method final Manifest.Behavior.toString() -> java.lang.String
+method final Manifest.Call.equals(java.lang.Object) -> boolean
+method final Manifest.Call.hashCode() -> int
+method final Manifest.Call.toString() -> java.lang.String
+method final Manifest.Case.Declared.equals(java.lang.Object) -> boolean
+method final Manifest.Case.Declared.hashCode() -> int
+method final Manifest.Case.Declared.toString() -> java.lang.String
+method final Manifest.Case.Language.equals(java.lang.Object) -> boolean
+method final Manifest.Case.Language.hashCode() -> int
+method final Manifest.Case.Language.toString() -> java.lang.String
+method final Manifest.Case.Primitive.equals(java.lang.Object) -> boolean
+method final Manifest.Case.Primitive.hashCode() -> int
+method final Manifest.Case.Primitive.toString() -> java.lang.String
+method final Manifest.CaseCrossing.equals(java.lang.Object) -> boolean
+method final Manifest.CaseCrossing.hashCode() -> int
+method final Manifest.CaseCrossing.toString() -> java.lang.String
+method final Manifest.Construct.equals(java.lang.Object) -> boolean
+method final Manifest.Construct.hashCode() -> int
+method final Manifest.Construct.toString() -> java.lang.String
+method final Manifest.Construction.equals(java.lang.Object) -> boolean
+method final Manifest.Construction.hashCode() -> int
+method final Manifest.Construction.toString() -> java.lang.String
+method final Manifest.Crossings.equals(java.lang.Object) -> boolean
+method final Manifest.Crossings.hashCode() -> int
+method final Manifest.Crossings.toString() -> java.lang.String
+method final Manifest.Declaration.Newtype.equals(java.lang.Object) -> boolean
+method final Manifest.Declaration.Newtype.hashCode() -> int
+method final Manifest.Declaration.Newtype.toString() -> java.lang.String
+method final Manifest.Declaration.Product.equals(java.lang.Object) -> boolean
+method final Manifest.Declaration.Product.hashCode() -> int
+method final Manifest.Declaration.Product.toString() -> java.lang.String
+method final Manifest.Declaration.Sum.equals(java.lang.Object) -> boolean
+method final Manifest.Declaration.Sum.hashCode() -> int
+method final Manifest.Declaration.Sum.toString() -> java.lang.String
+method final Manifest.Declaration.Unit.equals(java.lang.Object) -> boolean
+method final Manifest.Declaration.Unit.hashCode() -> int
+method final Manifest.Declaration.Unit.toString() -> java.lang.String
+method final Manifest.Field.equals(java.lang.Object) -> boolean
+method final Manifest.Field.hashCode() -> int
+method final Manifest.Field.toString() -> java.lang.String
+method final Manifest.Function.equals(java.lang.Object) -> boolean
+method final Manifest.Function.hashCode() -> int
+method final Manifest.Function.toString() -> java.lang.String
+method final Manifest.FunctionCrossing.equals(java.lang.Object) -> boolean
+method final Manifest.FunctionCrossing.hashCode() -> int
+method final Manifest.FunctionCrossing.toString() -> java.lang.String
+method final Manifest.FunctionMaking.equals(java.lang.Object) -> boolean
+method final Manifest.FunctionMaking.hashCode() -> int
+method final Manifest.FunctionMaking.toString() -> java.lang.String
+method final Manifest.Implementation.equals(java.lang.Object) -> boolean
+method final Manifest.Implementation.hashCode() -> int
+method final Manifest.Implementation.toString() -> java.lang.String
+method final Manifest.Injection.equals(java.lang.Object) -> boolean
+method final Manifest.Injection.hashCode() -> int
+method final Manifest.Injection.toString() -> java.lang.String
+method final Manifest.ListCrossing.equals(java.lang.Object) -> boolean
+method final Manifest.ListCrossing.hashCode() -> int
+method final Manifest.ListCrossing.toString() -> java.lang.String
+method final Manifest.ListRead.equals(java.lang.Object) -> boolean
+method final Manifest.ListRead.hashCode() -> int
+method final Manifest.ListRead.toString() -> java.lang.String
+method final Manifest.Module.equals(java.lang.Object) -> boolean
+method final Manifest.Module.hashCode() -> int
+method final Manifest.Module.toString() -> java.lang.String
+method final Manifest.NamedParameter.equals(java.lang.Object) -> boolean
+method final Manifest.NamedParameter.hashCode() -> int
+method final Manifest.NamedParameter.toString() -> java.lang.String
+method final Manifest.Parameter.equals(java.lang.Object) -> boolean
+method final Manifest.Parameter.hashCode() -> int
+method final Manifest.Parameter.toString() -> java.lang.String
+method final Manifest.Parameters.Named.equals(java.lang.Object) -> boolean
+method final Manifest.Parameters.Named.hashCode() -> int
+method final Manifest.Parameters.Named.toString() -> java.lang.String
+method final Manifest.Parameters.Positional.equals(java.lang.Object) -> boolean
+method final Manifest.Parameters.Positional.hashCode() -> int
+method final Manifest.Parameters.Positional.toString() -> java.lang.String
+method final Manifest.PublishedValue.equals(java.lang.Object) -> boolean
+method final Manifest.PublishedValue.hashCode() -> int
+method final Manifest.PublishedValue.toString() -> java.lang.String
+method final Manifest.Reach.Available.equals(java.lang.Object) -> boolean
+method final Manifest.Reach.Available.hashCode() -> int
+method final Manifest.Reach.Available.toString() -> java.lang.String
+method final Manifest.Reach.Unavailable.equals(java.lang.Object) -> boolean
+method final Manifest.Reach.Unavailable.hashCode() -> int
+method final Manifest.Reach.Unavailable.toString() -> java.lang.String
+method final Manifest.Read.equals(java.lang.Object) -> boolean
+method final Manifest.Read.hashCode() -> int
+method final Manifest.Read.toString() -> java.lang.String
+method final Manifest.Required.equals(java.lang.Object) -> boolean
+method final Manifest.Required.hashCode() -> int
+method final Manifest.Required.toString() -> java.lang.String
+method final Manifest.Shape.FunctionOf.equals(java.lang.Object) -> boolean
+method final Manifest.Shape.FunctionOf.hashCode() -> int
+method final Manifest.Shape.FunctionOf.toString() -> java.lang.String
+method final Manifest.Shape.Leaf.equals(java.lang.Object) -> boolean
+method final Manifest.Shape.Leaf.hashCode() -> int
+method final Manifest.Shape.Leaf.toString() -> java.lang.String
+method final Manifest.Shape.ListOf.equals(java.lang.Object) -> boolean
+method final Manifest.Shape.ListOf.hashCode() -> int
+method final Manifest.Shape.ListOf.toString() -> java.lang.String
+method final Manifest.Shape.Option.equals(java.lang.Object) -> boolean
+method final Manifest.Shape.Option.hashCode() -> int
+method final Manifest.Shape.Option.toString() -> java.lang.String
+method final Manifest.Shape.Product.equals(java.lang.Object) -> boolean
+method final Manifest.Shape.Product.hashCode() -> int
+method final Manifest.Shape.Product.toString() -> java.lang.String
+method final Manifest.Signature.equals(java.lang.Object) -> boolean
+method final Manifest.Signature.hashCode() -> int
+method final Manifest.Signature.toString() -> java.lang.String
+method final Manifest.Type.Declared.equals(java.lang.Object) -> boolean
+method final Manifest.Type.Declared.hashCode() -> int
+method final Manifest.Type.Declared.toString() -> java.lang.String
+method final Manifest.Type.Function.equals(java.lang.Object) -> boolean
+method final Manifest.Type.Function.hashCode() -> int
+method final Manifest.Type.Function.toString() -> java.lang.String
+method final Manifest.Type.ListOf.equals(java.lang.Object) -> boolean
+method final Manifest.Type.ListOf.hashCode() -> int
+method final Manifest.Type.ListOf.toString() -> java.lang.String
+method final Manifest.Type.MapOf.equals(java.lang.Object) -> boolean
+method final Manifest.Type.MapOf.hashCode() -> int
+method final Manifest.Type.MapOf.toString() -> java.lang.String
+method final Manifest.Type.Never.equals(java.lang.Object) -> boolean
+method final Manifest.Type.Never.hashCode() -> int
+method final Manifest.Type.Never.toString() -> java.lang.String
+method final Manifest.Type.Nothing.equals(java.lang.Object) -> boolean
+method final Manifest.Type.Nothing.hashCode() -> int
+method final Manifest.Type.Nothing.toString() -> java.lang.String
+method final Manifest.Type.Option.equals(java.lang.Object) -> boolean
+method final Manifest.Type.Option.hashCode() -> int
+method final Manifest.Type.Option.toString() -> java.lang.String
+method final Manifest.Type.Primitive.equals(java.lang.Object) -> boolean
+method final Manifest.Type.Primitive.hashCode() -> int
+method final Manifest.Type.Primitive.toString() -> java.lang.String
+method final Manifest.Type.SetOf.equals(java.lang.Object) -> boolean
+method final Manifest.Type.SetOf.hashCode() -> int
+method final Manifest.Type.SetOf.toString() -> java.lang.String
+method final Manifest.Type.Tuple.equals(java.lang.Object) -> boolean
+method final Manifest.Type.Tuple.hashCode() -> int
+method final Manifest.Type.Tuple.toString() -> java.lang.String
+method final Manifest.Type.Union.equals(java.lang.Object) -> boolean
+method final Manifest.Type.Union.hashCode() -> int
+method final Manifest.Type.Union.toString() -> java.lang.String
+method final Manifest.UnionAnswer.equals(java.lang.Object) -> boolean
+method final Manifest.UnionAnswer.hashCode() -> int
+method final Manifest.UnionAnswer.toString() -> java.lang.String
+method final ValueCrossing.FunctionValue.equals(java.lang.Object) -> boolean
+method final ValueCrossing.FunctionValue.hashCode() -> int
+method final ValueCrossing.FunctionValue.toString() -> java.lang.String
+method final ValueCrossing.Handle.equals(java.lang.Object) -> boolean
+method final ValueCrossing.Handle.hashCode() -> int
+method final ValueCrossing.Handle.toString() -> java.lang.String
+method final ValueCrossing.Listed.equals(java.lang.Object) -> boolean
+method final ValueCrossing.Listed.hashCode() -> int
+method final ValueCrossing.Listed.toString() -> java.lang.String
+method final ValueCrossing.Optional.equals(java.lang.Object) -> boolean
+method final ValueCrossing.Optional.hashCode() -> int
+method final ValueCrossing.Optional.toString() -> java.lang.String
+method final ValueCrossing.Primitive.equals(java.lang.Object) -> boolean
+method final ValueCrossing.Primitive.hashCode() -> int
+method final ValueCrossing.Primitive.toString() -> java.lang.String
+method final ValueCrossing.Tuple.equals(java.lang.Object) -> boolean
+method final ValueCrossing.Tuple.hashCode() -> int
+method final ValueCrossing.Tuple.toString() -> java.lang.String
+method final ValueCrossing.Union.equals(java.lang.Object) -> boolean
+method final ValueCrossing.Union.hashCode() -> int
+method final ValueCrossing.Union.toString() -> java.lang.String
+method static Declarations.at(java.nio.file.Path) -> Declarations
+method static Manifest.Declaration.built(Manifest.Declaration) -> @Nullable Manifest.Construct
+method static Manifest.Parameter.Mode.valueOf(java.lang.String) -> Manifest.Parameter.Mode
+method static Manifest.Parameter.Mode.values() -> Manifest.Parameter.Mode[]
+method static Manifest.Parameter.given(Manifest.Word) -> Manifest.Parameter
+method static Manifest.Parameter.room(Manifest.Word) -> Manifest.Parameter
+method static Manifest.Parameter.slice(Manifest.Word) -> Manifest.Parameter
+method static Manifest.Primitive.valueOf(java.lang.String) -> Manifest.Primitive
+method static Manifest.Primitive.values() -> Manifest.Primitive[]
+method static Manifest.Representation.valueOf(java.lang.String) -> Manifest.Representation
+method static Manifest.Representation.values() -> Manifest.Representation[]
+method static Manifest.Shape.words(java.util.List<Manifest.Shape>) -> java.util.List<Manifest.Word>
+method static Manifest.Type.listed(Manifest.Type) -> @Nullable Manifest.Type
+method static Manifest.Way.valueOf(java.lang.String) -> Manifest.Way
+method static Manifest.Way.values() -> Manifest.Way[]
+method static Manifest.Word.valueOf(java.lang.String) -> Manifest.Word
+method static Manifest.Word.values() -> Manifest.Word[]
+method static Manifest.of(java.util.Map<java.lang.String, java.lang.Integer>, java.util.Map<java.lang.String, java.lang.Integer>, java.util.List<Manifest.CaseCrossing>, java.util.List<Manifest.Module>) -> Manifest
+method static ValueCrossing.shapes(java.util.List<ValueCrossing>) -> java.util.List<Manifest.Shape>
+method static ValueCrossing.types(java.util.List<ValueCrossing>) -> java.util.List<Manifest.Type>
+record BindingInput = (Manifest manifest, Declarations declarations)
+record Manifest.Answer = (Manifest.Type type, @Nullable Manifest.UnionAnswer union)
+record Manifest.Behavior = (java.lang.String name, Manifest.Parameters parameters, Manifest.Answer answers, Manifest.Reach<Manifest.Call> call)
+record Manifest.Call = (Manifest.Function function, Manifest.Crossings crossings)
+record Manifest.Case.Declared = (java.lang.String module, java.lang.String name)
+record Manifest.Case.Language = (java.lang.String name)
+record Manifest.Case.Primitive = (Manifest.Primitive primitive)
+record Manifest.CaseCrossing = (Manifest.Case of, Manifest.Function make, @Nullable Manifest.Function read)
+record Manifest.Construct = (Manifest.Function function, java.util.List<ValueCrossing> takes)
+record Manifest.Construction = (java.lang.String name, java.util.List<Manifest.Required> requires, @Nullable Manifest.Function bind)
+record Manifest.Crossings = (java.util.List<ValueCrossing> takes, ValueCrossing answers)
+record Manifest.Declaration.Newtype = (java.lang.String name, Manifest.Field field, Manifest.Reach<Manifest.Construct> construct, @Nullable Manifest.Function decode, @Nullable Manifest.Function decodeHost, @Nullable Manifest.Function encode)
+record Manifest.Declaration.Product = (java.lang.String name, java.util.List<Manifest.Field> fields, Manifest.Reach<Manifest.Construct> construct, @Nullable Manifest.Function decode, @Nullable Manifest.Function decodeHost, @Nullable Manifest.Function encode)
+record Manifest.Declaration.Sum = (java.lang.String name, java.util.List<Manifest.Case.Declared> cases, @Nullable Manifest.Function which, @Nullable Manifest.Function decode, @Nullable Manifest.Function decodeHost, @Nullable Manifest.Function encode)
+record Manifest.Declaration.Unit = (java.lang.String name, Manifest.Reach<Manifest.Construct> construct, @Nullable Manifest.Function decode, @Nullable Manifest.Function decodeHost, @Nullable Manifest.Function encode)
+record Manifest.Field = (java.lang.String name, Manifest.Type type, Manifest.Reach<Manifest.Read> read)
+record Manifest.Function = (java.lang.String name, java.util.List<Manifest.Parameter> takes, @Nullable Manifest.Word answers)
+record Manifest.FunctionCrossing = (Manifest.Signature signature, @Nullable Manifest.Function call, @Nullable Manifest.FunctionMaking make)
+record Manifest.FunctionMaking = (Manifest.Implementation implementation, java.lang.String implement)
+record Manifest.Implementation = (java.lang.String type, java.util.List<Manifest.Parameter> takes, Manifest.Word answers)
+record Manifest.Injection = (java.lang.String name, java.util.List<Manifest.NamedParameter> parameters, Manifest.Type answers, Manifest.Crossings crossings, Manifest.Implementation implementation, java.lang.String implement)
+record Manifest.ListCrossing = (Manifest.Shape element, @Nullable Manifest.Function construct, @Nullable Manifest.ListRead read)
+record Manifest.ListRead = (Manifest.Function length, Manifest.Function at)
+record Manifest.Module = (java.lang.String name, java.util.List<Manifest.Behavior> behaviors, java.util.List<Manifest.Construction> constructions, java.util.List<Manifest.Injection> injections, java.util.List<Manifest.PublishedValue> values, java.util.List<Manifest.Declaration> declarations, java.util.List<Manifest.ListCrossing> lists, java.util.List<Manifest.FunctionCrossing> functions)
+record Manifest.NamedParameter = (java.lang.String name, Manifest.Type type)
+record Manifest.Parameter = (Manifest.Parameter.Mode mode, Manifest.Word word)
+record Manifest.Parameters.Named = (java.util.List<Manifest.NamedParameter> parameters)
+record Manifest.Parameters.Positional = (java.util.List<Manifest.Type> types)
+record Manifest.PublishedValue = (java.lang.String name, Manifest.Type type, Manifest.Reach<Manifest.Call> read)
+record Manifest.Reach.Available = (T it)
+record Manifest.Reach.Unavailable = ()
+record Manifest.Read = (Manifest.Function function, ValueCrossing answers)
+record Manifest.Required = (java.lang.String module, java.lang.String name)
+record Manifest.Shape.FunctionOf = (Manifest.Signature signature)
+record Manifest.Shape.Leaf = (Manifest.Word word)
+record Manifest.Shape.ListOf = (Manifest.Shape element)
+record Manifest.Shape.Option = (Manifest.Shape of)
+record Manifest.Shape.Product = (java.util.List<Manifest.Shape> of)
+record Manifest.Signature = (java.util.List<Manifest.Shape> takes, Manifest.Shape answers)
+record Manifest.Type.Declared = (java.lang.String module, java.lang.String name)
+record Manifest.Type.Function = (java.util.List<Manifest.Type> takes, Manifest.Type answers)
+record Manifest.Type.ListOf = (Manifest.Type of)
+record Manifest.Type.MapOf = (Manifest.Type key, Manifest.Type value)
+record Manifest.Type.Never = ()
+record Manifest.Type.Nothing = ()
+record Manifest.Type.Option = (Manifest.Type of)
+record Manifest.Type.Primitive = (Manifest.Primitive primitive)
+record Manifest.Type.SetOf = (Manifest.Type of)
+record Manifest.Type.Tuple = (java.util.List<Manifest.Type> of)
+record Manifest.Type.Union = (java.util.List<Manifest.Case> cases)
+record Manifest.UnionAnswer = (java.util.List<Manifest.Case> cases, @Nullable Manifest.Function which)
+record ValueCrossing.FunctionValue = (Manifest.Type.Function type, java.util.List<ValueCrossing> takes, ValueCrossing answers, Manifest.FunctionCrossing crossing)
+record ValueCrossing.Handle = (Manifest.Type.Declared type, Manifest.Word word)
+record ValueCrossing.Listed = (Manifest.Type type, ValueCrossing element, Manifest.ListCrossing crossing)
+record ValueCrossing.Optional = (Manifest.Type.Option type, ValueCrossing of)
+record ValueCrossing.Primitive = (Manifest.Type.Primitive type, Manifest.Word word)
+record ValueCrossing.Tuple = (Manifest.Type.Tuple type, java.util.List<ValueCrossing> members)
+record ValueCrossing.Union = (Manifest.Type.Union type, Manifest.Word word)
+sealed Manifest.Case = Manifest.Case.Declared,Manifest.Case.Language,Manifest.Case.Primitive
+sealed Manifest.Declaration = Manifest.Declaration.Newtype,Manifest.Declaration.Product,Manifest.Declaration.Sum,Manifest.Declaration.Unit
+sealed Manifest.Parameters = Manifest.Parameters.Named,Manifest.Parameters.Positional
+sealed Manifest.Reach = Manifest.Reach.Available,Manifest.Reach.Unavailable
+sealed Manifest.Shape = Manifest.Shape.FunctionOf,Manifest.Shape.Leaf,Manifest.Shape.ListOf,Manifest.Shape.Option,Manifest.Shape.Product
+sealed Manifest.Type = Manifest.Type.Declared,Manifest.Type.Function,Manifest.Type.ListOf,Manifest.Type.MapOf,Manifest.Type.Never,Manifest.Type.Nothing,Manifest.Type.Option,Manifest.Type.Primitive,Manifest.Type.SetOf,Manifest.Type.Tuple,Manifest.Type.Union
+sealed ValueCrossing = ValueCrossing.FunctionValue,ValueCrossing.Handle,ValueCrossing.Listed,ValueCrossing.Optional,ValueCrossing.Primitive,ValueCrossing.Tuple,ValueCrossing.Union
+type BindingApi final class
+type BindingGenerator interface
+type BindingInput record
+type Claimed final class
+type Declarations interface
+type Manifest final class
+type Manifest.Answer record
+type Manifest.Behavior record
+type Manifest.Call record
+type Manifest.Case sealed interface
+type Manifest.Case.Declared record implements Manifest.Case
+type Manifest.Case.Language record implements Manifest.Case
+type Manifest.Case.Primitive record implements Manifest.Case
+type Manifest.CaseCrossing record
+type Manifest.Construct record
+type Manifest.Construction record
+type Manifest.Crossings record
+type Manifest.Declaration sealed interface
+type Manifest.Declaration.Newtype record implements Manifest.Declaration
+type Manifest.Declaration.Product record implements Manifest.Declaration
+type Manifest.Declaration.Sum record implements Manifest.Declaration
+type Manifest.Declaration.Unit record implements Manifest.Declaration
+type Manifest.Field record
+type Manifest.Function record
+type Manifest.FunctionCrossing record
+type Manifest.FunctionMaking record
+type Manifest.Implementation record
+type Manifest.Injection record
+type Manifest.ListCrossing record
+type Manifest.ListRead record
+type Manifest.Module record
+type Manifest.NamedParameter record
+type Manifest.Parameter record
+type Manifest.Parameter.Mode enum
+type Manifest.Parameters sealed interface
+type Manifest.Parameters.Named record implements Manifest.Parameters
+type Manifest.Parameters.Positional record implements Manifest.Parameters
+type Manifest.Primitive enum
+type Manifest.PublishedValue record
+type Manifest.Reach sealed interface<T extends java.lang.Object> 
+type Manifest.Reach.Available record<T extends java.lang.Object>  implements Manifest.Reach<T>
+type Manifest.Reach.Unavailable record<T extends java.lang.Object>  implements Manifest.Reach<T>
+type Manifest.Read record
+type Manifest.Representation enum
+type Manifest.Required record
+type Manifest.Shape sealed interface
+type Manifest.Shape.FunctionOf record implements Manifest.Shape
+type Manifest.Shape.Leaf record implements Manifest.Shape
+type Manifest.Shape.ListOf record implements Manifest.Shape
+type Manifest.Shape.Option record implements Manifest.Shape
+type Manifest.Shape.Product record implements Manifest.Shape
+type Manifest.Signature record
+type Manifest.Type sealed interface
+type Manifest.Type.Declared record implements Manifest.Type
+type Manifest.Type.Function record implements Manifest.Type
+type Manifest.Type.ListOf record implements Manifest.Type
+type Manifest.Type.MapOf record implements Manifest.Type
+type Manifest.Type.Never record implements Manifest.Type
+type Manifest.Type.Nothing record implements Manifest.Type
+type Manifest.Type.Option record implements Manifest.Type
+type Manifest.Type.Primitive record implements Manifest.Type
+type Manifest.Type.SetOf record implements Manifest.Type
+type Manifest.Type.Tuple record implements Manifest.Type
+type Manifest.Type.Union record implements Manifest.Type
+type Manifest.UnionAnswer record
+type Manifest.Way enum
+type Manifest.Word enum
+type NotBindable final class extends java.lang.IllegalArgumentException
+type ValueCrossing sealed interface
+type ValueCrossing.FunctionValue record implements ValueCrossing
+type ValueCrossing.Handle record implements ValueCrossing
+type ValueCrossing.Listed record implements ValueCrossing
+type ValueCrossing.Optional record implements ValueCrossing
+type ValueCrossing.Primitive record implements ValueCrossing
+type ValueCrossing.Tuple record implements ValueCrossing
+type ValueCrossing.Union record implements ValueCrossing

@@ -1,11 +1,14 @@
 package souther.bindings.go;
 
+import souther.bindings.testkit.SoutherBindingTest;
+import souther.bindings.testkit.TestLibrary;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.nativecode.Generated;
-import souther.nativecode.Checked;
+
 import souther.nativecode.Documents;
 import souther.nativecode.NativeCompiler;
+
 
 import java.nio.file.Path;
 import java.util.List;
@@ -181,10 +184,8 @@ class AGoHostHandsNoLibraryWhatAnotherMadeTest {
     @Test
     void aValueOrABindingAnotherLibraryMadeIsRefusedBeforeTheCall(@TempDir Path into)
             throws Exception {
-        NativeCompiler.Library a = NativeCompiler.library(Checked.of(List.of(SHOP)),
-                into.resolve("a"));
-        NativeCompiler.Library b = NativeCompiler.library(Checked.of(List.of(SHOP)),
-                into.resolve("b"));
+        TestLibrary a = SoutherBindingTest.compile(into.resolve("a"), SHOP);
+        TestLibrary b = SoutherBindingTest.compile(into.resolve("b"), SHOP);
         Generated binding = GoHost.generated(a, into.resolve("binding"), "example.com/foreignbinding");
 
         String said = GoHost.ran(into, binding, "example.com/foreignbinding",
