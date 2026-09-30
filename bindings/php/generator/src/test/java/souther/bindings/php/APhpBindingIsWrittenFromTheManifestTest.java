@@ -190,7 +190,8 @@ class APhpBindingIsWrittenFromTheManifestTest {
                 if (crossing.get("case").get("name").stringValue().equals("Int")) {
                     ((ArrayNode) crossing.get("make").get("takes"))
                             .set(0, JSON.readTree("{\"given\":\"string\"}"));
-                    ((ObjectNode) crossing.get("read")).put("answers", "string");
+                    ((ArrayNode) crossing.get("read").get("takes"))
+                            .set(1, JSON.readTree("{\"room\":\"string\"}"));
                 }
             }
         });

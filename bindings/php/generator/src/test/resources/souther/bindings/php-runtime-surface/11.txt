@@ -100,6 +100,7 @@ Souther\Runtime\Session::answered(int $status): void
 Souther\Runtime\Session::bytes(string $bytes): FFI\CData 
 Souther\Runtime\Session::call(): FFI 
 Souther\Runtime\Session::callable(string $binding, FFI\CData $value, Closure $calling): Closure 
+Souther\Runtime\Session::carried(string $read, string $type, FFI\CData $value): FFI\CData 
 Souther\Runtime\Session::constructed(int $status, Closure $made): Raoh\Result 
 Souther\Runtime\Session::constructedAs(string $key, Closure $made): Souther\Runtime\Bound 
 Souther\Runtime\Session::date(Souther\Runtime\Date $date): FFI\CData 

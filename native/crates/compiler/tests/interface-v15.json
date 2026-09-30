@@ -39,9 +39,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "int"
           }
         ],
-        "answers": "int"
+        "answers": "bool"
       }
     },
     {
@@ -63,9 +66,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "string"
           }
         ],
-        "answers": "string"
+        "answers": "bool"
       }
     },
     {
@@ -87,6 +93,9 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "bool"
           }
         ],
         "answers": "bool"
@@ -111,9 +120,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "decimal"
           }
         ],
-        "answers": "decimal"
+        "answers": "bool"
       }
     },
     {
@@ -135,9 +147,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "date"
           }
         ],
-        "answers": "date"
+        "answers": "bool"
       }
     },
     {
@@ -159,9 +174,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "time"
           }
         ],
-        "answers": "time"
+        "answers": "bool"
       }
     },
     {
@@ -183,9 +201,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "datetime"
           }
         ],
-        "answers": "datetime"
+        "answers": "bool"
       }
     },
     {
@@ -207,9 +228,12 @@
         "takes": [
           {
             "given": "value"
+          },
+          {
+            "room": "instant"
           }
         ],
-        "answers": "instant"
+        "answers": "bool"
       }
     },
     {
@@ -482,6 +506,69 @@
                 ],
                 "answers": {
                   "leaf": "int"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "agree",
+          "parameters": {
+            "named": [
+              {
+                "name": "a",
+                "type": {
+                  "kind": "primitive",
+                  "name": "Bool"
+                }
+              },
+              {
+                "name": "b",
+                "type": {
+                  "kind": "primitive",
+                  "name": "Bool"
+                }
+              }
+            ]
+          },
+          "answers": {
+            "type": {
+              "kind": "primitive",
+              "name": "Bool"
+            },
+            "union": null
+          },
+          "call": {
+            "available": {
+              "function": {
+                "name": "souther9_m_shop_b_agree",
+                "takes": [
+                  {
+                    "given": "requirements"
+                  },
+                  {
+                    "given": "bool"
+                  },
+                  {
+                    "given": "bool"
+                  },
+                  {
+                    "room": "bool"
+                  }
+                ],
+                "answers": "status"
+              },
+              "signature": {
+                "takes": [
+                  {
+                    "leaf": "bool"
+                  },
+                  {
+                    "leaf": "bool"
+                  }
+                ],
+                "answers": {
+                  "leaf": "bool"
                 }
               }
             }
@@ -2158,9 +2245,12 @@
               },
               {
                 "slice": "value"
+              },
+              {
+                "room": "list"
               }
             ],
-            "answers": "list"
+            "answers": "bool"
           },
           "read": {
             "length": {
@@ -2206,9 +2296,12 @@
               },
               {
                 "slice": "string"
+              },
+              {
+                "room": "list"
               }
             ],
-            "answers": "list"
+            "answers": "bool"
           },
           "read": {
             "length": {
@@ -2252,9 +2345,12 @@
               },
               {
                 "slice": "int"
+              },
+              {
+                "room": "list"
               }
             ],
-            "answers": "list"
+            "answers": "bool"
           },
           "read": {
             "length": {
@@ -2297,9 +2393,12 @@
               },
               {
                 "slice": "list"
+              },
+              {
+                "room": "list"
               }
             ],
-            "answers": "list"
+            "answers": "bool"
           },
           "read": {
             "length": {

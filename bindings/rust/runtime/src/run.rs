@@ -22,7 +22,7 @@ pub type ScopeOpenFn = unsafe extern "C" fn() -> RawScope;
 
 /// `souther_scope_close`, as a library exports it: whether the scope was the innermost the thread
 /// had open, which it closes only then.
-pub type ScopeCloseFn = unsafe extern "C" fn(RawScope) -> i8;
+pub type ScopeCloseFn = unsafe extern "C" fn(RawScope) -> u8;
 
 /// One library's runtime: the functions that open a scope of its arena and close it, and what its
 /// statuses are numbered.

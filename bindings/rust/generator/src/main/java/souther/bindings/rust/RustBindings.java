@@ -1066,7 +1066,10 @@ public final class RustBindings {
      * makes of it are two blocks and not one inside the other.
      */
     private static String carried(String read, Crossing.Whole whole) {
-        String word = "unsafe { (library.symbols." + read + ")(value) }";
+        // Read as the case the library said the value is, which it answers it is.
+        String word = "{ let mut held = unsafe { std::mem::zeroed() }; if unsafe { (library.symbols."
+                + read + ")(value, &mut held) } == 0 { unreachable!(\"the library read a value as a"
+                + " case it said it is not\") } held }";
         String made = whole.of(List.of("held"));
         return made.equals("held") ? word : "{ let held = " + word + "; " + made + " }";
     }

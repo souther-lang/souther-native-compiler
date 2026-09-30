@@ -189,19 +189,19 @@ type Parts2 = unsafe extern "C" fn(Word, *mut i64, *mut i64);
 /// The runtime's functions a binding reads and makes the words of a value through that are not
 /// the model's own: text, a `Decimal`, and what a reading came to.
 pub struct Words {
-    string_of_utf8: Of3<*const u8, i64, *mut Word, i8>,
+    string_of_utf8: Of3<*const u8, i64, *mut Word, u8>,
     string_length: Of<Word, i64>,
     string_bytes: Of<Word, *const u8>,
-    decimal_of_parts: Of4<*const u8, i64, i64, *mut Word, i8>,
+    decimal_of_parts: Of4<*const u8, i64, i64, *mut Word, u8>,
     decimal_unscaled: Of<Word, Word>,
     decimal_scale: Of<Word, i64>,
-    date_of_parts: Of4<i64, i64, i64, *mut Word, i8>,
+    date_of_parts: Of4<i64, i64, i64, *mut Word, u8>,
     date_parts: Parts3,
-    time_of_parts: Of4<i64, i64, i64, *mut Word, i8>,
+    time_of_parts: Of4<i64, i64, i64, *mut Word, u8>,
     time_parts: Parts3,
-    datetime_of_parts: unsafe extern "C" fn(i64, i64, i64, i64, i64, i64, *mut Word) -> i8,
+    datetime_of_parts: unsafe extern "C" fn(i64, i64, i64, i64, i64, i64, *mut Word) -> u8,
     datetime_parts: Parts6,
-    instant_of_parts: Of3<i64, i64, *mut Word, i8>,
+    instant_of_parts: Of3<i64, i64, *mut Word, u8>,
     instant_parts: Parts2,
     decoded_outcome: Of<Word, i32>,
     decoded_value: Of<Word, Word>,
@@ -336,7 +336,7 @@ impl Words {
         let mut word = std::ptr::null();
         // SAFETY: the bytes are `length` bytes that may be read, `word` is room for a `Word`, and
         // the function is the library's, loaded while `self` is.
-        let made = unsafe {
+        let answered = unsafe {
             (self.decimal_of_parts)(
                 unscaled.as_ptr(),
                 length,
@@ -344,7 +344,7 @@ impl Words {
                 &mut word,
             )
         };
-        made_or_refused(made, word)
+        made(answered, word)
     }
 
     /// A `Decimal` the library answered.
@@ -371,7 +371,7 @@ impl Words {
     pub fn date<L: Loaded>(&self, _run: &mut Run<'_, L>, date: Date) -> Result<Word, Failure> {
         let mut word = std::ptr::null();
         // SAFETY: `word` is room for a `Word`, and the function is the library's.
-        let made = unsafe {
+        let answered = unsafe {
             (self.date_of_parts)(
                 i64::from(date.year()),
                 i64::from(date.month()),
@@ -379,7 +379,7 @@ impl Words {
                 &mut word,
             )
         };
-        made_or_refused(made, word)
+        made(answered, word)
     }
 
     /// A `Date` the library answered.
@@ -401,7 +401,7 @@ impl Words {
     pub fn time<L: Loaded>(&self, _run: &mut Run<'_, L>, time: Time) -> Result<Word, Failure> {
         let mut word = std::ptr::null();
         // SAFETY: as in `date`.
-        let made = unsafe {
+        let answered = unsafe {
             (self.time_of_parts)(
                 i64::from(time.hour()),
                 i64::from(time.minute()),
@@ -409,7 +409,7 @@ impl Words {
                 &mut word,
             )
         };
-        made_or_refused(made, word)
+        made(answered, word)
     }
 
     /// A `Time` the library answered.
@@ -436,7 +436,7 @@ impl Words {
         let (date, time) = (date_time.date(), date_time.time());
         let mut word = std::ptr::null();
         // SAFETY: as in `date`.
-        let made = unsafe {
+        let answered = unsafe {
             (self.datetime_of_parts)(
                 i64::from(date.year()),
                 i64::from(date.month()),
@@ -447,7 +447,7 @@ impl Words {
                 &mut word,
             )
         };
-        made_or_refused(made, word)
+        made(answered, word)
     }
 
     /// A `DateTime` the library answered.
@@ -481,10 +481,10 @@ impl Words {
     ) -> Result<Word, Failure> {
         let mut word = std::ptr::null();
         // SAFETY: as in `date`.
-        let made = unsafe {
+        let answered = unsafe {
             (self.instant_of_parts)(instant.second(), i64::from(instant.nano()), &mut word)
         };
-        made_or_refused(made, word)
+        made(answered, word)
     }
 
     /// An `Instant` the library answered.
@@ -627,11 +627,17 @@ impl<T> Construction<T> {
     }
 }
 
-/// The value a function making one wrote, where it answered that it made one.
+/// The value a function making one wrote, where it answered that it made one: for this crate and
+/// for generated code, which makes a list the same way.
 ///
 /// A value this crate hands over is one of its own types, each held where it is made to what the
-/// library takes, so a refusal is the library and this binding disagreeing about what a value is.
-fn made_or_refused(made: i8, word: Word) -> Result<Word, Failure> {
+/// library takes, and a list is one of a Rust slice's length, so a refusal is the library and this
+/// binding disagreeing about what a value is.
+///
+/// # Errors
+///
+/// [`Failure::ProtocolViolation`] where it answered that it made none.
+pub fn made(made: u8, word: Word) -> Result<Word, Failure> {
     if made != 0 {
         Ok(word)
     } else {

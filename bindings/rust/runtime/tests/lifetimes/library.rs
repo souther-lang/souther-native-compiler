@@ -7,7 +7,7 @@ extern "C" fn open() -> RawScope {
     RawScope(0)
 }
 
-extern "C" fn close(_: RawScope) -> i8 { 1 }
+extern "C" fn close(_: RawScope) -> u8 { 1 }
 
 #[allow(dead_code)]
 fn runtime() -> Runtime {

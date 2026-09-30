@@ -44,7 +44,9 @@ pub use failure::{
     Abort, CallbackFailure, Failure, HostError, Status, Statuses, UnnamedStatus, crossing,
 };
 pub use keep::{FunctionImplementFn, HostedFunction};
-pub use native::{ABI_GENERATION, Construction, LoadError, NativeLibrary, Reading, Word, Words};
+pub use native::{
+    ABI_GENERATION, Construction, LoadError, NativeLibrary, Reading, Word, Words, made,
+};
 pub use run::{
     AlreadyRunning, Held, HostFailure, Loaded, RawScope, Run, Runtime, Scope, ScopeCloseFn,
     ScopeOpenFn, host, implemented, run,

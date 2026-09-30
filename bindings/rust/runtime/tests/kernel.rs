@@ -45,7 +45,7 @@ macro_rules! library {
                 RawScope(token)
             }
 
-            pub extern "C" fn close(scope: RawScope) -> i8 {
+            pub extern "C" fn close(scope: RawScope) -> u8 {
                 let stood = OPEN.with(|it| {
                     let mut open = it.borrow_mut();
                     match open.last() {

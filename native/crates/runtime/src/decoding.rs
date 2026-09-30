@@ -203,11 +203,11 @@ unsafe fn admitted_text<'a>(
 
 /// Begins reading `length` bytes at `bytes` as a document in the external form.
 ///
+/// A count below nought is no document, and the reading comes to that: malformed at byte nought.
+///
 /// # Safety
-/// `bytes` points at `length` bytes that may be read, for as long as this call runs: nothing
-/// after it reads them.
-/// # Panics
-/// Where the length is below nought.
+/// `bytes` points at `length` bytes that may be read, where `length` is above nought, for as long
+/// as this call runs: nothing after it reads them.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decode_begin(bytes: *const u8, length: Count) -> *mut Decoding {
     unsafe { begun(bytes, length, Form::Text) }
@@ -223,8 +223,6 @@ pub unsafe extern "C" fn souther_decode_begin(bytes: *const u8, length: Count) -
 ///
 /// # Safety
 /// As [`souther_decode_begin`].
-/// # Panics
-/// As [`souther_decode_begin`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decode_host_begin(
     bytes: *const u8,
@@ -236,14 +234,13 @@ pub unsafe extern "C" fn souther_decode_host_begin(
 /// # Safety
 /// As [`souther_decode_begin`].
 unsafe fn begun(bytes: *const u8, length: Count, form: Form) -> *mut Decoding {
-    let length =
-        usize::try_from(length.0).expect("a document is handed over as bytes, never fewer");
-    let bytes = if length == 0 {
-        &[]
-    } else {
-        unsafe { std::slice::from_raw_parts(bytes, length) }
+    // A count below nought is no document: the text stops being JSON before it starts.
+    let parsing = match usize::try_from(length.0) {
+        Ok(0) => parsed(&[], form),
+        Ok(length) => parsed(unsafe { std::slice::from_raw_parts(bytes, length) }, form),
+        Err(_) => Err(souther_json_syntax::Malformed { at: 0 }),
     };
-    let (document, malformed_at) = match parsed(bytes, form) {
+    let (document, malformed_at) = match parsing {
         Ok(root) => (Box::into_raw(Box::new(root)), -1),
         Err(malformed) => (ptr::null_mut(), malformed.at as i64),
     };
@@ -1445,12 +1442,11 @@ pub unsafe extern "C" fn souther_decoded_issue_count(decoded: *const Decoding) -
     Count(unsafe { (*decoded).count })
 }
 
-/// The issue at `at`, counting from nought in the order they were found.
+/// The issue at `at`, counting from nought in the order they were found, or null where there is
+/// none there: a place is a number a host can have wrong, and it is answered as that.
 ///
 /// # Safety
 /// As [`souther_decoded_outcome`].
-/// # Panics
-/// Where there is no issue at `at`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decoded_issue(
     decoded: *const Decoding,
@@ -1458,11 +1454,9 @@ pub unsafe extern "C" fn souther_decoded_issue(
 ) -> *const Issue {
     let Count(at) = at;
     let decoded = unsafe { &*decoded };
-    assert!(
-        (0..decoded.count).contains(&at),
-        "an issue is asked for by where it stands among the {} there are",
-        decoded.count
-    );
+    if !(0..decoded.count).contains(&at) {
+        return ptr::null();
+    }
     unsafe { *decoded.issues.add(at as usize) }
 }
 

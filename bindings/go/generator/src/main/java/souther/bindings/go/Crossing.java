@@ -356,7 +356,12 @@ sealed interface Crossing {
             body.close();
             List<String> handed = new ArrayList<>(List.of("C.int64_t(" + count + ")"));
             columns.forEach(column -> handed.add(body.imports.souther() + ".Addr(" + column + ")"));
-            body.line(into.getFirst() + " = " + body.call(construct, handed));
+            handed.add("&" + into.getFirst());
+            // A Go slice has a count a list has, so the library refusing one is it and this
+            // binding disagreeing.
+            body.open("if " + body.call(construct, handed) + " == 0")
+                    .line(body.err() + " := " + body.imports.souther() + ".ErrProtocolViolation")
+                    .line(body.fail).close();
         }
 
         /** Each element read into room of its own, in order. */
@@ -488,8 +493,12 @@ sealed interface Crossing {
                 body.label("case " + place + ":");
                 String held = words.getFirst();
                 if (member.read() != null) {
+                    // Read as the case the library said the value is, which it answers it is.
                     held = body.temp("held");
-                    body.line(held + " := " + body.call(member.read(), List.of(words.getFirst())));
+                    body.line("var " + held + " " + local(member.whole().shape().word(), body.imports));
+                    body.open("if " + body.call(member.read(), List.of(words.getFirst(), "&" + held))
+                            + " == 0").line("panic(\"the library read a value as a case it said it is not\")")
+                            .close();
                 }
                 body.line(union + " = " + member.inUnion(member.whole().of(body, List.of(held)),
                         type(body.imports)));

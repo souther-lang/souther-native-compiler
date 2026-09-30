@@ -1,12 +1,12 @@
 generation 9
 answers [0, 2147483647]
-case CaseCrossing { case: "Bool", make: RuntimeFunction { name: "souther_case_bool_make", takes: [Given(Bool)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_bool_read", takes: [Given(Value)], answers: Some(Bool) }) }
-case CaseCrossing { case: "Date", make: RuntimeFunction { name: "souther_case_date_make", takes: [Given(Date)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_date_read", takes: [Given(Value)], answers: Some(Date) }) }
-case CaseCrossing { case: "DateTime", make: RuntimeFunction { name: "souther_case_datetime_make", takes: [Given(DateTime)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_datetime_read", takes: [Given(Value)], answers: Some(DateTime) }) }
-case CaseCrossing { case: "Decimal", make: RuntimeFunction { name: "souther_case_decimal_make", takes: [Given(Decimal)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_decimal_read", takes: [Given(Value)], answers: Some(Decimal) }) }
+case CaseCrossing { case: "Bool", make: RuntimeFunction { name: "souther_case_bool_make", takes: [Given(Bool)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_bool_read", takes: [Given(Value), Room(Bool)], answers: Some(Bool) }) }
+case CaseCrossing { case: "Date", make: RuntimeFunction { name: "souther_case_date_make", takes: [Given(Date)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_date_read", takes: [Given(Value), Room(Date)], answers: Some(Bool) }) }
+case CaseCrossing { case: "DateTime", make: RuntimeFunction { name: "souther_case_datetime_make", takes: [Given(DateTime)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_datetime_read", takes: [Given(Value), Room(DateTime)], answers: Some(Bool) }) }
+case CaseCrossing { case: "Decimal", make: RuntimeFunction { name: "souther_case_decimal_make", takes: [Given(Decimal)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_decimal_read", takes: [Given(Value), Room(Decimal)], answers: Some(Bool) }) }
 case CaseCrossing { case: "DivisionByZero", make: RuntimeFunction { name: "souther_case_division_by_zero_make", takes: [], answers: Some(Value) }, read: None }
-case CaseCrossing { case: "Instant", make: RuntimeFunction { name: "souther_case_instant_make", takes: [Given(Instant)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_instant_read", takes: [Given(Value)], answers: Some(Instant) }) }
-case CaseCrossing { case: "Int", make: RuntimeFunction { name: "souther_case_int_make", takes: [Given(Int)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_int_read", takes: [Given(Value)], answers: Some(Int) }) }
+case CaseCrossing { case: "Instant", make: RuntimeFunction { name: "souther_case_instant_make", takes: [Given(Instant)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_instant_read", takes: [Given(Value), Room(Instant)], answers: Some(Bool) }) }
+case CaseCrossing { case: "Int", make: RuntimeFunction { name: "souther_case_int_make", takes: [Given(Int)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_int_read", takes: [Given(Value), Room(Int)], answers: Some(Bool) }) }
 case CaseCrossing { case: "None", make: RuntimeFunction { name: "souther_case_none_make", takes: [], answers: Some(Value) }, read: None }
 case CaseCrossing { case: "NotADate", make: RuntimeFunction { name: "souther_case_not_a_date_make", takes: [], answers: Some(Value) }, read: None }
 case CaseCrossing { case: "NotAFiniteDecimal", make: RuntimeFunction { name: "souther_case_not_a_finite_decimal_make", takes: [], answers: Some(Value) }, read: None }
@@ -14,8 +14,8 @@ case CaseCrossing { case: "NotANumber", make: RuntimeFunction { name: "souther_c
 case CaseCrossing { case: "NotATime", make: RuntimeFunction { name: "souther_case_not_a_time_make", takes: [], answers: Some(Value) }, read: None }
 case CaseCrossing { case: "NotWhole", make: RuntimeFunction { name: "souther_case_not_whole_make", takes: [], answers: Some(Value) }, read: None }
 case CaseCrossing { case: "Some", make: RuntimeFunction { name: "souther_case_some_make", takes: [], answers: Some(Value) }, read: None }
-case CaseCrossing { case: "String", make: RuntimeFunction { name: "souther_case_string_make", takes: [Given(String)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_string_read", takes: [Given(Value)], answers: Some(String) }) }
-case CaseCrossing { case: "Time", make: RuntimeFunction { name: "souther_case_time_make", takes: [Given(Time)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_time_read", takes: [Given(Value)], answers: Some(Time) }) }
+case CaseCrossing { case: "String", make: RuntimeFunction { name: "souther_case_string_make", takes: [Given(String)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_string_read", takes: [Given(Value), Room(String)], answers: Some(Bool) }) }
+case CaseCrossing { case: "Time", make: RuntimeFunction { name: "souther_case_time_make", takes: [Given(Time)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_time_read", takes: [Given(Value), Room(Time)], answers: Some(Bool) }) }
 const ANSWERED = 0
 const CAPABILITY_ENVIRONMENT = 8
 const CAPABILITY_INVOKE = 0
@@ -259,6 +259,10 @@ host RuntimeFunction { name: "souther_string_length", takes: [Given(String)], an
 host RuntimeFunction { name: "souther_string_of_utf8", takes: [Given(Bytes), Given(Count), Room(String)], answers: Some(Bool) }
 host RuntimeFunction { name: "souther_time_of_parts", takes: [Given(Int), Given(Int), Given(Int), Room(Time)], answers: Some(Bool) }
 host RuntimeFunction { name: "souther_time_parts", takes: [Given(Time), Room(Int), Room(Int), Room(Int)], answers: None }
+input bool: a byte, true where it is not nought
+input bytes: read for as many as the count says where the count is above nought; a count below nought is a datum refused, and what the bytes say is a datum
+input datum: answered whatever it is; one a function does not take is refused by what it answers, and ends nothing
+input handle: one the library answered, of the type the function names, whose scope is open on the calling thread
 reserved 2147483632..=2147483647
 runtime says souther_runtime_abi_9
 scope arena: one to each thread
@@ -273,25 +277,25 @@ status INJECTION_UNBOUND = 2147483645
 storage souther_capability: 2 slots of 8 bytes, aligned to 8
 storage souther_hosted: 2 slots of 8 bytes, aligned to 8
 storage souther_hosted_function: 3 slots of 8 bytes, aligned to 8
-word bool: U8
-word bytes: Address
-word capability: Address
-word case: U32
-word count: I64
-word date: Address
-word datetime: Address
-word decimal: Address
-word decoded: Address
-word function: Address
-word instant: Address
-word int: I64
-word issue: Address
-word list: Address
-word outcome: I32
-word requirements: Address
-word scope: I64
-word status: U32
-word string: Address
-word time: Address
-word userdata: Address
-word value: Address
+word bool: U8, datum
+word bytes: Address, datum
+word capability: Address, handle
+word case: U32, datum
+word count: I64, datum
+word date: Address, handle
+word datetime: Address, handle
+word decimal: Address, handle
+word decoded: Address, handle
+word function: Address, handle
+word instant: Address, handle
+word int: I64, datum
+word issue: Address, handle
+word list: Address, handle
+word outcome: I32, datum
+word requirements: Address, handle
+word scope: I64, datum
+word status: U32, datum
+word string: Address, handle
+word time: Address, handle
+word userdata: Address, handle
+word value: Address, handle

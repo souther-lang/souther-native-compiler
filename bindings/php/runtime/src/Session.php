@@ -393,7 +393,24 @@ final class Session
                 $held[$column][$at] = $word;
             }
         }
-        return $ffi->{$construct}($count, ...$held);
+        $list = $ffi->new('souther_list');
+        return $this->made($ffi->{$construct}($count, ...[...$held, FFI::addr($list)]), $list, 'list');
+    }
+
+    /**
+     * @internal What `$value`, a value of a union the library said is a case holding a primitive,
+     * holds: read by `$read` into room of `$type`, the case's word as the declarations spell it.
+     * The library answers whether the value is that case, and a value it said is and reads as not
+     * is it and this binding disagreeing.
+     */
+    public function carried(string $read, string $type, CData $value): CData
+    {
+        $ffi = $this->ffi();
+        $room = $ffi->new($type);
+        if ($ffi->{$read}($value, FFI::addr($room)) === 0) {
+            throw new \LogicException('the library read a value as a case it said it is not');
+        }
+        return $room;
     }
 
     /**

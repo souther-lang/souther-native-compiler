@@ -595,7 +595,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_case_int_read",
-            shape_of(souther_case_int_read as unsafe extern "C" fn(*const Value) -> i64),
+            shape_of(souther_case_int_read as unsafe extern "C" fn(*const Value, *mut i64) -> i8),
         ),
         (
             "souther_case_bool_make",
@@ -603,7 +603,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_case_bool_read",
-            shape_of(souther_case_bool_read as unsafe extern "C" fn(*const Value) -> i8),
+            shape_of(souther_case_bool_read as unsafe extern "C" fn(*const Value, *mut i8) -> i8),
         ),
         (
             "souther_case_string_make",
@@ -611,7 +611,10 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_case_string_read",
-            shape_of(souther_case_string_read as unsafe extern "C" fn(*const Value) -> T),
+            shape_of(
+                souther_case_string_read
+                    as unsafe extern "C" fn(*const Value, *mut *mut Text) -> i8,
+            ),
         ),
         (
             "souther_case_decimal_make",
@@ -620,7 +623,8 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_case_decimal_read",
             shape_of(
-                souther_case_decimal_read as unsafe extern "C" fn(*const Value) -> *const Decimal,
+                souther_case_decimal_read
+                    as unsafe extern "C" fn(*const Value, *mut *mut Decimal) -> i8,
             ),
         ),
         (
@@ -869,7 +873,9 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_case_date_read",
-            shape_of(souther_case_date_read as unsafe extern "C" fn(*const Value) -> *const Date),
+            shape_of(
+                souther_case_date_read as unsafe extern "C" fn(*const Value, *mut *mut Date) -> i8,
+            ),
         ),
         (
             "souther_date_of_parts",
@@ -959,7 +965,9 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_case_time_read",
-            shape_of(souther_case_time_read as unsafe extern "C" fn(*const Value) -> *const Time),
+            shape_of(
+                souther_case_time_read as unsafe extern "C" fn(*const Value, *mut *mut Time) -> i8,
+            ),
         ),
         (
             "souther_time_literal",
@@ -990,7 +998,8 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_case_datetime_read",
             shape_of(
-                souther_case_datetime_read as unsafe extern "C" fn(*const Value) -> *const DateTime,
+                souther_case_datetime_read
+                    as unsafe extern "C" fn(*const Value, *mut *mut DateTime) -> i8,
             ),
         ),
         (
@@ -1024,7 +1033,8 @@ fn functions() -> Vec<(&'static str, Shape)> {
         (
             "souther_case_instant_read",
             shape_of(
-                souther_case_instant_read as unsafe extern "C" fn(*const Value) -> *const Instant,
+                souther_case_instant_read
+                    as unsafe extern "C" fn(*const Value, *mut *mut Instant) -> i8,
             ),
         ),
         (
@@ -1595,11 +1605,15 @@ fn a_case_a_host_makes_reads_back_as_what_it_holds() {
     let which = |value: *const Value| unsafe { value.cast::<*const u8>().read() };
     let int = souther_case_int_make(-42);
     assert_eq!(which(int), CASE_INT.as_ptr());
-    assert_eq!(unsafe { souther_case_int_read(int) }, -42);
+    let mut number = 0;
+    assert_eq!(unsafe { souther_case_int_read(int, &mut number) }, 1);
+    assert_eq!(number, -42);
     for truth in [0, 1] {
         let bool = souther_case_bool_make(truth);
         assert_eq!(which(bool), CASE_BOOL.as_ptr());
-        assert_eq!(unsafe { souther_case_bool_read(bool) }, truth);
+        let mut read = 9;
+        assert_eq!(unsafe { souther_case_bool_read(bool, &mut read) }, 1);
+        assert_eq!(read, truth);
     }
     // SAFETY: three bytes of UTF-8 at the address handed over.
     let mut text = std::ptr::null_mut();
@@ -1607,10 +1621,262 @@ fn a_case_a_host_makes_reads_back_as_what_it_holds() {
     assert_eq!(admitted, 1, "test text has a place");
     let string = souther_case_string_make(text);
     assert_eq!(which(string), CASE_STRING.as_ptr());
-    assert_eq!(
-        unsafe { souther_case_string_read(string) },
-        text.cast_const()
-    );
+    let mut read = std::ptr::null_mut();
+    assert_eq!(unsafe { souther_case_string_read(string, &mut read) }, 1);
+    assert_eq!(read, text);
     assert_eq!(which(souther_case_none_make()), CASE_NONE.as_ptr());
     souther_scope_close(scope);
+}
+
+/// What each function a host calls is held to of what a host hands it
+/// ([`souther_native_abi::HOST_INPUT_CONTRACT`]).
+enum Hostile {
+    /// It takes nothing but handles, and what a handle is, is the host's to hold to.
+    HandlesOnly,
+    /// It is called here with what a host can have wrong, and answers each as a refusal.
+    Refuses(fn()),
+}
+
+/// Every function a host calls, and what it answers a host that hands it what it does not take.
+/// A function a host calls that is missing here, or said to take only handles while it takes a
+/// datum, fails [`every_function_a_host_calls_answers_what_it_is_handed`].
+fn hostile() -> Vec<(&'static str, Hostile)> {
+    use Hostile::{HandlesOnly, Refuses};
+    vec![
+        (
+            "souther_scope_open",
+            Refuses(|| {
+                // Takes nothing, and every token it answers is closed by the one close for it.
+                let scope = souther_scope_open();
+                assert_eq!(souther_scope_close(scope), 1);
+            }),
+        ),
+        (
+            "souther_scope_close",
+            Refuses(|| {
+                for token in [i64::MIN, -1, 0, i64::MAX] {
+                    assert_eq!(souther_scope_close(Scope(token)), 0, "{token}");
+                }
+            }),
+        ),
+        (
+            "souther_string_of_utf8",
+            Refuses(|| {
+                let scope = souther_scope_open();
+                let mut out = std::ptr::null_mut();
+                let not_text = [0xff_u8, 0xfe, b'a'];
+                for (bytes, count) in [
+                    (&not_text[..], 3),
+                    (&b"abc"[..], -1),
+                    (&b"abc"[..], i64::MIN),
+                ] {
+                    let made =
+                        unsafe { souther_string_of_utf8(bytes.as_ptr(), Count(count), &mut out) };
+                    assert_eq!(made, 0, "{bytes:?} counted {count}");
+                }
+                souther_scope_close(scope);
+            }),
+        ),
+        ("souther_string_length", HandlesOnly),
+        ("souther_string_bytes", HandlesOnly),
+        (
+            "souther_decimal_of_parts",
+            Refuses(|| {
+                let scope = souther_scope_open();
+                let mut out = std::ptr::null_mut();
+                for (digits, count, scale) in [
+                    (&b"1.5"[..], 3, 0),
+                    (&[0xff_u8][..], 1, 0),
+                    (&b"15"[..], -1, 0),
+                    (&b"15"[..], 2, i64::MAX),
+                    (&b"15"[..], 2, i64::MIN),
+                ] {
+                    let made = unsafe {
+                        souther_decimal_of_parts(digits.as_ptr(), Count(count), scale, &mut out)
+                    };
+                    assert_eq!(made, 0, "{digits:?} counted {count} at {scale}");
+                }
+                souther_scope_close(scope);
+            }),
+        ),
+        ("souther_decimal_unscaled", HandlesOnly),
+        ("souther_decimal_scale", HandlesOnly),
+        (
+            "souther_date_of_parts",
+            Refuses(|| {
+                let mut out = std::ptr::null_mut();
+                for [y, m, d] in [
+                    [i64::MIN, 1, 1],
+                    [2026, -1, 1],
+                    [2026, 2, 30],
+                    [i64::MAX; 3],
+                ] {
+                    assert_eq!(unsafe { souther_date_of_parts(y, m, d, &mut out) }, 0);
+                }
+            }),
+        ),
+        ("souther_date_parts", HandlesOnly),
+        (
+            "souther_time_of_parts",
+            Refuses(|| {
+                let mut out = std::ptr::null_mut();
+                for [h, m, s] in [[-1, 0, 0], [24, 0, 0], [0, 60, 0], [i64::MAX; 3]] {
+                    assert_eq!(unsafe { souther_time_of_parts(h, m, s, &mut out) }, 0);
+                }
+            }),
+        ),
+        ("souther_time_parts", HandlesOnly),
+        (
+            "souther_datetime_of_parts",
+            Refuses(|| {
+                let mut out = std::ptr::null_mut();
+                for [y, mo, d, h, mi, s] in [[i64::MIN, 1, 1, 0, 0, 0], [2026, 1, 1, 0, 0, -1]] {
+                    assert_eq!(
+                        unsafe { souther_datetime_of_parts(y, mo, d, h, mi, s, &mut out) },
+                        0
+                    );
+                }
+            }),
+        ),
+        ("souther_datetime_parts", HandlesOnly),
+        (
+            "souther_instant_of_parts",
+            Refuses(|| {
+                let mut out = std::ptr::null_mut();
+                for [s, n] in [[i64::MIN, 0], [i64::MAX, 0], [0, -1], [0, i64::MAX]] {
+                    assert_eq!(unsafe { souther_instant_of_parts(s, n, &mut out) }, 0);
+                }
+            }),
+        ),
+        ("souther_instant_parts", HandlesOnly),
+        ("souther_decoded_outcome", HandlesOnly),
+        ("souther_decoded_value", HandlesOnly),
+        ("souther_decoded_malformed_at", HandlesOnly),
+        ("souther_decoded_issue_count", HandlesOnly),
+        (
+            "souther_decoded_issue",
+            Refuses(|| {
+                let scope = souther_scope_open();
+                let document = b"[]";
+                let decoded = unsafe { souther_decode_begin(document.as_ptr(), Count(2)) };
+                for at in [i64::MIN, -1, 0, i64::MAX] {
+                    assert!(unsafe { souther_decoded_issue(decoded, Count(at)) }.is_null());
+                }
+                // And a count below nought is a document that is none, and ends nothing.
+                let none = unsafe { souther_decode_begin(document.as_ptr(), Count(-1)) };
+                assert_eq!(unsafe { souther_decoded_malformed_at(none) }, Count(0));
+                souther_scope_close(scope);
+            }),
+        ),
+        ("souther_issue_code", HandlesOnly),
+        ("souther_issue_message_key", HandlesOnly),
+        ("souther_issue_path", HandlesOnly),
+        ("souther_issue_meta", HandlesOnly),
+        (
+            "souther_case_int_make",
+            Refuses(|| {
+                // Every Int is one.
+                for number in [i64::MIN, -1, i64::MAX] {
+                    let scope = souther_scope_open();
+                    let mut read = 0;
+                    let made = souther_case_int_make(number);
+                    assert_eq!(unsafe { souther_case_int_read(made, &mut read) }, 1);
+                    assert_eq!(read, number);
+                    souther_scope_close(scope);
+                }
+            }),
+        ),
+        (
+            "souther_case_bool_make",
+            Refuses(|| {
+                let scope = souther_scope_open();
+                for (byte, is) in [(0, 0), (1, 1), (2, 1), (-1, 1)] {
+                    let mut read = 9;
+                    let made = souther_case_bool_make(byte);
+                    assert_eq!(unsafe { souther_case_bool_read(made, &mut read) }, 1);
+                    assert_eq!(read, is, "{byte}");
+                }
+                souther_scope_close(scope);
+            }),
+        ),
+        ("souther_case_string_make", HandlesOnly),
+        ("souther_case_decimal_make", HandlesOnly),
+        ("souther_case_date_make", HandlesOnly),
+        ("souther_case_time_make", HandlesOnly),
+        ("souther_case_datetime_make", HandlesOnly),
+        ("souther_case_instant_make", HandlesOnly),
+        ("souther_case_some_make", HandlesOnly),
+        ("souther_case_none_make", HandlesOnly),
+        ("souther_case_division_by_zero_make", HandlesOnly),
+        ("souther_case_not_a_number_make", HandlesOnly),
+        ("souther_case_not_a_date_make", HandlesOnly),
+        ("souther_case_not_a_time_make", HandlesOnly),
+        ("souther_case_not_whole_make", HandlesOnly),
+        ("souther_case_not_a_finite_decimal_make", HandlesOnly),
+        ("souther_case_int_read", Refuses(read_as_another_case)),
+        ("souther_case_bool_read", Refuses(read_as_another_case)),
+        ("souther_case_string_read", Refuses(read_as_another_case)),
+        ("souther_case_decimal_read", Refuses(read_as_another_case)),
+        ("souther_case_date_read", Refuses(read_as_another_case)),
+        ("souther_case_time_read", Refuses(read_as_another_case)),
+        ("souther_case_datetime_read", Refuses(read_as_another_case)),
+        ("souther_case_instant_read", Refuses(read_as_another_case)),
+    ]
+}
+
+/// Which case a value is, is read off the value: a value of one case read as every other is
+/// answered as that, and read as its own is not.
+fn read_as_another_case() {
+    let scope = souther_scope_open();
+    let none = souther_case_none_make();
+    let int = souther_case_int_make(7);
+    unsafe {
+        let mut i = 0;
+        let mut b = 0;
+        let mut s = std::ptr::null_mut();
+        let mut d = std::ptr::null_mut();
+        let mut date = std::ptr::null_mut();
+        let mut time = std::ptr::null_mut();
+        let mut dt = std::ptr::null_mut();
+        let mut instant = std::ptr::null_mut();
+        for value in [none, int] {
+            assert_eq!(souther_case_bool_read(value, &mut b), 0);
+            assert_eq!(souther_case_string_read(value, &mut s), 0);
+            assert_eq!(souther_case_decimal_read(value, &mut d), 0);
+            assert_eq!(souther_case_date_read(value, &mut date), 0);
+            assert_eq!(souther_case_time_read(value, &mut time), 0);
+            assert_eq!(souther_case_datetime_read(value, &mut dt), 0);
+            assert_eq!(souther_case_instant_read(value, &mut instant), 0);
+        }
+        assert_eq!(souther_case_int_read(none, &mut i), 0);
+        assert_eq!(souther_case_int_read(int, &mut i), 1);
+        assert_eq!(i, 7);
+    }
+    souther_scope_close(scope);
+}
+
+/// Every function a host calls answers every datum it takes, as
+/// [`souther_native_abi::HOST_INPUT_CONTRACT`] says; and
+/// each is held here: one said to take only handles takes no datum, and one that takes a datum is
+/// called with what a host can have wrong. A function a host calls that this does not name fails
+/// it, so the next one is held too. A call that ends the process fails the run that makes it.
+#[test]
+fn every_function_a_host_calls_answers_what_it_is_handed() {
+    let hostile = hostile();
+    let named: BTreeSet<&str> = hostile.iter().map(|(name, _)| *name).collect();
+    let called: BTreeSet<&str> = host_functions().iter().map(|it| it.name).collect();
+    assert_eq!(named, called, "every function a host calls, and no other");
+    for (name, held) in hostile {
+        let function = host_functions()
+            .into_iter()
+            .find(|it| it.name == name)
+            .expect("named above");
+        let takes_a_datum = function.takes.iter().any(
+            |it| matches!(it, souther_native_abi::HostParameter::Given(word) if word.is_datum()),
+        );
+        match held {
+            Hostile::HandlesOnly => assert!(!takes_a_datum, "{name} takes a datum"),
+            Hostile::Refuses(call) => call(),
+        }
+    }
 }

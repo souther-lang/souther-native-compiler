@@ -89,12 +89,16 @@ class AHostHandsOverATemporalAsTheNumbersItMeansTest {
                 souther_status refused = souther@_m_cal_b_parsed(NULL, 2026, 2, 29, &none);
                 printf("parsed: status %u case %u ", status,
                        souther@_m_cal_b_parsed_answer_case(named));
-                date(souther_case_date_read(named));
+                souther_date named_day = NULL;
+                souther_case_date_read(named, &named_day);
+                date(named_day);
                 printf(", status %u case %u\\n", refused, souther@_m_cal_b_parsed_answer_case(none));
 
                 souther_value made_case = souther_case_date_make(day);
                 printf("made: case %u ", souther@_m_cal_b_parsed_answer_case(made_case));
-                date(souther_case_date_read(made_case));
+                souther_date made_day = NULL;
+                souther_case_date_read(made_case, &made_day);
+                date(made_day);
                 printf("\\n");
 
                 souther_datetime at = NULL;

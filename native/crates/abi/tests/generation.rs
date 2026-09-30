@@ -80,9 +80,10 @@ fn surface() -> BTreeSet<String> {
     lines.insert(format!("reserved {RESERVED:?}"));
     for word in HostWord::ALL {
         lines.insert(format!(
-            "word {}: {:?}",
+            "word {}: {:?}, {}",
             word.spelt(),
-            word.representation()
+            word.representation(),
+            if word.is_datum() { "datum" } else { "handle" }
         ));
     }
     for storage in HOST_STORAGE {
@@ -90,6 +91,9 @@ fn surface() -> BTreeSet<String> {
             "storage {}: {} slots of {SLOT} bytes, aligned to {SLOT}",
             storage.name, storage.slots
         ));
+    }
+    for (name, promise) in HOST_INPUT_CONTRACT {
+        lines.insert(format!("input {name}: {promise}"));
     }
     for (name, promise) in SCOPE_CONTRACT {
         lines.insert(format!("scope {name}: {promise}"));

@@ -445,12 +445,12 @@ sealed interface Crossing {
                         .append(");");
             }
             block.append(" } let count = i64::try_from(elements.len()).expect(\"a list's length is a"
-                    + " 64-bit count\"); unsafe { (library.symbols.").append(construct)
-                    .append(")(count");
+                    + " 64-bit count\"); let mut list = std::ptr::null(); let made = unsafe {"
+                    + " (library.symbols.").append(construct).append(")(count");
             for (int column = 0; column < words.size(); column++) {
                 block.append(", column").append(column).append(".as_ptr()");
             }
-            block.append(") } }");
+            block.append(", &mut list) }; rt::made(made, list)? }");
             return List.of(block.toString());
         }
 

@@ -102,10 +102,8 @@ use transport::{
 /// ending without a value, and the two are told apart by which channel answers for them.
 const NO_ARM: u8 = 2;
 
-/// A host handing a list's constructor a count no list holds: below nought, or past what room can
-/// be counted for. A trap for the reason [`NO_ARM`] is one: no Souther computation came to this,
-/// and a status would say one had.
-const COUNT_NO_LIST_HOLDS: u8 = 3;
+// 3 was a host handing a list's constructor a count no list holds, which is a datum and is now
+// answered as that (`HOST_INPUT_CONTRACT`); no trap is for what a host hands over.
 
 /// A walk that writes a value finding its result other than its work expects: a form where work
 /// is about to leave one, or none where work is about to take one. A trap for the reason

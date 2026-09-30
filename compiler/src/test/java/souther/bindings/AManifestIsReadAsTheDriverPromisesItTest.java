@@ -274,12 +274,13 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         List<Manifest.Parameter> built = new ArrayList<>(
                 List.of(Manifest.Parameter.given(Manifest.Word.COUNT)));
         element.words().forEach(word -> built.add(Manifest.Parameter.slice(word)));
+        built.add(Manifest.Parameter.room(Manifest.Word.LIST));
         List<Manifest.Parameter> at = new ArrayList<>(List.of(
                 Manifest.Parameter.given(Manifest.Word.LIST),
                 Manifest.Parameter.given(Manifest.Word.COUNT)));
         element.words().forEach(word -> at.add(Manifest.Parameter.room(word)));
         return new Manifest.ListCrossing(element,
-                new Manifest.Function(name + "_construct", built, Manifest.Word.LIST),
+                new Manifest.Function(name + "_construct", built, Manifest.Word.BOOL),
                 new Manifest.ListRead(new Manifest.Function(name + "_length",
                         List.of(Manifest.Parameter.given(Manifest.Word.LIST)), Manifest.Word.COUNT),
                         new Manifest.Function(name + "_at", at, Manifest.Word.BOOL)));

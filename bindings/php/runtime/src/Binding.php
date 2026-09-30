@@ -58,7 +58,9 @@ abstract class Binding
             . 'and a refusal is a LogicException; the text java.time writes is only for PHP to show '
             . '(Session::date and the rest, Calendar); and a library is asked its ABI generation '
             . 'before anything else and refused where it is not this runtime\'s '
-            . '(NativeLibrary::ABI_GENERATION, UnsupportedGeneration)',
+            . '(NativeLibrary::ABI_GENERATION, UnsupportedGeneration); a primitive a union carries '
+            . 'is read through Session::carried, which the library answers whether the value is that '
+            . 'case for',
     ];
 
     /**

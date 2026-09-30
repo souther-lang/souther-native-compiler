@@ -32,7 +32,7 @@ class AHostCallsALibraryThroughItsHeaderTest {
     private static final String SHOP = """
             module shop exposing ( Money, Line, Free, Paid, Owed, Settled, Outcome, settle, owing, stillOwing : Int,
                                    charge, quantityOf, Basket, counted, doubled, discounted, pair, deep,
-                                   pairs, either, Partial, rated )
+                                   pairs, either, Partial, rated, agree )
 
             data Money = Int
                 invariant notNegative = value >= 0
@@ -61,6 +61,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 | Settled -> 0
 
             behavior stillOwing = settle >-> owing
+
+            behavior agree : (a: Bool, b: Bool) -> Bool
+            let agree (a, b) = a == b
 
             behavior charge : (paid: Int) -> Owed | Settled
             let charge (paid) = if paid > 0 then Free else Owed { amount = Money(1), overdue = true }
@@ -216,15 +219,22 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 souther_value none_counted = NULL;
                 souther_status nothing = souther@_m_shop_b_quantityOf(NULL, 0, &none_counted);
                 souther_value made = souther_case_int_make(7);
+                int64_t five = 0, seven = 0, none = 9;
+                souther_case_int_read(counted_five, &five);
+                souther_case_int_read(made, &seven);
+                uint8_t read_none = souther_case_int_read(none_counted, &none);
                 printf("counted: status %u, case %u, quantity %" PRId64 ", status %u, case %u,"
-                       " made case %u quantity %" PRId64 "\\n", status,
-                       souther@_m_shop_b_quantityOf_answer_case(counted_five),
-                       souther_case_int_read(counted_five), nothing,
+                       " made case %u quantity %" PRId64 ", none read %u %" PRId64 "\\n", status,
+                       souther@_m_shop_b_quantityOf_answer_case(counted_five), five, nothing,
                        souther@_m_shop_b_quantityOf_answer_case(none_counted),
-                       souther@_m_shop_b_quantityOf_answer_case(made), souther_case_int_read(made));
+                       souther@_m_shop_b_quantityOf_answer_case(made), seven, read_none, none);
 
                 const souther_value both[2] = {line, line};
-                souther_list lines = souther@_m_shop_l_value_construct(2, both);
+                souther_list lines = NULL;
+                souther@_m_shop_l_value_construct(2, both, &lines);
+                souther_list refused = NULL;
+                uint8_t counted_off = souther@_m_shop_l_value_construct(-1, both, &refused);
+                printf("refused: %u %d\\n", counted_off, refused == NULL);
                 souther_value second = NULL;
                 uint8_t inside = souther@_m_shop_l_value_at(lines, 1, &second);
                 souther_value past = NULL;
@@ -242,11 +252,14 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
                 const uint8_t there[2] = {0, 1};
                 const souther_string said[2] = {NULL, note};
-                souther_list notes = souther@_m_shop_l_o_string_construct(2, there, said);
+                souther_list notes = NULL;
+                souther@_m_shop_l_o_string_construct(2, there, said, &notes);
                 const int64_t ones[1] = {1};
-                const souther_list rows[2] = {souther@_m_shop_l_int_construct(1, ones),
-                                              souther@_m_shop_l_int_construct(0, NULL)};
-                souther_list groups = souther@_m_shop_l_l_int_construct(2, rows);
+                souther_list rows[2] = {NULL, NULL};
+                souther@_m_shop_l_int_construct(1, ones, &rows[0]);
+                souther@_m_shop_l_int_construct(0, NULL, &rows[1]);
+                souther_list groups = NULL;
+                souther@_m_shop_l_l_int_construct(2, rows, &groups);
                 souther_value basket = NULL;
                 status = souther@_m_shop_t_Basket_construct(lines, notes, groups, &basket);
                 uint8_t first_there = 9;
@@ -294,6 +307,15 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 decoded("read", "{\\"price\\": 4, \\"quantity\\": 5}");
                 decoded("read wrong", "{\\"price\\": -1, \\"quantity\\": 5}");
                 decoded("not json", "{\\"price\\"");
+                souther_decoded counted_below = NULL;
+                souther@_m_shop_t_Line_decode((const uint8_t *) "{}", -1, &counted_below);
+                printf("counted below: %d, malformed at %" PRId64 "\\n",
+                       souther_decoded_outcome(counted_below) == SOUTHER_DECODED_MALFORMED,
+                       souther_decoded_malformed_at(counted_below));
+                uint8_t agreed = 9, disagreed = 9;
+                souther@_m_shop_b_agree(NULL, 2, 1, &agreed);
+                souther@_m_shop_b_agree(NULL, 2, 0, &disagreed);
+                printf("agreed: %u %u\\n", agreed, disagreed);
 
                 souther_decimal price = NULL;
                 souther_decimal_of_parts((const uint8_t *) "1999", 4, 2, &price);
@@ -303,7 +325,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 souther_decimal_of_parts((const uint8_t *) "-0", 2, 7, &nought);
                 souther_value rated = NULL;
                 status = souther@_m_shop_b_rated(NULL, price, rate, &rated);
-                souther_decimal product = souther_case_decimal_read(rated);
+                souther_decimal product = NULL;
+                souther_case_decimal_read(rated, &product);
                 souther_value unrated = NULL;
                 souther_status free_rated = souther@_m_shop_b_rated(NULL, price, nought, &unrated);
                 printf("rated: status %u, case %u, ", status, souther@_m_shop_b_rated_answer_case(rated));
@@ -408,16 +431,27 @@ class AHostCallsALibraryThroughItsHeaderTest {
             $noneCounted = $ffi->new("souther_value");
             $nothing = $ffi->souther@_m_shop_b_quantityOf(null, 0, FFI::addr($noneCounted));
             $made = $ffi->souther_case_int_make(7);
+            $five = $ffi->new("int64_t");
+            $ffi->souther_case_int_read($countedFive, FFI::addr($five));
+            $seven = $ffi->new("int64_t");
+            $ffi->souther_case_int_read($made, FFI::addr($seven));
+            $none = $ffi->new("int64_t");
+            $none->cdata = 9;
+            $readNone = $ffi->souther_case_int_read($noneCounted, FFI::addr($none));
             echo "counted: status $status, case ", $ffi->souther@_m_shop_b_quantityOf_answer_case($countedFive),
-                    ", quantity ", $ffi->souther_case_int_read($countedFive), ", status $nothing, case ",
+                    ", quantity ", $five->cdata, ", status $nothing, case ",
                     $ffi->souther@_m_shop_b_quantityOf_answer_case($noneCounted), ", made case ",
                     $ffi->souther@_m_shop_b_quantityOf_answer_case($made), " quantity ",
-                    $ffi->souther_case_int_read($made), "\n";
+                    $seven->cdata, ", none read $readNone ", $none->cdata, "\n";
 
             $both = $ffi->new("souther_value[2]");
             $both[0] = $line;
             $both[1] = $line;
-            $lines = $ffi->souther@_m_shop_l_value_construct(2, $both);
+            $lines = $ffi->new("souther_list");
+            $ffi->souther@_m_shop_l_value_construct(2, $both, FFI::addr($lines));
+            $refused = $ffi->new("souther_list");
+            $below = $ffi->souther@_m_shop_l_value_construct(-1, $both, FFI::addr($refused));
+            echo "refused: $below ", (int) FFI::isNull($refused), "\n";
             $second = $ffi->new("souther_value");
             $inside = $ffi->souther@_m_shop_l_value_at($lines, 1, FFI::addr($second));
             $past = $ffi->new("souther_value");
@@ -439,13 +473,15 @@ class AHostCallsALibraryThroughItsHeaderTest {
             $said = $ffi->new("souther_string[2]");
             $said[0] = null;
             $said[1] = $note;
-            $notes = $ffi->souther@_m_shop_l_o_string_construct(2, $there, $said);
+            $notes = $ffi->new("souther_list");
+            $ffi->souther@_m_shop_l_o_string_construct(2, $there, $said, FFI::addr($notes));
             $ones = $ffi->new("int64_t[1]");
             $ones[0] = 1;
             $rows = $ffi->new("souther_list[2]");
-            $rows[0] = $ffi->souther@_m_shop_l_int_construct(1, $ones);
-            $rows[1] = $ffi->souther@_m_shop_l_int_construct(0, null);
-            $groups = $ffi->souther@_m_shop_l_l_int_construct(2, $rows);
+            $ffi->souther@_m_shop_l_int_construct(1, $ones, FFI::addr($rows[0]));
+            $ffi->souther@_m_shop_l_int_construct(0, null, FFI::addr($rows[1]));
+            $groups = $ffi->new("souther_list");
+            $ffi->souther@_m_shop_l_l_int_construct(2, $rows, FFI::addr($groups));
             $basket = $ffi->new("souther_value");
             $status = $ffi->souther@_m_shop_t_Basket_construct($lines, $notes, $groups, FFI::addr($basket));
             $firstThere = $ffi->new("uint8_t");
@@ -491,6 +527,16 @@ class AHostCallsALibraryThroughItsHeaderTest {
             decoded($ffi, "read", '{"price": 4, "quantity": 5}');
             decoded($ffi, "read wrong", '{"price": -1, "quantity": 5}');
             decoded($ffi, "not json", '{"price"');
+            $countedBelow = $ffi->new("souther_decoded");
+            $ffi->souther@_m_shop_t_Line_decode(bytes($ffi, "{}"), -1, FFI::addr($countedBelow));
+            echo "counted below: ",
+                    (int) ($ffi->souther_decoded_outcome($countedBelow) === $ffi->SOUTHER_DECODED_MALFORMED),
+                    ", malformed at ", $ffi->souther_decoded_malformed_at($countedBelow), "\n";
+            $agreed = $ffi->new("uint8_t");
+            $disagreed = $ffi->new("uint8_t");
+            $ffi->souther@_m_shop_b_agree(null, 2, 1, FFI::addr($agreed));
+            $ffi->souther@_m_shop_b_agree(null, 2, 0, FFI::addr($disagreed));
+            echo "agreed: ", $agreed->cdata, " ", $disagreed->cdata, "\n";
 
             $price = $ffi->new("souther_decimal");
             $ffi->souther_decimal_of_parts(bytes($ffi, "1999"), 4, 2, FFI::addr($price));
@@ -500,7 +546,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
             $ffi->souther_decimal_of_parts(bytes($ffi, "-0"), 2, 7, FFI::addr($nought));
             $rated = $ffi->new("souther_value");
             $status = $ffi->souther@_m_shop_b_rated(null, $price, $rate, FFI::addr($rated));
-            $product = $ffi->souther_case_decimal_read($rated);
+            $product = $ffi->new("souther_decimal");
+            $ffi->souther_case_decimal_read($rated, FFI::addr($product));
             $unrated = $ffi->new("souther_value");
             $freeRated = $ffi->souther@_m_shop_b_rated(null, $price, $nought, FFI::addr($unrated));
             echo "rated: status $status, case ", $ffi->souther@_m_shop_b_rated_answer_case($rated), ", ",
@@ -520,7 +567,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
             line: status 0, note 1 gift wrap
             settled: status 0, case 3, amount 4, owing 0 4
             charged: status 0, case 0, status 0, case 1
-            counted: status 0, case 1, quantity 5, status 0, case 0, made case 1 quantity 7
+            counted: status 0, case 1, quantity 5, status 0, case 0, made case 1 quantity 7, none read 0 9
+            refused: 0 1
             lines: length 2, at 1 1 quantity 2, at 2 0, at -1 0, untouched 1, counted 0 2, doubled 0 2
             basket: status 0, notes 0 1 1 gift wrap, group 1 1, written {"lines":[{"price":3,"quantity":2,"note":"gift wrap"},{"price":3,"quantity":2,"note":"gift wrap"}],"notes":[null,"gift wrap"],"groups":[[1],[]]}
             pair: status 0, 3 1, deep: status 0, 1 0 1
@@ -529,6 +577,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
             read: status 0, quantity 5
             read wrong: status 0, [/price out_of_range]
             not json: status 0, malformed at 8
+            counted below: 1, malformed at 0
+            agreed: 1 0
             rated: status 0, case 0, 299850 at 5, status 0, case 1, nought 0 at 7
             """;
 

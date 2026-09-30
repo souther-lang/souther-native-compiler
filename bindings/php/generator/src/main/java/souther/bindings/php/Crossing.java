@@ -715,9 +715,13 @@ sealed interface Crossing {
 
         /** The PHP expression making a value of this member out of the union's value {@code word}. */
         String of(String word, String session) {
-            return whole.of(List.of(carried == null ? word
-                    : session + "->ffi()->" + java.util.Objects.requireNonNull(carried.read()).name()
-                    + "(" + word + ")"), session);
+            if (carried == null) {
+                return whole.of(List.of(word), session);
+            }
+            Word held = java.util.Objects.requireNonNull(carried.holds());
+            return whole.of(List.of(fromRoom(held, session + "->carried('"
+                    + java.util.Objects.requireNonNull(carried.read()).name() + "', '"
+                    + storage(held) + "', " + word + ")")), session);
         }
     }
 

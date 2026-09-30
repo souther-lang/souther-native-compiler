@@ -619,7 +619,8 @@ public final class Manifest {
      * What a list whose elements cross in the shape {@code element} is built through, where a host
      * hands one over, and read through, where it is handed one: a list of one declared type
      * through the same functions as a list of any other. Each function is of the shape a list of
-     * that element is: {@code (count, a slice for each word an element crosses as) -> list}, and
+     * that element is: {@code (count, a slice for each word an element crosses as, room for the list)
+     * -> bool}, answering whether the count is one a list has, and
      * {@code (list) -> count} and {@code (list, index, room for each word) -> bool}. At least one
      * of the two is there.
      */
@@ -632,9 +633,11 @@ public final class Manifest {
                         + " read");
             }
             if (construct != null) {
+                // The list written through room, and whether the count was one a list has.
                 List<Parameter> built = new ArrayList<>(List.of(Parameter.given(Word.COUNT)));
                 element.words().forEach(word -> built.add(Parameter.slice(word)));
-                if (!built.equals(construct.takes()) || construct.answers() != Word.LIST) {
+                built.add(Parameter.room(Word.LIST));
+                if (!built.equals(construct.takes()) || construct.answers() != Word.BOOL) {
                     throw new IllegalArgumentException("a list of " + element + " is built through "
                             + construct.name() + ", which takes " + construct.takes()
                             + " and answers " + construct.answers());
@@ -1056,9 +1059,13 @@ public final class Manifest {
                         + read.name()) + ", where a primitive holds itself and a case the language"
                         + " gives nothing");
             }
-            if (make.answers() != Word.VALUE || (read != null && (!read.takes().equals(
-                    List.of(Parameter.given(Word.VALUE))) || read.answers() == null
-                    || !make.takes().equals(List.of(Parameter.given(read.answers())))))
+            // Read by writing what the value holds through room and answering whether the value is
+            // this case, which is read off the value.
+            if (make.answers() != Word.VALUE || (read != null && (read.takes().size() != 2
+                    || !read.takes().getFirst().equals(Parameter.given(Word.VALUE))
+                    || read.takes().get(1).mode() != Parameter.Mode.ROOM
+                    || read.answers() != Word.BOOL
+                    || !make.takes().equals(List.of(Parameter.given(read.takes().get(1).word())))))
                     || (read == null && !make.takes().isEmpty())) {
                 throw new IllegalArgumentException(of + " is made by " + make + " and read by " + read
                         + ", which are not one value and what it holds, both ways");
@@ -1067,7 +1074,7 @@ public final class Manifest {
 
         /** The word what a value of this case holds is handed over as, where it holds one. */
         public @Nullable Word holds() {
-            return read == null ? null : read.answers();
+            return read == null ? null : read.takes().get(1).word();
         }
     }
 }

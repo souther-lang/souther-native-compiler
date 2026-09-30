@@ -46,9 +46,8 @@
 //! the manifest say it defines are one decision.
 
 use super::{
-    COUNT_NO_LIST_HOLDS, Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, Tagged,
-    accepted, into_slot, invocation_signature, machine_type, not_lowered, out_of_slot, out_slot,
-    token_of,
+    Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, Tagged, accepted, into_slot,
+    invocation_signature, machine_type, not_lowered, out_of_slot, out_slot, token_of,
 };
 use crate::codec::write::Writing;
 use crate::codec::{Codecs, Runtime};
@@ -344,6 +343,12 @@ fn take(
     given: &mut dyn Iterator<Item = ir::Value>,
 ) -> ir::Value {
     match shape {
+        // A host's truth is a byte, true where it is not nought: read so here, where every word a
+        // host hands over becomes a value, so that no value holds a third truth.
+        HostShape::Leaf(HostLeaf::Bool) => {
+            let byte = given.next().expect("a word for every value handed over");
+            builder.ins().icmp_imm_u(IntCC::NotEqual, byte, 0)
+        }
         HostShape::Leaf(_) | HostShape::List(_) | HostShape::Function { .. } => {
             given.next().expect("a word for every value handed over")
         }
@@ -1420,10 +1425,11 @@ fn define_list(
         std::slice::from_ref(element),
         HostParameter::Slice,
     ));
+    takes.push(HostParameter::Room(HostWord::List));
     let constructing = HostFunction {
         symbol: symbol(HostListOperation::Construct),
         takes,
-        answers: Some(HostWord::List),
+        answers: Some(HostWord::Bool),
     };
     let construct = if built {
         Some(expose(
@@ -1667,26 +1673,33 @@ fn function_making(
 const MOST_ELEMENTS: i64 = (i64::MAX - room_for_list(0)) / SLOT;
 
 /// A host's constructor of a list: room for the count it was handed, and each element, taken from
-/// what each column holds at its index, put in its slot.
+/// what each column holds at its index, put in its slot; the list is written through the host's
+/// room and one answered.
 ///
 /// A column holds one word for each element, as many bytes apart as the word is wide. A count below
-/// nought, or past what room can be taken for, is a host handing over something no list is; it
-/// traps rather than being read as some count a list could have, which would write past the room.
+/// nought, or past what room can be taken for, is a count no list has: a datum a host has wrong,
+/// which is answered as nought with nothing written rather than read as some count a list could
+/// have, which would write past the room.
 fn construct(
     builder: &mut FunctionBuilder,
     making: &mut Making,
     element: &HostShape,
     given: &[ir::Value],
 ) {
-    let (count, columns) = given.split_first().expect("a count before the columns");
-    let count = *count;
+    let [count, columns @ .., into] = given else {
+        unreachable!("a count, the columns, and room for the list")
+    };
+    let (count, into) = (*count, *into);
     let beyond = builder
         .ins()
         .icmp_imm_s(IntCC::UnsignedGreaterThan, count, MOST_ELEMENTS);
-    builder.ins().trapnz(
-        beyond,
-        TrapCode::user(COUNT_NO_LIST_HOLDS).expect("a trap code of its own"),
-    );
+    let refused = builder.create_block();
+    let counted = builder.create_block();
+    builder.ins().brif(beyond, refused, &[], counted, &[]);
+    builder.switch_to_block(refused);
+    let no = builder.ins().iconst(types::I8, 0);
+    builder.ins().return_(&[no]);
+    builder.switch_to_block(counted);
     let along = builder.ins().imul_imm_s(count, SLOT);
     let size = builder.ins().iadd_imm_s(along, room_for_list(0));
     let taking = making
@@ -1727,7 +1740,9 @@ fn construct(
     builder.ins().jump(head, &[next.into()]);
 
     builder.switch_to_block(built);
-    builder.ins().return_(&[list]);
+    builder.ins().store(TRUSTED, list, into, 0);
+    let yes = builder.ins().iconst(types::I8, 1);
+    builder.ins().return_(&[yes]);
 }
 
 /// A host's reader of a list's element: one, with the element written through the host's room,

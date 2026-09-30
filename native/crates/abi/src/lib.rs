@@ -1560,6 +1560,37 @@ pub const SCOPE_OPEN: &str = "souther_scope_open";
 /// the token was the innermost open scope of the calling thread.
 pub const SCOPE_CLOSE: &str = "souther_scope_close";
 
+/// What a host function takes of what a host hands it, in the words a generation records.
+///
+/// A host hands over data and handles. Data ([`HostWord::is_datum`]) is a number, a truth, a count,
+/// a scope's token, or the bytes a pointer and a count describe: anything a host can have wrong
+/// while holding it rightly, and everything the runtime can tell is wrong by looking. So every
+/// function a host calls, the runtime's and every one generated for a library, answers every datum,
+/// and refuses one it does not take by what it answers — `false`, an absent value, a reading that
+/// came to nothing — and never by ending the process. A handle is an address the library answered:
+/// what it points at is the library's, and the runtime cannot tell one that is not what it was
+/// answered as without reading it as that. So a handle a function takes is one the library
+/// answered, of the type the function names, whose scope is still open on the calling thread; that
+/// is the one thing a host holds to, as a C caller holds a pointer to what it points at.
+pub const HOST_INPUT_CONTRACT: &[(&str, &str)] = &[
+    (
+        "datum",
+        "answered whatever it is; one a function does not take is refused by what it answers, \
+         and ends nothing",
+    ),
+    (
+        "bytes",
+        "read for as many as the count says where the count is above nought; a count below \
+         nought is a datum refused, and what the bytes say is a datum",
+    ),
+    ("bool", "a byte, true where it is not nought"),
+    (
+        "handle",
+        "one the library answered, of the type the function names, whose scope is open on the \
+         calling thread",
+    ),
+];
+
 /// What a scope promises and what the runtime holds of it, in the words a generation records.
 ///
 /// Written as data so that the record of a generation holds it: a change to any of these is a
@@ -1935,6 +1966,35 @@ impl HostWord {
         HostWord::Userdata,
         HostWord::Function,
     ];
+
+    /// Whether a host hands this word over as data, which every host function answers whatever
+    /// it is ([`HOST_INPUT_CONTRACT`]), and not as a handle to what the library holds.
+    pub const fn is_datum(self) -> bool {
+        match self {
+            HostWord::Status
+            | HostWord::Int
+            | HostWord::Bool
+            | HostWord::Case
+            | HostWord::Outcome
+            | HostWord::Count
+            | HostWord::Scope
+            | HostWord::Bytes => true,
+            HostWord::Value
+            | HostWord::String
+            | HostWord::Decimal
+            | HostWord::Date
+            | HostWord::Time
+            | HostWord::DateTime
+            | HostWord::Instant
+            | HostWord::Decoded
+            | HostWord::Issue
+            | HostWord::List
+            | HostWord::Requirements
+            | HostWord::Capability
+            | HostWord::Userdata
+            | HostWord::Function => false,
+        }
+    }
 
     /// What the word is on the machine.
     pub const fn representation(self) -> Representation {
@@ -2329,8 +2389,9 @@ pub struct CaseCrossing {
     pub case: &'static str,
     /// `(what the case holds, where it holds something) -> value`.
     pub make: RuntimeFunction,
-    /// `(value) -> what it holds`, for a case that holds something. Called only on a value a test
-    /// of which case it is has said is this case, and nothing is asked of it again.
+    /// `(value, room for what it holds) -> bool`, for a case that holds something: what the value
+    /// holds is written where the value is this case, and whether it is is answered. Which case a
+    /// value is, is read off the value, so a value of another case is answered as that.
     pub read: Option<RuntimeFunction>,
 }
 
@@ -2338,7 +2399,7 @@ pub struct CaseCrossing {
 /// order that names them. The runtime's own tests hold each function to the one it names, and the
 /// cases to that table.
 pub const HOST_CASES: &[CaseCrossing] = {
-    use HostParameter::Given;
+    use HostParameter::{Given, Room};
     use HostWord::{Bool, Date, DateTime, Decimal, Instant, Int, String, Time, Value};
     const fn holding(
         case: &'static str,
@@ -2356,8 +2417,18 @@ pub const HOST_CASES: &[CaseCrossing] = {
             },
             read: Some(RuntimeFunction {
                 name: read,
-                takes: &[Given(Value)],
-                answers: Some(word),
+                takes: match word {
+                    Int => &[Given(Value), Room(Int)],
+                    Bool => &[Given(Value), Room(Bool)],
+                    String => &[Given(Value), Room(String)],
+                    Decimal => &[Given(Value), Room(Decimal)],
+                    Date => &[Given(Value), Room(Date)],
+                    Time => &[Given(Value), Room(Time)],
+                    DateTime => &[Given(Value), Room(DateTime)],
+                    Instant => &[Given(Value), Room(Instant)],
+                    _ => panic!("a case holds a primitive"),
+                },
+                answers: Some(Bool),
             }),
         }
     }

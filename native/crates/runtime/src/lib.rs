@@ -391,45 +391,32 @@ pub unsafe extern "C" fn souther_string_concat(
 /// by the language's Unicode version, whatever the host's own is, and within what a `String` holds
 /// (`souther_text::admitted`). So every string holds text as the language says a string is,
 /// whoever made it. `out` is written and `1` answered where it is; nothing is written and `0` is
-/// answered where its canonical value has no place a `String` holds — a binding turns that into
-/// whatever it calls `RequiredFormHasNoPlace`.
+/// answered where there is no `String` of the bytes: a count below nought, bytes that are not
+/// UTF-8, or text whose canonical value has no place a `String` holds. The runtime decides all
+/// three and ends nothing on any of them; a binding that wants to tell them apart, to say which a
+/// host's text was, checks the first two itself, as each of this repository's does, and turns the
+/// third into whatever it calls `RequiredFormHasNoPlace`.
 ///
 /// # Safety
 ///
-/// `bytes` points at `length` bytes that may be read, and `out` is room for the address of a
-/// `Text`.
-///
-/// # Panics
-///
-/// Where the length is below nought, or the bytes are not UTF-8, which ends the process: a panic
-/// does not leave a function a C caller called. A host that hands over what is no text has no
-/// string to be answered with, and Rust's own `&str` and PHP's own UTF-8 check already hold a
-/// binding to handing over text before it calls this, so an invalid byte sequence reaching here is
-/// a binding's own contract violated and not a value this answers `0` for: `0` means only that the
-/// text's canonical value has no place, never that it was not text.
+/// `bytes` points at `length` bytes that may be read, where `length` is above nought, and `out` is
+/// room for the address of a `Text`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_of_utf8(
     bytes: *const u8,
     length: Count,
     out: *mut *mut Text,
 ) -> i8 {
-    let held =
-        usize::try_from(length.0).expect("text is handed over as bytes, and never fewer than 0");
+    let Ok(held) = usize::try_from(length.0) else {
+        return unsafe { answered(None, out) };
+    };
     let bytes = if held == 0 {
         &[][..]
     } else {
         unsafe { std::slice::from_raw_parts(bytes, held) }
     };
-    let admitted = match souther_text::admitted(bytes, STRING_HOLDS) {
-        Ok(admitted) => admitted,
-        Err(souther_text::AdmissionRefusal::NotText) => {
-            panic!("text handed to a Souther library is UTF-8")
-        }
-        Err(souther_text::AdmissionRefusal::NoPlace) => {
-            return unsafe { answered(None, out) };
-        }
-    };
-    unsafe { answered(Some(string_of(&admitted)), out) }
+    let admitted = souther_text::admitted(bytes, STRING_HOLDS).ok();
+    unsafe { answered(admitted.as_deref().map(string_of), out) }
 }
 
 /// How many bytes of text the string carries, for the same caller.
@@ -531,19 +518,18 @@ fn carried(token: &[u8; 1], held: Option<i64>) -> *const Value {
     room.cast_const().cast()
 }
 
-/// What a value carrying a primitive holds.
+/// What a value of a union carrying the primitive whose case `token` is holds, or none where the
+/// value is another case: which case a value is, is read off the value, so a host asking a value
+/// for a case it is not is answered that and not handed what another case's slot holds.
 ///
 /// # Safety
 ///
-/// `value` is a value of a union that a test of which case it is said is the primitive's case: what
-/// is read is not asked again here, as a run reading one out after the same test does not ask.
-unsafe fn held(value: *const Value) -> i64 {
+/// `value` is a value of a union the library answered, and the scope it was made in is open.
+unsafe fn held(value: *const Value, token: &[u8; 1]) -> Option<i64> {
     unsafe {
-        value
-            .cast::<u8>()
-            .add(CARRIED as usize)
-            .cast::<i64>()
-            .read()
+        let at = value.cast::<u8>();
+        let which = at.add(WHICH as usize).cast::<i64>().read();
+        (which == token.as_ptr() as i64).then(|| at.add(CARRIED as usize).cast::<i64>().read())
     }
 }
 
@@ -553,30 +539,36 @@ pub extern "C" fn souther_case_int_make(value: i64) -> *const Value {
     carried(&CASE_INT, Some(value))
 }
 
-/// What a value of a union that is the case `Int` holds.
+/// What a value of a union that is the case `Int` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Int`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_int_read(value: *const Value) -> i64 {
-    unsafe { held(value) }
+pub unsafe extern "C" fn souther_case_int_read(value: *const Value, out: *mut i64) -> i8 {
+    unsafe { answered(held(value, &CASE_INT), out) }
 }
 
 /// A `Bool` carried as a case of a union: nought or one in its slot, as generated code widens one.
+/// A host's byte is a `Bool` by being nought or not, so any other byte is `true`, and the slot
+/// never holds a third value.
 #[unsafe(no_mangle)]
 pub extern "C" fn souther_case_bool_make(value: i8) -> *const Value {
-    carried(&CASE_BOOL, Some(i64::from(value as u8)))
+    carried(&CASE_BOOL, Some(i64::from(value != 0)))
 }
 
-/// What a value of a union that is the case `Bool` holds.
+/// What a value of a union that is the case `Bool` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Bool`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_bool_read(value: *const Value) -> i8 {
-    (unsafe { held(value) } & 0xff) as u8 as i8
+pub unsafe extern "C" fn souther_case_bool_read(value: *const Value, out: *mut i8) -> i8 {
+    unsafe { answered(held(value, &CASE_BOOL).map(|it| i8::from(it != 0)), out) }
 }
 
 /// A `String` carried as a case of a union: its address in the slot, the text where it was.
@@ -585,14 +577,16 @@ pub extern "C" fn souther_case_string_make(value: *const Text) -> *const Value {
     carried(&CASE_STRING, Some(value as i64))
 }
 
-/// What a value of a union that is the case `String` holds.
+/// What a value of a union that is the case `String` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `String`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_string_read(value: *const Value) -> *const Text {
-    (unsafe { held(value) }) as *const Text
+pub unsafe extern "C" fn souther_case_string_read(value: *const Value, out: *mut *mut Text) -> i8 {
+    unsafe { answered(held(value, &CASE_STRING).map(|it| it as *mut Text), out) }
 }
 
 /// A `Decimal` carried as a case of a union: its address in the slot, the value where it was.
@@ -601,14 +595,19 @@ pub extern "C" fn souther_case_decimal_make(value: *const Decimal) -> *const Val
     carried(&CASE_DECIMAL, Some(value as i64))
 }
 
-/// What a value of a union that is the case `Decimal` holds.
+/// What a value of a union that is the case `Decimal` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Decimal`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_decimal_read(value: *const Value) -> *const Decimal {
-    (unsafe { held(value) }) as *const Decimal
+pub unsafe extern "C" fn souther_case_decimal_read(
+    value: *const Value,
+    out: *mut *mut Decimal,
+) -> i8 {
+    unsafe { answered(held(value, &CASE_DECIMAL).map(|it| it as *mut Decimal), out) }
 }
 
 /// A `Date` carried as a case of a union: its address in the slot, the value where it was.
@@ -617,14 +616,16 @@ pub extern "C" fn souther_case_date_make(value: *const Date) -> *const Value {
     carried(&CASE_DATE, Some(value as i64))
 }
 
-/// What a value of a union that is the case `Date` holds.
+/// What a value of a union that is the case `Date` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Date`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_date_read(value: *const Value) -> *const Date {
-    (unsafe { held(value) }) as *const Date
+pub unsafe extern "C" fn souther_case_date_read(value: *const Value, out: *mut *mut Date) -> i8 {
+    unsafe { answered(held(value, &CASE_DATE).map(|it| it as *mut Date), out) }
 }
 
 /// A `Time` carried as a case of a union: its address in the slot, the value where it was.
@@ -633,14 +634,16 @@ pub extern "C" fn souther_case_time_make(value: *const Time) -> *const Value {
     carried(&CASE_TIME, Some(value as i64))
 }
 
-/// What a value of a union that is the case `Time` holds.
+/// What a value of a union that is the case `Time` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Time`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_time_read(value: *const Value) -> *const Time {
-    (unsafe { held(value) }) as *const Time
+pub unsafe extern "C" fn souther_case_time_read(value: *const Value, out: *mut *mut Time) -> i8 {
+    unsafe { answered(held(value, &CASE_TIME).map(|it| it as *mut Time), out) }
 }
 
 /// A `DateTime` carried as a case of a union: its address in the slot, the value where it was.
@@ -649,14 +652,24 @@ pub extern "C" fn souther_case_datetime_make(value: *const DateTime) -> *const V
     carried(&CASE_DATETIME, Some(value as i64))
 }
 
-/// What a value of a union that is the case `DateTime` holds.
+/// What a value of a union that is the case `DateTime` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `DateTime`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_datetime_read(value: *const Value) -> *const DateTime {
-    (unsafe { held(value) }) as *const DateTime
+pub unsafe extern "C" fn souther_case_datetime_read(
+    value: *const Value,
+    out: *mut *mut DateTime,
+) -> i8 {
+    unsafe {
+        answered(
+            held(value, &CASE_DATETIME).map(|it| it as *mut DateTime),
+            out,
+        )
+    }
 }
 
 /// A `Instant` carried as a case of a union: its address in the slot, the value where it was.
@@ -665,14 +678,19 @@ pub extern "C" fn souther_case_instant_make(value: *const Instant) -> *const Val
     carried(&CASE_INSTANT, Some(value as i64))
 }
 
-/// What a value of a union that is the case `Instant` holds.
+/// What a value of a union that is the case `Instant` holds, written through `out` where it is
+/// that case, answering whether it is.
 ///
 /// # Safety
 ///
-/// `value` is one a test of which case it is said is `Instant`.
+/// `value` is a value of a union the library answered, the scope it was made in is open, and
+/// `out` is room for what the case holds.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_case_instant_read(value: *const Value) -> *const Instant {
-    (unsafe { held(value) }) as *const Instant
+pub unsafe extern "C" fn souther_case_instant_read(
+    value: *const Value,
+    out: *mut *mut Instant,
+) -> i8 {
+    unsafe { answered(held(value, &CASE_INSTANT).map(|it| it as *mut Instant), out) }
 }
 
 // Each case the language gives holds nothing, so a value of it is its token alone. Written out one

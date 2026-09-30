@@ -556,8 +556,9 @@ static void read(const char *json) {
     souther_value value = souther_decoded_value(reading);
     uint32_t which = souther@_m_m_t_Q_case(value);
     printf("%u case %u", status, which);
-    if (which == 0) {
-        printf(" holds %" PRId64, souther_case_int_read(value));
+    int64_t held = 0;
+    if (which == 0 && souther_case_int_read(value, &held)) {
+        printf(" holds %" PRId64, held);
     }
     printf(" ");
     said(souther@_m_m_t_Q_encode(value));
