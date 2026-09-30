@@ -77,6 +77,19 @@ fn surface() -> BTreeSet<String> {
         lines.insert(format!("status {name} = {status}"));
     }
     lines.insert(format!("answers {IMPLEMENTATION_ANSWERS:?}"));
+    for word in HostWord::ALL {
+        lines.insert(format!(
+            "word {}: {:?}",
+            word.spelt(),
+            word.representation()
+        ));
+    }
+    for storage in HOST_STORAGE {
+        lines.insert(format!(
+            "storage {}: {} slots of {SLOT} bytes, aligned to {SLOT}",
+            storage.name, storage.slots
+        ));
+    }
     for (name, promise) in SCOPE_CONTRACT {
         lines.insert(format!("scope {name}: {promise}"));
     }
@@ -187,4 +200,41 @@ fn every_number_the_crate_states_is_in_the_record() {
         "the scan found {seen} numbers: it reads nothing"
     );
     assert!(missing.is_empty(), "not in the record: {missing:?}");
+}
+
+/// The Rust binding's runtime lays out the rooms of `HOST_STORAGE` without a header to read them
+/// from, so it states their sizes itself; they are held here to what this generation says.
+#[test]
+fn the_rust_runtime_lays_out_the_rooms_this_generation_states() {
+    let bound = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../bindings/rust/runtime/src/bound.rs"),
+    )
+    .unwrap();
+    for (constant, name) in [
+        ("CAPABILITY_SLOTS", "souther_capability"),
+        ("HOSTED_SLOTS", "souther_hosted"),
+        ("HOSTED_FUNCTION_SLOTS", "souther_hosted_function"),
+    ] {
+        let stated = bound
+            .lines()
+            .find_map(|line| {
+                line.split_once(&format!("const {constant}: usize = "))
+                    .map(|(_, rest)| rest.trim_end_matches(';').parse::<i64>().unwrap())
+            })
+            .unwrap_or_else(|| panic!("bound.rs states no {constant}"));
+        let storage = HOST_STORAGE.iter().find(|it| it.name == name).unwrap();
+        assert_eq!(stated, storage.slots, "{name}");
+    }
+}
+
+/// `HostWord::ALL` is every word: each is spelt once, and a word left out of it would be one the
+/// record says nothing of.
+#[test]
+fn every_word_is_listed_once() {
+    let spelt: BTreeSet<&str> = HostWord::ALL.iter().map(|it| it.spelt()).collect();
+    assert_eq!(spelt.len(), HostWord::ALL.len());
+    // The last variant declared, and the count the enum has, which a variant added moves.
+    assert_eq!(HostWord::ALL.last(), Some(&HostWord::Function));
+    assert_eq!(HostWord::Function as usize + 1, HostWord::ALL.len());
 }

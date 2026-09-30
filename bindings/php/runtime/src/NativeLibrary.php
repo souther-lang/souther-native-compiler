@@ -16,6 +16,12 @@ use FFI;
  */
 final class NativeLibrary
 {
+    /**
+     * The ABI generation this runtime calls a library as, which a library is asked for before
+     * anything else and refused where it answers another ({@see UnsupportedGeneration}).
+     */
+    public const ABI_GENERATION = 9;
+
     /** @var array<string, self> */
     private static array $loaded = [];
 
@@ -50,6 +56,19 @@ final class NativeLibrary
         private readonly array $statuses,
         private readonly array $outcomes,
     ) {
+        // Asked first, by the one query every generation has and none changes.
+        try {
+            $found = $ffi->souther_abi_generation();
+        } catch (\FFI\Exception) {
+            $found = null;
+        }
+        if ($found !== self::ABI_GENERATION) {
+            throw new UnsupportedGeneration($found === null
+                ? 'the library says no ABI generation, so it is of generation 8 or earlier, and this'
+                    . ' runtime calls a library of generation ' . self::ABI_GENERATION
+                : "the library answers to ABI generation {$found}, and this runtime calls a library"
+                    . ' of generation ' . self::ABI_GENERATION);
+        }
         foreach ($statuses as $name => $number) {
             if ($ffi->{'SOUTHER_' . $name} !== $number) {
                 throw new \LogicException(

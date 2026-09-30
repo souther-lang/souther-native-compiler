@@ -56,7 +56,9 @@ abstract class Binding
         11 => 'a Date, a Time, a DateTime and an Instant are handed over and read back as the numbers '
             . 'they mean, each an int, and never as text: the library answers whether they name one, '
             . 'and a refusal is a LogicException; the text java.time writes is only for PHP to show '
-            . '(Session::date and the rest, Calendar)',
+            . '(Session::date and the rest, Calendar); and a library is asked its ABI generation '
+            . 'before anything else and refused where it is not this runtime\'s '
+            . '(NativeLibrary::ABI_GENERATION, UnsupportedGeneration)',
     ];
 
     /**

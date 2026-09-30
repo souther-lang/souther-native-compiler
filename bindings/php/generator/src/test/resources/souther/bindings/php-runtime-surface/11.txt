@@ -71,6 +71,7 @@ Souther\Runtime\NativeHandle::borrow(Souther\Runtime\Session $into): FFI\CData
 Souther\Runtime\NativeHandle::read(): FFI\CData 
 Souther\Runtime\NativeHandle::session(): Souther\Runtime\Session 
 Souther\Runtime\NativeLibrary final extends - implements 
+Souther\Runtime\NativeLibrary::ABI_GENERATION constant
 Souther\Runtime\NativeLibrary::close(Souther\Runtime\Session $session): void 
 Souther\Runtime\NativeLibrary::current(): Souther\Runtime\Session 
 Souther\Runtime\NativeLibrary::failure(int $status): Throwable 
@@ -139,3 +140,4 @@ Souther\Runtime\Time::$second int readonly
 Souther\Runtime\Time::__construct(int $hour, int $minute, int $second =): - 
 Souther\Runtime\Time::__toString(): string 
 Souther\Runtime\UnboundInjection final extends LogicException implements Souther\Runtime\SoutherFailure,Stringable,Throwable
+Souther\Runtime\UnsupportedGeneration final extends RuntimeException implements Stringable,Throwable

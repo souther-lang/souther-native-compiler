@@ -11,8 +11,8 @@ use std::ops::{Deref, DerefMut};
 use std::panic::{self, AssertUnwindSafe};
 use std::ptr::NonNull;
 
-/// An open scope of the arena, as `souther_scope_open` answers it and `souther_scope_close` takes it
-/// back: a token, and never where the arena stands.
+/// An open scope of the arena, as `souther_scope_open` answers it and `souther_scope_close` takes
+/// it back: a token, and never where the arena stands.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RawScope(pub i64);
@@ -27,10 +27,11 @@ pub type ScopeCloseFn = unsafe extern "C" fn(RawScope) -> i8;
 /// One library's runtime: the functions that open a scope of its arena and close it, and what its
 /// statuses are numbered.
 ///
-/// Which runtime this is is the address of its `souther_scope_open`. Whatever works on one arena has
-/// one `souther_scope_open`, so two `Runtime`s with the same one are two handles on the same arena, however
-/// the library was reached — without this crate depending on how a loader tells files apart. A way
-/// of loading that let the runtime's symbols be interposed would have to look at this again.
+/// Which runtime this is is the address of its `souther_scope_open`. Whatever works on one arena
+/// has one `souther_scope_open`, so two `Runtime`s with the same one are two handles on the same
+/// arena, however the library was reached — without this crate depending on how a loader tells
+/// files apart. A way of loading that let the runtime's symbols be interposed would have to look at
+/// this again.
 pub struct Runtime {
     open: ScopeOpenFn,
     close: ScopeCloseFn,
@@ -38,8 +39,8 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// A runtime over a library's `souther_scope_open` and `souther_scope_close`, answering the statuses
-    /// `statuses` numbers.
+    /// A runtime over a library's `souther_scope_open` and `souther_scope_close`, answering the
+    /// statuses `statuses` numbers.
     ///
     /// # Safety
     ///
@@ -212,8 +213,8 @@ impl<'run, L: Loaded> Run<'run, L> {
     /// Opens a run inside this one, hands it to `f`, and drops what was made in it once `f` has
     /// answered, or has panicked.
     ///
-    /// This run is borrowed until then, so nothing is made through it while the one inside is
-    /// open. A [`Held`] value made in this run is still one `f` can read and hand to a computation it
+    /// This run is borrowed until then, so nothing is made through it while the one inside is open.
+    /// A [`Held`] value made in this run is still one `f` can read and hand to a computation it
     /// starts; one made inside cannot be answered out of `f`.
     pub fn scope<R>(&mut self, f: impl for<'inner> FnOnce(&mut Scope<'inner, 'run, L>) -> R) -> R {
         let keeper = Keeper::default();

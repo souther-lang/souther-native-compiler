@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 #ifndef ABI
-#define ABI 8
+#define ABI 9
 #endif
 
 /* A library with a thread-local variable is one macOS does not unload, as the real one is; a test of
@@ -44,6 +44,9 @@ uint8_t souther_scope_close(int64_t scope) {
 #define CAT(a, b) CAT_(a, b)
 #define CAT_(a, b) a##b
 int CAT(souther_runtime_abi_, ABI)(void) { return ABI; }
+#ifndef NO_GENERATION_QUERY
+uint32_t souther_abi_generation(void) { return ABI; }
+#endif
 
 #ifndef NO_DOUBLE
 souther_status fake_double(int64_t x, int64_t *out) {
@@ -55,33 +58,47 @@ souther_status fake_double(int64_t x, int64_t *out) {
 
 typedef souther_status (*invoker)(const souther_capability *, int64_t, int64_t *);
 
+/* What stands in the rooms a host lays out, as the library's generated code alone reads them: the
+   host sees as many slots as each takes and no field. */
+struct capability_view {
+    void *invoke;
+    const void *environment;
+};
+struct hosted_view {
+    void *implementation;
+    void *userdata;
+};
+#define CAPABILITY(at) ((struct capability_view *)(at))
+#define CONST_CAPABILITY(at) ((const struct capability_view *)(at))
+#define HOSTED(at) ((struct hosted_view *)(at))
+
 /* A capability is called through what it holds to call itself with, as a library's is. */
 static souther_status invoke_hosted(const souther_capability *capability, int64_t x, int64_t *out) {
-    const souther_hosted *hosted = capability->environment;
+    const struct hosted_view *hosted = CONST_CAPABILITY(capability)->environment;
     return ((fake_implementation)hosted->implementation)(hosted->userdata, x, out);
 }
 
 /* A behavior bound to what it requires asks the first. */
 static souther_status invoke_bound(const souther_capability *capability, int64_t x, int64_t *out) {
-    const souther_capability *const *requirements = capability->environment;
+    const souther_capability *const *requirements = CONST_CAPABILITY(capability)->environment;
     return fake_call(requirements[0], x, out);
 }
 
 void fake_implement(souther_capability *into, souther_hosted *hosted, fake_implementation implementation,
                     void *userdata) {
-    hosted->implementation = (void *)implementation;
-    hosted->userdata = userdata;
-    into->invoke = (void *)invoke_hosted;
-    into->environment = hosted;
+    HOSTED(hosted)->implementation = (void *)implementation;
+    HOSTED(hosted)->userdata = userdata;
+    CAPABILITY(into)->invoke = (void *)invoke_hosted;
+    CAPABILITY(into)->environment = hosted;
 }
 
 souther_status fake_call(const souther_capability *capability, int64_t x, int64_t *out) {
-    return ((invoker)capability->invoke)(capability, x, out);
+    return ((invoker)CONST_CAPABILITY(capability)->invoke)(capability, x, out);
 }
 
 void fake_bind(souther_capability *into, const souther_capability *const *requirements) {
-    into->invoke = (void *)invoke_bound;
-    into->environment = requirements;
+    CAPABILITY(into)->invoke = (void *)invoke_bound;
+    CAPABILITY(into)->environment = requirements;
 }
 
 /* A behavior bound to what it requires: it asks the first requirement. */

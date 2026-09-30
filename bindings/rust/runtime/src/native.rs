@@ -8,6 +8,11 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 
+/// The ABI generation this crate calls a library as, which [`NativeLibrary::load`] asks a library
+/// for before anything else and refuses any other of. The rooms `bound.rs` lays out are this
+/// generation's.
+pub const ABI_GENERATION: u32 = 9;
+
 /// One word the library hands over or is handed that is an address: a value, a string, a list and
 /// the rest, which only the library reads behind.
 pub type Word = *const u8;
@@ -35,17 +40,36 @@ impl NativeLibrary {
     ///
     /// # Errors
     ///
-    /// [`LoadError::Open`] where the loader has no library there.
+    /// [`LoadError::Open`] where the loader has no library there, and [`LoadError::Generation`]
+    /// where it is not of [`ABI_GENERATION`]: asked of the library before any other function of
+    /// it is looked up, by the one query every generation has (`souther_abi_generation`).
     pub unsafe fn load(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref().to_path_buf();
         // SAFETY: what the caller says.
-        match unsafe { libloading::Library::new(&path) } {
-            Ok(library) => Ok(NativeLibrary { library, path }),
-            Err(source) => Err(LoadError::Open {
-                path,
-                reason: source.to_string(),
-            }),
+        let library = match unsafe { libloading::Library::new(&path) } {
+            Ok(library) => NativeLibrary { library, path },
+            Err(source) => {
+                return Err(LoadError::Open {
+                    path,
+                    reason: source.to_string(),
+                });
+            }
+        };
+        // SAFETY: the query is the same function in every generation that has it:
+        // `uint32_t souther_abi_generation(void)`.
+        let found = unsafe {
+            library
+                .function::<unsafe extern "C" fn() -> u32>("souther_abi_generation")
+                .ok()
+                .map(|query| query())
+        };
+        if found != Some(ABI_GENERATION) {
+            return Err(LoadError::Generation {
+                path: library.path,
+                found,
+            });
         }
+        Ok(library)
     }
 
     /// Where it was loaded from.
@@ -83,8 +107,8 @@ impl NativeLibrary {
     ///
     /// # Errors
     ///
-    /// Where the library has no `souther_scope_open` or `souther_scope_close`, or `statuses` does not name one
-    /// a host has to tell apart.
+    /// Where the library has no `souther_scope_open` or `souther_scope_close`, or `statuses` does
+    /// not name one a host has to tell apart.
     pub unsafe fn runtime(
         &self,
         statuses: &'static [(&'static str, u32)],
@@ -107,6 +131,9 @@ pub enum LoadError {
     Open { path: PathBuf, reason: String },
     /// The library exports no function of the name the binding calls.
     Missing { name: String, reason: String },
+    /// The library answers to another ABI generation than [`ABI_GENERATION`], or has no query for
+    /// one, which a library of generation 8 or earlier does not.
+    Generation { path: PathBuf, found: Option<u32> },
     /// The binding names no status a host has to tell apart.
     Status(UnnamedStatus),
     /// The binding names no outcome a reading comes to.
@@ -127,6 +154,20 @@ impl fmt::Display for LoadError {
                 f,
                 "the library has no function {name}, which its binding calls: {reason}"
             ),
+            LoadError::Generation { path, found } => match found {
+                Some(found) => write!(
+                    f,
+                    "{} answers to ABI generation {found}, and this runtime calls a library of \
+                     generation {ABI_GENERATION}",
+                    path.display()
+                ),
+                None => write!(
+                    f,
+                    "{} says no ABI generation, so it is of generation 8 or earlier, and this \
+                     runtime calls a library of generation {ABI_GENERATION}",
+                    path.display()
+                ),
+            },
             LoadError::Status(unnamed) => write!(f, "{unnamed}"),
             LoadError::Outcome(name) => write!(f, "the binding numbers no outcome {name}"),
         }

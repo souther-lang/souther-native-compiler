@@ -195,6 +195,14 @@ pub extern "C" fn souther_alloc(size: Count) -> *mut u8 {
     ARENA.with(|it| it.borrow_mut().room(wanted))
 }
 
+/// Which ABI generation this runtime, and every library built with it, answers to: the one
+/// function a host calls before any other, and the same in every generation
+/// ([`souther_native_abi::GENERATION_QUERY`]).
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_abi_generation() -> u32 {
+    souther_native_abi::ABI_GENERATION
+}
+
 /// The next token a scope is answered with. Shared by every thread, so a token another thread was
 /// answered is never one this thread has open.
 static TOKENS: AtomicI64 = AtomicI64::new(1);

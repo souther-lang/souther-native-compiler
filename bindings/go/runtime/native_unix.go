@@ -8,6 +8,7 @@ package souther
 #include <stdint.h>
 #include <stdlib.h>
 
+static uint32_t call_abi_generation(void *fn) { return ((uint32_t (*)(void))fn)(); }
 static int64_t call_scope_open(void *fn) { return ((int64_t (*)(void))fn)(); }
 static uint8_t call_scope_close(void *fn, int64_t scope) { return ((uint8_t (*)(int64_t))fn)(scope); }
 */
@@ -82,15 +83,36 @@ func (e *MissingSymbols) Error() string {
 		e.Path, strings.Join(e.Names, ", "))
 }
 
+// ABIGeneration is the ABI generation this package calls a library as, which [Load] refuses any
+// other of.
+const ABIGeneration uint32 = 9
+
+// UnsupportedGeneration is a library file of another ABI generation than [ABIGeneration]: Found is
+// the one it answers to, and nought where it has no query for one, which a library of generation 8
+// or earlier does not.
+type UnsupportedGeneration struct {
+	Path  string
+	Found uint32
+}
+
+func (e *UnsupportedGeneration) Error() string {
+	if e.Found == 0 {
+		return fmt.Sprintf("souther: %s says no ABI generation, so it is of generation 8 or earlier, "+
+			"and this runtime calls a library of generation %d", e.Path, ABIGeneration)
+	}
+	return fmt.Sprintf("souther: %s answers to ABI generation %d, and this runtime calls a library "+
+		"of generation %d", e.Path, e.Found, ABIGeneration)
+}
+
 // Load opens the library file at path as the library of a binding of the tag B.
 //
-// It checks that every function the binding calls is there, so that a file of another library, or
-// of another ABI generation, is refused here and not where a call reaches it. The generation is
-// not asked of the file by a symbol of its own: the one the runtime defines for it
-// (souther_runtime_abi_N) is there for the linker and is not exported. It cannot tell a library
-// from another that has the same functions under the same names with other signatures, so the
-// file is the library the binding was generated from: the caller holds that, as for any unsafe
-// load.
+// It asks the file which ABI generation it answers to before anything else, by the one query every
+// generation has (souther_abi_generation), and returns an [*UnsupportedGeneration] where it is not
+// [ABIGeneration]. It then checks that every function the binding calls is there, so that a file
+// of another library is refused here and not where a call reaches it. It cannot tell a library
+// from another of the same generation that has the same functions under the same names with other
+// signatures, so the file is the library the binding was generated from: the caller holds that, as
+// for any unsafe load.
 func Load[B any](path string, spec Spec) (*Library[B], error) {
 	statuses, err := newStatuses(spec.Statuses)
 	if err != nil {
@@ -116,6 +138,13 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 			native.close()
 		}
 	}()
+	query, ok := native.symbol("souther_abi_generation")
+	if !ok {
+		return nil, &UnsupportedGeneration{Path: path}
+	}
+	if found := uint32(C.call_abi_generation(query)); found != ABIGeneration {
+		return nil, &UnsupportedGeneration{Path: path, Found: found}
+	}
 	symbols := make(map[string]unsafe.Pointer, len(spec.Symbols)+2)
 	var missing []string
 	for _, name := range append([]string{"souther_scope_open", "souther_scope_close"}, spec.Symbols...) {

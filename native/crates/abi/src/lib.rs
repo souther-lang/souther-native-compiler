@@ -100,6 +100,23 @@ pub fn runtime_generation_symbol() -> String {
     format!("souther_runtime_abi_{ABI_GENERATION}")
 }
 
+/// The one function a host calls before any other, to ask which generation a library it has loaded
+/// answers to: `uint32_t souther_abi_generation(void)`, answering [`ABI_GENERATION`].
+///
+/// Outside every generation, and not generation 0 of them: its name, what it takes and what it
+/// answers are the same for every library that has it, so a host can ask it of a library of any
+/// generation and refuse one it was not written for before it looks up anything else. No
+/// generation moving makes a change to it legal, so it is in no record of one, and a test of its
+/// own holds it (`tests/bootstrap.rs`). A library without the symbol is one of generation 8 or
+/// earlier, from before it existed.
+///
+/// [`runtime_generation_symbol`] is another thing: the guard a linker checks between generated
+/// objects and the runtime, which no library exports.
+pub const GENERATION_QUERY: &str = "souther_abi_generation";
+
+/// [`GENERATION_QUERY`] as a header declares it.
+pub const GENERATION_QUERY_DECLARED: &str = "uint32_t souther_abi_generation(void);";
+
 /// What each generation moved, oldest first, as the paragraphs above tell it at length.
 ///
 /// A change that moves the generation adds its line at the end under the next number, and the
@@ -974,6 +991,40 @@ pub const fn room_for_hosted_function() -> i64 {
     HOSTED_FUNCTION_HOSTED + room_for_hosted()
 }
 
+/// Room a host lays out, owns and never reads: a capability, what a host's implementation of a
+/// behavior is read out of, and a function value made of a host's own function.
+///
+/// A host keeps each for as long as the thing it stands for may be called, which is longer than a
+/// scope, so the room is the host's and not the arena's. What stands in it is the generated code's
+/// own, written by what makes the capability or the value and read by nothing else: the offsets
+/// above are between the generated code and itself. So a host is told the size and the alignment
+/// and no field, and a declaration of it is as many slots, each a `uint64_t`, as the room takes:
+/// a host that allocates the type by its name has the size and the alignment right, and nothing
+/// it could write into a field.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HostStorage {
+    /// Its name in C, which a host allocates it by.
+    pub name: &'static str,
+    /// How many slots it takes, each [`SLOT`] bytes and aligned to a slot.
+    pub slots: i64,
+}
+
+/// Every room a host lays out.
+pub const HOST_STORAGE: &[HostStorage] = &[
+    HostStorage {
+        name: "souther_capability",
+        slots: room_for_capability() / SLOT,
+    },
+    HostStorage {
+        name: "souther_hosted",
+        slots: room_for_hosted() / SLOT,
+    },
+    HostStorage {
+        name: "souther_hosted_function",
+        slots: room_for_hosted_function() / SLOT,
+    },
+];
+
 /// How much room an `Option` holding a value takes.
 pub const fn room_for_held() -> i64 {
     HELD + SLOT
@@ -1823,7 +1874,93 @@ pub enum HostWord {
     Function,
 }
 
+/// What a word is on the machine, which the driver's machine types and the header's C types are
+/// both read off, so that the two cannot say different things and a change to either is a change
+/// here, which the record of a generation holds.
+///
+/// Unsigned and signed are said apart though a machine integer has no sign, because a host's
+/// language does: a `Bool` is a byte a host reads as nought or one, and an `Outcome` a number a
+/// host may be handed below nought.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Representation {
+    /// Eight bits, read without a sign.
+    U8,
+    /// Thirty-two bits, read without a sign.
+    U32,
+    /// Thirty-two bits, read with a sign.
+    I32,
+    /// Sixty-four bits, read with a sign.
+    I64,
+    /// An address, as wide as the machine's.
+    Address,
+}
+
+impl Representation {
+    /// The type `<stdint.h>` names for it, or `void *` for an address a header does not name
+    /// otherwise.
+    pub const fn c(self) -> &'static str {
+        match self {
+            Representation::U8 => "uint8_t",
+            Representation::U32 => "uint32_t",
+            Representation::I32 => "int32_t",
+            Representation::I64 => "int64_t",
+            Representation::Address => "void *",
+        }
+    }
+}
+
 impl HostWord {
+    /// Every word, in the order they are declared.
+    pub const ALL: &[HostWord] = &[
+        HostWord::Status,
+        HostWord::Int,
+        HostWord::Bool,
+        HostWord::Case,
+        HostWord::Outcome,
+        HostWord::Count,
+        HostWord::Scope,
+        HostWord::Bytes,
+        HostWord::Value,
+        HostWord::String,
+        HostWord::Decimal,
+        HostWord::Date,
+        HostWord::Time,
+        HostWord::DateTime,
+        HostWord::Instant,
+        HostWord::Decoded,
+        HostWord::Issue,
+        HostWord::List,
+        HostWord::Requirements,
+        HostWord::Capability,
+        HostWord::Userdata,
+        HostWord::Function,
+    ];
+
+    /// What the word is on the machine.
+    pub const fn representation(self) -> Representation {
+        match self {
+            HostWord::Bool => Representation::U8,
+            HostWord::Status | HostWord::Case => Representation::U32,
+            HostWord::Outcome => Representation::I32,
+            HostWord::Int | HostWord::Count | HostWord::Scope => Representation::I64,
+            HostWord::Bytes
+            | HostWord::Value
+            | HostWord::String
+            | HostWord::Decimal
+            | HostWord::Date
+            | HostWord::Time
+            | HostWord::DateTime
+            | HostWord::Instant
+            | HostWord::Decoded
+            | HostWord::Issue
+            | HostWord::List
+            | HostWord::Requirements
+            | HostWord::Capability
+            | HostWord::Userdata
+            | HostWord::Function => Representation::Address,
+        }
+    }
+
     /// The word as a symbol and a manifest spell it: its name, in lower case.
     pub const fn spelt(self) -> &'static str {
         match self {

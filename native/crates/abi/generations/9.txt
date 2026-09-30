@@ -269,3 +269,28 @@ status FAKE_NO_OUTPUT = 2147483644
 status HOST_EXCEPTION = 2147483647
 status INJECTION_PROTOCOL_VIOLATION = 2147483646
 status INJECTION_UNBOUND = 2147483645
+storage souther_capability: 2 slots of 8 bytes, aligned to 8
+storage souther_hosted: 2 slots of 8 bytes, aligned to 8
+storage souther_hosted_function: 3 slots of 8 bytes, aligned to 8
+word bool: U8
+word bytes: Address
+word capability: Address
+word case: U32
+word count: I64
+word date: Address
+word datetime: Address
+word decimal: Address
+word decoded: Address
+word function: Address
+word instant: Address
+word int: I64
+word issue: Address
+word list: Address
+word outcome: I32
+word requirements: Address
+word scope: I64
+word status: U32
+word string: Address
+word time: Address
+word userdata: Address
+word value: Address

@@ -1485,6 +1485,18 @@ fn every_function_is_what_the_table_naming_it_says() {
 /// party: in neither table, so no header declares it and no library exports it.
 const INSTRUMENTS: &[&str] = &["souther_arena_taken"];
 
+/// The generation query is in neither table: it is outside every generation, the same in each,
+/// and held to what it was made as by the ABI's own test. Here it is held to being that function.
+#[test]
+fn the_generation_query_is_the_function_it_is_declared_as() {
+    let query: extern "C" fn() -> u32 = souther_abi_generation;
+    assert_eq!(query(), souther_native_abi::ABI_GENERATION);
+    assert_eq!(
+        souther_native_abi::GENERATION_QUERY,
+        "souther_abi_generation"
+    );
+}
+
 /// Every function the runtime defines for another party is in exactly one of the two tables, and
 /// is written above: read off the source, so a function added here and to neither table is caught
 /// rather than called by someone the tables say nothing to.
@@ -1526,7 +1538,10 @@ fn every_function_the_runtime_defines_is_in_one_table() {
                 .chars()
                 .take_while(|it| it.is_ascii_alphanumeric() || *it == '_')
                 .collect();
-            if name.starts_with("souther_") && !INSTRUMENTS.contains(&name.as_str()) {
+            if name.starts_with("souther_")
+                && !INSTRUMENTS.contains(&name.as_str())
+                && name != souther_native_abi::GENERATION_QUERY
+            {
                 defined.insert(name);
             }
         }

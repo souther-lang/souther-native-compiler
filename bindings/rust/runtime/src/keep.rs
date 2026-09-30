@@ -1,20 +1,18 @@
 //! What a run keeps for the library to read until it ends: a function of the host's own made into
 //! a function value, and the room that value is.
 
-use crate::bound::{Hosted, Room};
+use crate::bound::{HOSTED_FUNCTION_SLOTS, Room};
 use crate::native::Word;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::ptr;
 
 /// What a function value a host made of a function of its own is: `souther_hosted_function`,
 /// laid out by the host and written by what makes the value, whose address is the value.
 #[repr(C)]
 pub struct HostedFunction {
-    invoke: *const c_void,
-    hosted: Hosted,
+    opaque: [u64; HOSTED_FUNCTION_SLOTS],
 }
 
 /// What makes a function value of a host's own function of one shape: `(room, implementation,
@@ -56,8 +54,7 @@ impl Keeper {
         }
         let dispatch = Room::of(dispatch);
         let room = Room::of(HostedFunction {
-            invoke: ptr::null(),
-            hosted: Hosted::empty(),
+            opaque: [0; HOSTED_FUNCTION_SLOTS],
         });
         // SAFETY: what the caller says; the room and the dispatch stay where they are until the
         // run that keeps them ends.

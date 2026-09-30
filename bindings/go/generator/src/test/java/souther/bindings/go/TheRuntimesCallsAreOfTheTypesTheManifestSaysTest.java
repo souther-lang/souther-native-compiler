@@ -99,6 +99,9 @@ class TheRuntimesCallsAreOfTheTypesTheManifestSaysTest {
 
         assertThat(SHIM.keySet()).as("every function of the runtime the library exports has a shim")
                 .isEqualTo(RuntimeFunctions.CALLED.keySet());
+        // The generation query is no function of a generation's, and the same in every one: its
+        // shim is held to that one signature, and to nothing a manifest says.
+        assertThat(written.remove("abi_generation")).isEqualTo("uint32_t|void");
         assertThat(written.keySet()).as("every shim is one of a function's")
                 .isEqualTo(new java.util.TreeSet<>(SHIM.values()));
         RuntimeFunctions.CALLED.forEach((symbol, function) ->

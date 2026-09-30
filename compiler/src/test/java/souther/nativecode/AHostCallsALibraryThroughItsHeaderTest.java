@@ -604,6 +604,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 .contains("#include \"" + library.declarations().getFileName() + "\"");
         Set<String> declared = declaredIn(declarations);
         Set<String> described = describedIn(JSON.readTree(library.manifest().toFile()));
+        // And the generation query, which the manifest does not describe: it is outside every
+        // generation, and a host asks it before it has read what the manifest says.
+        described.add("souther_abi_generation");
         Set<String> exported = exportedBy(library.library());
 
         assertThat(declared).isNotEmpty();

@@ -3,18 +3,9 @@
 #include <stdint.h>
 
 typedef uint32_t souther_status;
-typedef struct souther_capability {
-    void *invoke;
-    const void *environment;
-} souther_capability;
-typedef struct souther_hosted {
-    void *implementation;
-    void *userdata;
-} souther_hosted;
-typedef struct souther_hosted_function {
-    void *invoke;
-    souther_hosted hosted;
-} souther_hosted_function;
+typedef struct souther_capability { uint64_t opaque[2]; } souther_capability;
+typedef struct souther_hosted { uint64_t opaque[2]; } souther_hosted;
+typedef struct souther_hosted_function { uint64_t opaque[3]; } souther_hosted_function;
 typedef souther_status (*fake_implementation)(void *, int64_t, int64_t *);
 
 souther_status fake_call(const souther_capability *, int64_t, int64_t *);

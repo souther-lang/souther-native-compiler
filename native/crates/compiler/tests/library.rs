@@ -118,7 +118,10 @@ fn the_header_the_manifest_and_the_library_name_one_set_of_functions() {
         let header = declared_in(&declarations);
         let manifest: Value =
             serde_json::from_str(&fs::read_to_string(&built.manifest).unwrap()).unwrap();
-        let described = described_in(&manifest);
+        // And the generation query, which the manifest does not describe: it is outside every
+        // generation, and a host asks it before it has read what the manifest says.
+        let mut described = described_in(&manifest);
+        described.insert(souther_native_abi::GENERATION_QUERY.to_string());
         let exported = defined_in(&built.library, true);
 
         assert!(!header.is_empty());
