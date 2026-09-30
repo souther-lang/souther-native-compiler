@@ -298,11 +298,13 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     }
 
     /**
-     * A kept driver is used only where the bundle it was unpacked from still matches the checksum and
-     * it is still what the bundle holds: one changed where it was kept is fetched again.
+     * The kept bundle is the source of truth for the files unpacked from it: one of them changed or
+     * gone is unpacked again from a bundle that still matches, offline as well and fetching nothing.
+     * A kept bundle that no longer matches is not kept, and is fetched again or refused offline.
      */
     @Test
-    void aKeptDriverThatIsNotWhatWasFetchedIsFetchedAgain(@TempDir Path into) throws Exception {
+    void aKeptBundleRebuildsWhatWasUnpackedFromItAndOneChangedIsFetchedAgain(@TempDir Path into)
+            throws Exception {
         try (Served served = new Served()) {
             byte[] bundle = bundle(Map.of(NativeBundle.DRIVER, "#!/bin/sh\n",
                     NativeBundle.ARCHIVE, "archive", NativeBundle.REQUIREMENTS, "-lm\n"));
@@ -311,13 +313,23 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
 
             Path driver = NativeBundle.locate(fetching);
             Files.writeString(driver, "#!/bin/sh\necho replaced\n");
-            NativeBundle.locate(fetching);
-            assertThat(driver).hasContent("#!/bin/sh\n");
+            assertThat(NativeBundle.locate(fetching.withOffline(true))).isEqualTo(driver);
+            assertThat(driver).hasContent("#!/bin/sh\n").isExecutable();
+            Files.delete(driver.resolveSibling(NativeBundle.ARCHIVE));
+            Files.writeString(driver.resolveSibling("extra"), "beside it");
+            NativeBundle.locate(fetching.withOffline(true));
+            assertThat(driver.resolveSibling(NativeBundle.ARCHIVE)).hasContent("archive");
+            assertThat(driver.resolveSibling("extra")).doesNotExist();
+            assertThat(served.asked).as("nothing fetched for what the bundle rebuilt")
+                    .containsEntry(bundleAt(), 1);
+
             Files.write(driver.resolveSibling(NativeBundle.KEPT), bytes("not the bundle"));
+            assertThatThrownBy(() -> NativeBundle.locate(fetching.withOffline(true)))
+                    .isInstanceOf(NotFetched.class).hasMessageContaining("offline");
             NativeBundle.locate(fetching);
 
-            assertThat(served.asked).containsEntry(bundleAt(), 3);
-            assertThat(NativeBundle.locate(fetching.withOffline(true))).isEqualTo(driver);
+            assertThat(served.asked).containsEntry(bundleAt(), 2);
+            assertThat(driver).hasContent("#!/bin/sh\n");
         }
     }
 

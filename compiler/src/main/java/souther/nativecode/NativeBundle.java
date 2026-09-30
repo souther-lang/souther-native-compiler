@@ -26,9 +26,11 @@ import java.util.zip.ZipInputStream;
  * replaced; and holds exactly those three files, so that an archive that names a path outside its own
  * directory cannot write there.
  *
- * <p>The bundle as it was fetched is kept beside what was unpacked from it, and a kept driver is used
- * only where the kept bundle still matches the checksum and the three files are still what it holds.
- * Anything else is taken as not kept: fetched again, or refused offline.
+ * <p>The bundle as it was fetched is kept beside what was unpacked from it, and is what the cache
+ * holds: the three files are made from it, and are used only while they are still what it holds. A
+ * kept bundle that still matches the checksum is the source of truth, and files missing or changed
+ * beside it are unpacked from it again, offline as well, fetching nothing. A bundle missing, or one
+ * that no longer matches, is not kept: fetched again, or refused offline.
  */
 final class NativeBundle {
 
@@ -80,11 +82,20 @@ final class NativeBundle {
                     + platform + ", so it will not take one");
         }
         try {
-            if (kept(dir, expected)) {
+            byte[] kept = Files.isRegularFile(dir.resolve(KEPT))
+                    ? Files.readAllBytes(dir.resolve(KEPT)) : null;
+            if (kept != null && Fetching.sha256(kept).equals(expected)) {
+                if (!unpackedFrom(dir, kept)) {
+                    // The files beside a bundle that matches are what was made from it, and are
+                    // made again from it: nothing is fetched for them.
+                    kept(dir, kept, expected);
+                }
                 return dir.resolve(DRIVER);
             }
-            // What is there is not what was fetched: never run, and asked for again.
+            // No bundle, or one that is not what was fetched: never run, and asked for again.
             delete(dir);
+        } catch (NotFetched e) {
+            throw e;
         } catch (IOException e) {
             throw new NotFetched("could not read the kept driver in " + dir + ": " + e.getMessage(), e);
         }
@@ -106,15 +117,7 @@ final class NativeBundle {
                     + " with: refused, and not kept");
         }
         try {
-            Files.createDirectories(dir.getParent());
-            Path staging = Files.createTempDirectory(dir.getParent(), platform + ".partial");
-            try {
-                unpack(bytes, staging);
-                Files.write(staging.resolve(KEPT), bytes);
-                place(staging, dir, expected);
-            } finally {
-                delete(staging);
-            }
+            kept(dir, bytes, expected);
         } catch (NotFetched e) {
             throw e;
         } catch (IOException e) {
@@ -124,16 +127,30 @@ final class NativeBundle {
     }
 
     /**
-     * Whether {@code dir} holds a bundle whose SHA-256 is {@code expected}, unpacked into exactly the
-     * three files it holds, each as it holds it.
+     * {@code bytes}, a bundle whose SHA-256 is {@code expected}, kept in {@code dir} with the three
+     * files unpacked from it, in place of whatever was there, unless another command already kept it.
      */
-    private static boolean kept(Path dir, String expected) throws IOException {
-        Path bundle = dir.resolve(KEPT);
-        if (!Files.isRegularFile(bundle) || !Files.isExecutable(dir.resolve(DRIVER))) {
-            return false;
+    private static void kept(Path dir, byte[] bytes, String expected) throws IOException {
+        Files.createDirectories(dir.getParent());
+        Path staging = Files.createTempDirectory(dir.getParent(), dir.getFileName() + ".partial");
+        try {
+            unpack(bytes, staging);
+            Files.write(staging.resolve(KEPT), bytes);
+            if (Files.exists(dir)) {
+                Path former = Files.createTempDirectory(dir.getParent(), dir.getFileName() + ".former");
+                Files.delete(former);
+                Files.move(dir, former, StandardCopyOption.ATOMIC_MOVE);
+                delete(former);
+            }
+            place(staging, dir, expected);
+        } finally {
+            delete(staging);
         }
-        byte[] bytes = Files.readAllBytes(bundle);
-        if (!Fetching.sha256(bytes).equals(expected)) {
+    }
+
+    /** Whether {@code dir} holds exactly the three files {@code bundle} holds, each as it holds it. */
+    private static boolean unpackedFrom(Path dir, byte[] bytes) throws IOException {
+        if (!Files.isExecutable(dir.resolve(DRIVER))) {
             return false;
         }
         Set<String> seen = new HashSet<>();
@@ -177,7 +194,10 @@ final class NativeBundle {
         try {
             Files.move(staging, dir, StandardCopyOption.ATOMIC_MOVE);
         } catch (FileAlreadyExistsException | DirectoryNotEmptyException e) {
-            if (!kept(dir, expected)) {
+            Path bundle = dir.resolve(KEPT);
+            if (!Files.isRegularFile(bundle)
+                    || !Fetching.sha256(Files.readAllBytes(bundle)).equals(expected)
+                    || !unpackedFrom(dir, Files.readAllBytes(bundle))) {
                 throw e;
             }
         } catch (AtomicMoveNotSupportedException e) {

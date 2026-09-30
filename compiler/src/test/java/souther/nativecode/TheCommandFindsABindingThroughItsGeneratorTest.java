@@ -230,18 +230,24 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
         }
     }
 
-    /** A jar named with {@code --binding} is a generator of its own, and not one the catalog names. */
+    /**
+     * A jar named with {@code --binding} has a qualified id: one with no dot is reserved for the
+     * bindings this command ships, those it ships now and those it has not yet, so that no generator of
+     * someone else's comes to be refused, with the directories it owns, when the catalog grows.
+     */
     @Test
-    void aJarNamedOnTheCommandLineIsNotOneOfTheCatalog(@TempDir Path into) throws Exception {
-        Path jar = GeneratorJar.of("php", TestGenerators.Watched.class)
-                .writtenTo(into.resolve("jars/php.jar"));
+    void aJarNamedOnTheCommandLineHasAQualifiedId(@TempDir Path into) throws Exception {
+        for (String id : List.of("php", "swift", "kotlin-binding")) {
+            Path jar = GeneratorJar.of(id, TestGenerators.Watched.class)
+                    .writtenTo(into.resolve("jars/" + id + ".jar"));
 
-        Ran ran = run("--library", into.resolve("native").toString(), "--binding", jar.toString(),
-                into.resolve("out").toString(), model(into).toString());
+            Ran ran = run("--library", into.resolve("native").toString(), "--binding",
+                    jar.toString(), into.resolve("out").toString(), model(into).toString());
 
-        assertThat(ran.ended()).isEqualTo(2);
-        assertThat(ran.said()).contains("one this command ships");
-        assertThat(asked()).as("none of its code ran").isEmpty();
+            assertThat(ran.ended()).as(id).isEqualTo(2);
+            assertThat(ran.said()).as(id).contains("reserved for the bindings this command ships");
+            assertThat(asked()).as("none of its code ran").isEmpty();
+        }
     }
 
     @Test
@@ -258,6 +264,8 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
                 assertThat(KnownBindings.qualifiedBy("--" + option)).contains(kind);
             }
             assertThat(KnownBindings.askedBy(kind.flag())).contains(kind);
+            assertThat(kind.id()).as("an id the catalog names is a reserved one")
+                    .matches(IdRule.RESERVED);
         }
     }
 

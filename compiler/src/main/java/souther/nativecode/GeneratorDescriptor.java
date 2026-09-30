@@ -17,7 +17,9 @@ import java.util.regex.Pattern;
  */
 record GeneratorDescriptor(String id, int api, Set<Integer> abiGenerations) {
 
-    private static final Pattern ID = Pattern.compile("[a-z0-9][a-z0-9._-]*");
+    /** An id of either namespace ({@link IdRule}); which one it may be is the rule's to say. */
+    private static final Pattern ID = Pattern.compile(IdRule.RESERVED.pattern() + "|"
+            + IdRule.QUALIFIED.pattern());
     private static final Pattern MAJOR = Pattern.compile("[1-9][0-9]{0,8}");
     private static final Pattern GENERATIONS = Pattern.compile("[1-9][0-9]{0,8}(,[1-9][0-9]{0,8})*");
 

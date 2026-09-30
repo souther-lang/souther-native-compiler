@@ -1,8 +1,6 @@
 package souther.nativecode;
 
 import java.nio.file.Path;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * A generator as the command is to run it, whichever way it was asked for: the jar, and which
@@ -27,7 +25,7 @@ record GeneratorSpec(GeneratorRef ref, IdRule rule, String display) {
         return switch (asked) {
             case Main.Asked.Standard standard -> standard(standard.kind(), fetching);
             case Main.Asked.External external -> new GeneratorSpec(external.ref(),
-                    new IdRule.NotOneOf(catalogIds()), "the generator " + external.ref());
+                    new IdRule.External(), "the generator " + external.ref());
         };
     }
 
@@ -57,10 +55,5 @@ record GeneratorSpec(GeneratorRef ref, IdRule rule, String display) {
         }
         MavenCoordinate coordinate = MavenCoordinate.parse(kind.artifact() + ":" + version);
         return new GeneratorSpec(new GeneratorRef.Maven(coordinate, sha256), rule, display);
-    }
-
-    /** The ids of the catalog, which a jar named with {@code --binding} may not say it is. */
-    static Set<String> catalogIds() {
-        return KnownBindings.all().stream().map(KnownBindings.Kind::id).collect(Collectors.toSet());
     }
 }

@@ -129,8 +129,11 @@ Souther-Binding-Api: 1
 Souther-Abi-Generations: 9
 ```
 
-`Souther-Binding-Id` is the generator, the same across its versions: lowercase letters, digits, `.`,
-`_` and `-`, and none of the ids the catalog names (`php`, `rust`, `go`). `Souther-Binding-Api` is
+`Souther-Binding-Id` is the generator, the same across its versions. It is qualified, with at least
+one dot, each part a word of lowercase letters, digits and `-` (`com.acme.kotlin`). An id with no
+dot is reserved for the bindings this project ships, the ones it has not shipped yet among them, so
+that no generator of someone else's is refused, with the directories it owns, when the catalog grows.
+Who owns a reverse-DNS name is not checked. `Souther-Binding-Api` is
 the major of this API the generator was compiled against, which the command runs only where it is its
 own. `Souther-Abi-Generations` is every ABI generation the code the generator writes, and the host
 runtime that code calls, are built for, as integers separated by commas and no ranges; the command

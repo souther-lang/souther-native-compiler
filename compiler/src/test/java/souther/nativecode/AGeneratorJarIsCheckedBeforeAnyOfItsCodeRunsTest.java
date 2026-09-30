@@ -59,6 +59,9 @@ class AGeneratorJarIsCheckedBeforeAnyOfItsCodeRunsTest {
         refused.put("a generation twice", watched().saying(BindingApi.ABI_GENERATIONS,
                 ManifestReader.ABI + "," + ManifestReader.ABI));
         refused.put("an id with a space", watched().saying(BindingApi.ID, "acme kotlin"));
+        refused.put("an unqualified id", watched().saying(BindingApi.ID, "swift"));
+        refused.put("an id with an empty part", watched().saying(BindingApi.ID, "com..kotlin"));
+        refused.put("an id in capitals", watched().saying(BindingApi.ID, "com.Acme.kotlin"));
         refused.put("no manifest", watched().withNoManifest());
         for (Map.Entry<String, GeneratorJar> each : refused.entrySet()) {
             Path jar = each.getValue().writtenTo(into.resolve(each.getKey() + ".jar"));
@@ -109,7 +112,7 @@ class AGeneratorJarIsCheckedBeforeAnyOfItsCodeRunsTest {
                 java.net.URI.create("http://repository.invalid/releases"), "1.0.0", Map.of(),
                 address -> served);
         GeneratorSpec spec = new GeneratorSpec(new GeneratorRef.Maven(coordinate, "0".repeat(64)),
-                new IdRule.NotOneOf(GeneratorSpec.catalogIds()), "the generator");
+                new IdRule.External(), "the generator");
 
         assertThatThrownBy(() -> Bindings.load(fetching, spec)).isInstanceOf(NotFetched.class)
                 .hasMessageContaining("does not match the SHA-256");
@@ -186,14 +189,26 @@ class AGeneratorJarIsCheckedBeforeAnyOfItsCodeRunsTest {
         assertThat(copy.getParent()).doesNotExist();
     }
 
-    /** A jar refused after it was copied leaves no copy behind. */
+    /**
+     * Until a generator is made, the copy of its jar is the load's, and a load that fails at any step
+     * after the copy, its loader made or not, leaves neither: what it made is let go of on every way
+     * out, and only a generator made is handed both.
+     */
     @Test
-    void aJarRefusedLeavesNoCopy(@TempDir Path into) throws Exception {
-        Path jar = watched().saying(BindingApi.API, "99").writtenTo(into.resolve("refused.jar"));
+    void aJarRefusedAtAnyStepLeavesNoCopy(@TempDir Path into) throws Exception {
         Path temporary = Path.of(System.getProperty("java.io.tmpdir"));
         List<Path> before = copies(temporary);
+        List<Path> refused = List.of(
+                watched().saying(BindingApi.API, "99").writtenTo(into.resolve("major.jar")),
+                watched().saying(BindingApi.ID, "swift").writtenTo(into.resolve("id.jar")),
+                watched().provider(TestGenerators.AlsoWatched.class).writtenTo(into.resolve("two.jar")),
+                GeneratorJar.of("acme.failing", TestGenerators.FailingToBeMade.class)
+                        .writtenTo(into.resolve("made.jar")));
 
-        assertThatThrownBy(() -> load(into, jar)).isInstanceOf(NotAGenerator.class);
+        for (Path jar : refused) {
+            assertThatThrownBy(() -> load(into, jar)).as(jar.toString())
+                    .isInstanceOfAny(NotAGenerator.class, GeneratorFailed.class);
+        }
         assertThat(copies(temporary)).isEqualTo(before);
     }
 
@@ -204,7 +219,7 @@ class AGeneratorJarIsCheckedBeforeAnyOfItsCodeRunsTest {
     private static Bindings.Generator load(Path into, Path jar) throws Exception {
         return Bindings.load(TheCommandFindsABindingThroughItsGeneratorTest.unreleased(
                 into.resolve("cache")), new GeneratorSpec(new GeneratorRef.Local(jar),
-                new IdRule.NotOneOf(GeneratorSpec.catalogIds()), "the generator " + jar));
+                new IdRule.External(), "the generator " + jar));
     }
 
     private static List<String> asked() {
