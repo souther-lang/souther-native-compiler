@@ -557,12 +557,12 @@ pub fn host_encode_symbol(module: &str, name: &str) -> String {
 /// crosses in ([`host_list_symbol`]).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum HostListOperation {
-    /// `(count, the elements as columns) -> list`: a list of `count` elements, the one at an index
-    /// being what each column holds at that index. A column is a [`HostParameter::Slice`] of one of
-    /// the words the element crosses as ([`HostShape::words`]), so an element crossing as a presence
-    /// and a value is two columns. Building a list ends with the list whatever the elements are, so
-    /// this answers no status; a count below nought, or one no room could be taken for, is the
-    /// host's mistake and ends the process rather than being read as some other count.
+    /// `(count, the elements as columns, room for the list) -> bool`: a list of `count` elements,
+    /// the one at an index being what each column holds at that index, written through the room. A
+    /// column is a [`HostParameter::Slice`] of one of the words the element crosses as
+    /// ([`HostShape::words`]), so an element crossing as a presence and a value is two columns. The
+    /// count is a datum ([`HOST_INPUT_CONTRACT`]): one below nought, or one no room could be taken
+    /// for, is answered as nought with nothing written, and ends nothing.
     Construct,
     /// `(list) -> count`: how many elements the list holds.
     Length,
@@ -1537,7 +1537,7 @@ pub const HASH_PRESENT: i64 = 1;
 
 /// The symbol generated code takes room from.
 ///
-/// It answers a pointer to `size` bytes that stay valid until the mark below them is reset. A
+/// It answers a pointer to `size` bytes that stay valid until the scope they were taken in closes. A
 /// Souther value is never freed on its own: what a run makes is dropped in one go by the caller
 /// that bracketed the call, so nothing generated has to know what owns what.
 pub const ALLOCATE: &str = "souther_alloc";

@@ -18,13 +18,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * A PHP host hands the library a {@code Date}, a {@code Time}, a {@code DateTime} and an
  * {@code Instant} as the runtime's classes of those names, held as their numbers and handed over as
- * the text java.time writes for them, and is handed one back the same way, wherever it stands: what
+ * those numbers, and is handed one back the same way, wherever it stands: what
  * a behavior takes and answers, a field, an optional, an element of a list, a case of a union, and
  * what a behavior the host implements is handed and answers.
  *
- * <p>The library ends the process on text that names no temporal, so what the runtime writes is
- * held here at the ends of each range, where the text is least like the common case: a year with a
- * sign, a year of more than four digits, the first and the last moment an {@code Instant} holds.
+ * <p>What the runtime hands over and reads back is held here at the ends of each range, where the
+ * numbers are least like the common case: a year below nought, a year of more than four digits, the
+ * first and the last moment an {@code Instant} holds.
  */
 class APhpHostHandsOverAndReadsBackATemporalTest {
 

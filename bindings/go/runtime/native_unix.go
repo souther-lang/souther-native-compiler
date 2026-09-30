@@ -69,10 +69,9 @@ type Spec struct {
 	Symbols  []string
 }
 
-// MissingSymbols are functions the binding calls that the library file does not have. It is not
-// the library the binding was generated from, or is one of another ABI generation: a function
-// generated for a behavior or a type has its generation in its name, so a library of another one
-// has none of them.
+// MissingSymbols are functions the binding calls that the library file does not have, which is
+// then not the library the binding was generated from. A library of another ABI generation is
+// refused before this is asked, as [UnsupportedGeneration].
 type MissingSymbols struct {
 	Path  string
 	Names []string
