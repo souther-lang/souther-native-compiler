@@ -140,7 +140,17 @@ public final class Main {
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems) {
-        return run(args, out, problems, Bindings.installed(), Fetching.standard());
+        Bindings installed;
+        try {
+            installed = Bindings.installed();
+        } catch (java.util.ServiceConfigurationError | LinkageError e) {
+            // A generator installed with the command whose code does not load: the installation's
+            // failure, said as that and not as a trace.
+            problems.println("a generator installed with this command does not load: "
+                    + e.getMessage());
+            return REFUSED;
+        }
+        return run(args, out, problems, installed, Fetching.standard());
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems, Bindings generators) {
@@ -197,15 +207,14 @@ public final class Main {
                     for (HostBinding binding : library.bindings()) {
                         BindingGenerator generator = generator(generators, fetching, binding.kind());
                         try {
-                            taken(generator, binding);
-                            generator.preflight(binding.options());
-                            BindingDirectory.replaceable(binding.into(), generator.id());
+                            GeneratorFailed.asking(binding.kind(), () -> {
+                                generator.preflight(binding.options());
+                                return null;
+                            });
+                            BindingDirectory.replaceable(binding.into(), binding.kind().id());
                         } catch (NotBindable e) {
                             problems.println(e.getMessage());
                             return WRONG_COMMAND;
-                        } catch (RuntimeException e) {
-                            problems.println(failed(binding, e));
-                            return REFUSED;
                         }
                         generating.put(binding, generator);
                     }
@@ -226,23 +235,22 @@ public final class Main {
                         for (Map.Entry<HostBinding, BindingGenerator> each : generating.entrySet()) {
                             HostBinding binding = each.getKey();
                             BindingDirectory directory =
-                                    BindingDirectory.staging(binding.into(), each.getValue().id());
+                                    BindingDirectory.staging(binding.into(), binding.kind().id());
                             staged.add(directory);
                             try {
-                                each.getValue().generate(input, directory.staging(),
-                                        binding.options());
+                                GeneratorFailed.asking(binding.kind(), () -> {
+                                    each.getValue().generate(input, directory.staging(),
+                                            binding.options());
+                                    return null;
+                                });
                             } catch (NotBindable e) {
                                 problems.println("the " + binding.kind().display()
                                         + " binding is not written: " + e.getMessage());
                                 abandoned(staged);
                                 return REFUSED;
-                            } catch (RuntimeException e) {
-                                problems.println(failed(binding, e));
-                                abandoned(staged);
-                                return REFUSED;
                             }
                         }
-                    } catch (IOException e) {
+                    } catch (IOException | GeneratorFailed e) {
                         abandoned(staged);
                         throw e;
                     }
@@ -255,6 +263,9 @@ public final class Main {
                     }
                 }
             }
+        } catch (GeneratorFailed e) {
+            problems.println(e.getMessage());
+            return REFUSED;
         } catch (CompileException e) {
             problems.println(e.getMessage());
             return REFUSED;
@@ -274,26 +285,6 @@ public final class Main {
         return WROTE_IT;
     }
 
-    /**
-     * Refuses an option given for {@code binding} that its generator does not take: the catalog
-     * and the generator disagreeing about what a binding is asked with, which the command says
-     * rather than hand the generator what it never named.
-     */
-    private static void taken(BindingGenerator generator, HostBinding binding) {
-        for (String option : binding.options().keySet()) {
-            if (!generator.options().contains(option)) {
-                throw new NotBindable("the " + binding.kind().display() + " generator takes no --"
-                        + option);
-            }
-        }
-    }
-
-    /** What a generator throwing anything but a refusal is reported as: its own failure. */
-    private static String failed(HostBinding binding, RuntimeException e) {
-        return "the " + binding.kind().display() + " generator failed, and wrote nothing: "
-                + e.getClass().getName() + (e.getMessage() == null ? "" : ": " + e.getMessage());
-    }
-
     /** Drops every binding written so far, none of which was put in place. */
     private static void abandoned(List<BindingDirectory> staged) throws IOException {
         for (BindingDirectory directory : staged) {
@@ -306,15 +297,19 @@ public final class Main {
      * catalog's artifact provides, fetched once and kept.
      */
     private static BindingGenerator generator(Bindings generators, Fetching fetching,
-                                              KnownBindings.Kind kind) throws IOException {
+                                              KnownBindings.Kind kind)
+            throws IOException, GeneratorFailed {
         try {
             return generators.generatorFor(kind);
         } catch (BindingUnavailable missing) {
+            Path jar;
             try {
-                return generators.load(GeneratorJars.fetch(fetching, kind), kind);
+                jar = GeneratorJars.fetch(fetching, kind);
             } catch (NotFetched cannot) {
                 throw new NotFetched(missing.getMessage() + ": " + cannot.getMessage(), cannot);
             }
+            // Loading a fetched jar runs its generator's code: what goes wrong there is its.
+            return GeneratorFailed.asking(kind, () -> generators.load(jar, kind));
         }
     }
 

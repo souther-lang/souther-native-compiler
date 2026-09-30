@@ -7,7 +7,6 @@ import souther.bindings.NotBindable;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.Set;
 
 /** The Go binding, as the command finds it: asked for the {@code package} it is written as. */
 public final class GoBindingGenerator implements BindingGenerator {
@@ -15,11 +14,6 @@ public final class GoBindingGenerator implements BindingGenerator {
     @Override
     public String id() {
         return "go";
-    }
-
-    @Override
-    public Set<String> options() {
-        return Set.of("package");
     }
 
     @Override

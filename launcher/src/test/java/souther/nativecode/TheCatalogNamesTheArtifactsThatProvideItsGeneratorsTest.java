@@ -55,19 +55,6 @@ class TheCatalogNamesTheArtifactsThatProvideItsGeneratorsTest {
         }
     }
 
-    /**
-     * What the command line reads for a binding is what its generator says it takes: the catalog
-     * reads the options before any generator is found, and the generator is handed only those.
-     */
-    @Test
-    void theOptionsTheCatalogReadsAreTheOnesTheGeneratorTakes() throws Exception {
-        for (KnownBindings.Kind kind : KnownBindings.all()) {
-            assertThat(Bindings.installed().generatorFor(kind).options())
-                    .as("what the %s generator takes", kind.display())
-                    .containsExactlyInAnyOrderElementsOf(kind.options());
-        }
-    }
-
     private static String artifactOf(Path module) {
         try {
             Matcher artifact = ARTIFACT.matcher(Files.readString(module.resolve("pom.xml")));

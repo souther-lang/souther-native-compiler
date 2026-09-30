@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * A generator that a test packs into a jar and serves as the artifact of the PHP binding: it is
@@ -19,11 +18,6 @@ public final class FetchedGenerator implements BindingGenerator {
     @Override
     public String id() {
         return "php";
-    }
-
-    @Override
-    public Set<String> options() {
-        return Set.of("namespace");
     }
 
     @Override

@@ -7,7 +7,6 @@ import souther.bindings.NotBindable;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.Set;
 
 /** The PHP binding, as the command finds it: asked for a {@code namespace} to write it under. */
 public final class PhpBindingGenerator implements BindingGenerator {
@@ -15,11 +14,6 @@ public final class PhpBindingGenerator implements BindingGenerator {
     @Override
     public String id() {
         return "php";
-    }
-
-    @Override
-    public Set<String> options() {
-        return Set.of("namespace");
     }
 
     @Override

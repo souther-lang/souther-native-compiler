@@ -7,7 +7,6 @@ import souther.bindings.NotBindable;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.Set;
 
 /** The Rust binding, as the command finds it: asked for the {@code crate} it is written as. */
 public final class RustBindingGenerator implements BindingGenerator {
@@ -15,11 +14,6 @@ public final class RustBindingGenerator implements BindingGenerator {
     @Override
     public String id() {
         return "rust";
-    }
-
-    @Override
-    public Set<String> options() {
-        return Set.of("crate");
     }
 
     @Override

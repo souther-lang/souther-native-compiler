@@ -15,7 +15,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -40,13 +39,13 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
         final List<String> asked = new ArrayList<>();
         private final String id;
         private final String refuses;
-        private final RuntimeException generating;
+        private final Exception generating;
 
         Recording(String id, String refuses) {
             this(id, refuses, null);
         }
 
-        Recording(String id, String refuses, RuntimeException generating) {
+        Recording(String id, String refuses, Exception generating) {
             this.id = id;
             this.refuses = refuses;
             this.generating = generating;
@@ -55,11 +54,6 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
         @Override
         public String id() {
             return id;
-        }
-
-        @Override
-        public Set<String> options() {
-            return Set.of("namespace", "crate");
         }
 
         @Override
@@ -79,8 +73,11 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
             }
             asked.add("generate " + options + " of " + input.manifest().modules().size()
                     + " module into " + (empty ? "an empty" : "a") + " directory");
-            if (generating != null) {
-                throw generating;
+            if (generating instanceof IOException io) {
+                throw io;
+            }
+            if (generating instanceof RuntimeException failed) {
+                throw failed;
             }
             Files.writeString(into.resolve(id + ".txt"), "written by " + id);
         }
@@ -136,39 +133,26 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
         }
     }
 
-    /** What a generator throws that is not a refusal is said as its failure, and not a trace. */
+    /**
+     * What a generator throws that is not a refusal is said as its failure, and not a trace: an
+     * I/O failure of its own as well, which is the same type as the command's own and told apart
+     * by where it was thrown.
+     */
     @Test
     void aGeneratorsOwnFailureIsSaidInOneLine(@TempDir Path into) throws Exception {
         Path model = model(into);
+        for (Exception thrown : List.of(new IllegalStateException("the generator's own bug"),
+                new IOException("the generator's own disk"))) {
+            Ran ran = run(Bindings.of(List.of(new Recording("php", null, thrown))), "--library",
+                    into.resolve("native").toString(), "--php", into.resolve("out").toString(),
+                    "--namespace", "Acme", model.toString());
 
-        Ran ran = run(Bindings.of(List.of(new Recording("php", null,
-                        new IllegalStateException("the generator's own bug")))), "--library",
-                into.resolve("native").toString(), "--php", into.resolve("out").toString(),
-                "--namespace", "Acme", model.toString());
-
-        assertThat(ran.ended()).isEqualTo(1);
-        assertThat(ran.said()).contains("the PHP generator failed, and wrote nothing:"
-                + " java.lang.IllegalStateException: the generator's own bug")
-                .doesNotContain("\tat ");
-    }
-
-    /** An option the catalog reads that the generator does not take is refused before anything is built. */
-    @Test
-    void anOptionTheGeneratorDoesNotTakeIsRefused(@TempDir Path into) throws Exception {
-        Recording taking = new Recording("php", null) {
-            @Override
-            public Set<String> options() {
-                return Set.of("crate");
-            }
-        };
-        Path model = model(into);
-
-        Ran ran = run(Bindings.of(List.of(taking)), "--library", into.resolve("native").toString(),
-                "--php", into.resolve("out").toString(), "--namespace", "Acme", model.toString());
-
-        assertThat(ran.ended()).isEqualTo(2);
-        assertThat(ran.said()).contains("the PHP generator takes no --namespace");
-        assertThat(into.resolve("native")).doesNotExist();
+            assertThat(ran.ended()).as(ran.said()).isEqualTo(1);
+            assertThat(ran.said()).contains("the PHP generator failed, and wrote nothing: "
+                    + thrown.getClass().getName() + ": " + thrown.getMessage())
+                    .doesNotContain("\tat ");
+            assertThat(into.resolve("out")).doesNotExist();
+        }
     }
 
     @Test

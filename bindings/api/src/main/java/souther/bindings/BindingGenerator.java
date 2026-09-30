@@ -3,7 +3,6 @@ package souther.bindings;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * Writes the binding of a library for one host's language, found by the command through
@@ -18,11 +17,13 @@ import java.util.Set;
  * bindings in place is the one thing that can leave some of them in place and not others, since
  * several directories are never replaced as one.
  *
- * <p>Which bindings there are, and what each is asked with on the command line, is the command's
- * own catalog, and a generator is asked by the {@link #id} that catalog names it by. Options are
- * handed over as they were written, keyed by the option's name without its dashes, and only those
- * {@link #options} names. What each means is the generator's: one it needs and was not given, or
- * one it refuses, is refused in {@link #preflight}.
+ * <p>Which bindings there are, and how each is asked for on the command line, the options it takes
+ * among it, is the command's own catalog and nothing else's: the command reads a command line before
+ * any generator is found, and a generator that is not there cannot say what it takes. A generator is
+ * asked by the {@link #id} that catalog names it by, and handed the options the catalog names for
+ * it, as they were written and keyed by the option's name without its dashes. What each value
+ * means is the generator's: one it needs and was not given, or one whose value it refuses, is
+ * refused in {@link #preflight}.
  *
  * <p>A generation has two moments at which it can refuse, and they are apart because the second
  * needs a library the first is meant to spare building. {@link #preflight} refuses what holds
@@ -36,13 +37,10 @@ public interface BindingGenerator {
     /** The id the command's catalog names this generator by. */
     String id();
 
-    /** The options this generator takes, each named without its dashes. */
-    Set<String> options();
-
     /**
      * Refuses, before anything is built, what would be refused whatever the model says.
      *
-     * @param options every option given for this binding, each one of {@link #options}
+     * @param options every option given for this binding
      * @throws NotBindable where an option would be refused
      */
     void preflight(Map<String, String> options);
