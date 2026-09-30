@@ -72,10 +72,11 @@ not say which of two a call reaches; each file is opened `RTLD_LOCAL`, and two l
 program each keep their own arena.
 
 `Load` first asks the file which ABI generation it answers to, by `uint32_t
-souther_abi_generation(void)`, the one function every generation has, and refuses a library of
+souther_abi_generation(void)`, which stands outside the generations and is the same in every one
+from 9 on, and refuses a library of
 another generation than the one this runtime calls (`souther.ABIGeneration`) with a
-`*souther.UnsupportedGeneration`. A library too old to answer the question is refused the same way,
-with `Found` nought. `Load` then looks up every function it will call: the runtime functions this
+`*souther.UnsupportedGeneration`. A library of generation 8 or earlier has no such function, and is
+refused the same way, with `Found` nought. `Load` then looks up every function it will call: the runtime functions this
 module calls, which it lists and looks up itself, and every function the binding calls, which the
 binding lists. One that is missing is a `*souther.MissingSymbols`, so a file of another library is
 refused at load and not where a call reaches it. That the file is the library the binding was
@@ -160,8 +161,9 @@ it.
 
 A sum has `Case`, answering the value as the type of its case (`Owed`), which is marked as one of
 the sum's cases; a case the model keeps is `<Sum>Kept`, and there is a `<Sum>From<Type>` for each
-case and each narrower sum. A case the language gives, or a primitive, is a type of the sum's own
-(`<Sum><Case>`), since Go lets a package write a method only on its own types.
+case and each narrower sum. Every case of a sum is a type the model declares; one declared in
+another package is held by a type of the sum's own (`<Sum><Case>`), since Go lets a package write a
+method only on its own types.
 
 An `Int`, a `Bool` and a `String` are Go's own. A `String` handed to the library has to be UTF-8,
 and one that is not is `souther.ErrNotUTF8` before anything is called; the library puts text in NFC,

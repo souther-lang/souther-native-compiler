@@ -121,10 +121,8 @@ value and nothing else, so a step that ends the run for a reason of its own answ
 failure is what `Decoding::read` comes to.
 
 A sum is a handle too, with `decode`, `decoder`, `encode` and `case`, which answers an enum of its
-cases, a case the model keeps being `Kept`, and `From` each of its cases and each narrower sum. A
-case the library holds as a primitive is read out through the room the binding hands it, and the
-library answers whether the value was that case; it always is where `case` has just said so, and a
-library that answered otherwise would be a panic rather than a wrong value.
+cases, a case the model keeps being `Kept`, and `From` each of its cases and each narrower sum.
+Every case of a sum is a type the model declares.
 
 An `Int`, a `Bool` and a `String` are Rust's own. A `String` is handed over as its UTF-8 bytes,
 which is all the library asks of it, and the library puts it in NFC; one whose canonical form is
