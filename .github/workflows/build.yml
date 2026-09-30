@@ -118,11 +118,6 @@ jobs:
       # types do.
       - run: scripts/go-cart-example.sh
 
-      # The testkit on the path a released one takes, rehearsed for this platform: a project with the
-      # API and the testkit of a publication and nothing of this clone builds a library and tests a
-      # generator. release.yml runs the same acceptance on the publication it is about to release.
-      - run: scripts/testkit-rehearsal.sh
-
   # Every souther issue this repository names is a premise that the pinned souther does not yet
   # answer it, and the code around the reference works around the gap. A premise the pin has
   # overtaken is a workaround for an answer the program now gives, and nothing else would say so.

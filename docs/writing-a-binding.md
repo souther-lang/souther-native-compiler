@@ -297,5 +297,8 @@ That the testkit is enough on its own is held by a project outside the reactor,
 [`bindings/testkit/acceptance`](../bindings/testkit/acceptance/), which depends on the API and the
 testkit and on nothing else of this project. [`scripts/testkit-acceptance.sh`](../scripts/testkit-acceptance.sh)
 runs its test against a publication before it is published: the release runs it on what it is about
-to release, and the build rehearses a release for the platform it runs on
-([`scripts/testkit-rehearsal.sh`](../scripts/testkit-rehearsal.sh)).
+to release, so a testkit that cannot build a library outside this repository is never released. A
+change to the testkit, or to what it depends on, can be rehearsed before then on one's own machine
+with [`scripts/testkit-rehearsal.sh`](../scripts/testkit-rehearsal.sh), which rehearses a release
+for the platform it runs on; the build does not run it, since what it alone reaches is rarely broken
+and the release stops before publishing where it is.

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# A release rehearsed on this machine, far enough to hold the testkit to its promise before a PR is
-# merged rather than on the day of a release: the commit checked out apart, at a version that is not
-# a snapshot; the generators' jars built and this platform's bundle packed; their checksums written
+# A release rehearsed on this machine, far enough to hold the testkit to its promise before the day
+# of a release, for a change to the testkit or to what it depends on. Run by hand, not by the build:
+# the release runs the same acceptance before it publishes anything, and this costs a release build
+# of the driver and a deploy of the reactor.
+#
+# The commit is checked out apart, at a version that is not a snapshot; then the generators' jars built and this platform's bundle packed; their checksums written
 # into the compiler; the reactor deployed into a directory; and scripts/testkit-acceptance.sh run
 # against that.
 #
