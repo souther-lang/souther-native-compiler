@@ -126,6 +126,7 @@ sealed interface Crossing {
         /** The function of the runtime handing a value of this over as the word the library reads. */
         private String hand() {
             return switch (kind) {
+                case DECIMAL -> "Decimal";
                 case DATE -> "DateWord";
                 case TIME -> "TimeWord";
                 case DATETIME -> "DateTimeWord";
@@ -157,11 +158,7 @@ sealed interface Crossing {
                     body.line(text + ", " + body.err() + " := " + body.imports.souther() + ".String(" + body.run
                             + ", " + value + ")").checked().line(word + " = " + text);
                 }
-                case DECIMAL -> {
-                    body.line(word + " = " + body.imports.souther() + ".Decimal(" + body.run + ", "
-                            + value + ")");
-                }
-                case DATE, TIME, DATETIME, INSTANT -> {
+                case DECIMAL, DATE, TIME, DATETIME, INSTANT -> {
                     String at = body.temp("at");
                     body.line(at + ", " + body.err() + " := " + body.imports.souther() + "." + hand() + "("
                             + body.run + ", " + value + ")").checked().line(word + " = " + at);

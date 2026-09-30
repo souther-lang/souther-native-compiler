@@ -435,17 +435,21 @@ How a value crosses is decided once, as the shape it crosses in, and the manifes
 beside every function that hands one across. An `Int` crosses as 64 bits, a `Bool` as a byte, and
 text and a value of a declared type or of a union as an address. A `Decimal` crosses as an address
 of type `souther_decimal`, which a host makes through `souther_decimal_of_parts`, handing its
-integer as integer text in a string and its scale, and reads back through `souther_decimal_unscaled`
+integer as integer text in bytes and its scale, and reads back through `souther_decimal_unscaled`
 and `souther_decimal_scale`: the two numbers the language says a `Decimal` is, and not its text,
 which would be one spelling among several. A `Date`, a `Time`, a `DateTime` and an `Instant` cross
 each as an address of a type of its own (`souther_date`, `souther_time`, `souther_datetime` and
-`souther_instant`), which a host makes of the ISO 8601 text that names the value
-(`souther_date_of_iso`, and the same for the others) and reads back as the text a boundary writes
-(`souther_date_iso`). A word of their own and not a `souther_string`, so that a host handed one where
-the other was meant has been handed something else; what a binding makes of it, text or a type of
-its own language's, is the binding's. The text a host hands over is one that names a value of the
-type, and one that does not ends the process as a `Decimal`'s integer that is no integer does: it is
-a boundary's decoder alone that reports outside text as an issue. The PHP binding holds each of the
+`souther_instant`), which a host makes of the numbers the value means, each an `int64_t`
+(`souther_date_of_parts` takes a year, a month and a day; `souther_time_of_parts` an hour, a minute
+and a second; `souther_datetime_of_parts` all six; `souther_instant_of_parts` the second from the
+epoch and the nanosecond within it), and reads back as those numbers (`souther_date_parts` and the
+same for the others). A word of their own and not a `souther_string`, so that a host handed one where
+the other was meant has been handed something else; what a binding makes of it is the binding's.
+Every one of these makers writes the value through room and answers whether the numbers name one,
+so a month of 13, the thirtieth of February or integer text that is no integer is answered as that
+and ends nothing: the runtime decides what a value is, and a binding that checks first does so only
+to say it in its own words. It is a boundary's decoder alone that reports outside text as an issue.
+The PHP binding holds each of the
 four as a class of its runtime, as the Go binding does. An optional crosses as a presence
 and then what it holds: a constructor takes a byte and the words of the value, which are ignored
 where the byte is nought, and a reader writes the byte, and the value only where there is one. Each
@@ -784,8 +788,8 @@ PHP does with them — a `BcMath\Number`, text, a money library — is the appli
 A `Date`, a `Time`, a `DateTime` and an `Instant` are `Souther\Runtime\Date` and the classes of the
 other three names, held as their numbers (a year, month and day; an hour, minute and second; the
 second from the epoch and the nanosecond), checked where they are made against what the type holds,
-and handed over as the text `java.time` writes for each, which is the text the library reads and
-writes back. None of them is a `\DateTimeInterface`, a moment in a zone, which only an `Instant` is
+and handed over and read back as those numbers; the text `java.time` writes for each is only for
+PHP to show. None of them is a `\DateTimeInterface`, a moment in a zone, which only an `Instant` is
 and which does not reach every year one does; `Date::of` and `Instant::of` take one, and
 `Instant::toDateTime` gives one, to the microsecond.
 A module's classes build and read a list through that module's own functions and no other

@@ -6,11 +6,13 @@ namespace Souther\Runtime;
 
 /**
  * @internal What `Date`, `Time`, `DateTime` and `Instant` share: the calendar they count days in,
- * the range a `java.time` type holds, and the text `java.time` writes for each, which is what the
- * library takes and what it writes back.
+ * the range a `java.time` type holds, and the text `java.time` writes for each.
  *
- * The library takes a temporal as the text that names it and ends the process on text that names
- * none, so a value is held as its numbers, checked where it is made, and handed over as that text.
+ * A value is held as the numbers it means and handed to the library as those numbers, which is how
+ * the library takes one and answers one (souther-native-compiler#137). It is checked where it is
+ * made, so that a value a PHP program has is always one: the library decides the same again where
+ * it is handed one, and a refusal from it is this binding and the library disagreeing. The text is
+ * for a PHP program to show, and never crosses to the library.
  */
 final class Calendar
 {
@@ -66,23 +68,6 @@ final class Calendar
     private static function floorMod(int $a, int $b): int
     {
         return $a - self::floorDiv($a, $b) * $b;
-    }
-
-    /**
-     * The days from 1970-01-01 to a day of the proleptic Gregorian calendar (Howard Hinnant's
-     * days_from_civil), as the library's runtime counts them.
-     */
-    private static function daysFromCivil(int $year, int $month, int $day): int
-    {
-        if ($month <= 2) {
-            $year--;
-        }
-        $era = self::floorDiv($year, 400);
-        $yearOfEra = $year - $era * 400;
-        $monthFromMarch = $month > 2 ? $month - 3 : $month + 9;
-        $dayOfYear = intdiv(153 * $monthFromMarch + 2, 5) + $day - 1;
-        $dayOfEra = $yearOfEra * 365 + intdiv($yearOfEra, 4) - intdiv($yearOfEra, 100) + $dayOfYear;
-        return $era * 146_097 + $dayOfEra - 719_468;
     }
 
     /**
@@ -144,82 +129,5 @@ final class Calendar
             $nano % 1_000 === 0 => sprintf('.%06d', intdiv($nano, 1_000)),
             default => sprintf('.%09d', $nano),
         } . 'Z';
-    }
-
-    /** The `Date` the library wrote, which is what `LocalDate.toString` writes. */
-    public static function writtenDate(string $text): Date
-    {
-        if (preg_match('/\A' . self::DATE . '\z/', $text, $read) !== 1) {
-            throw self::unread('Date', 'LocalDate', $text);
-        }
-        return self::date($read, 1);
-    }
-
-    /** The `Time` the library wrote, which is what `LocalTime.toString` writes of one held to the second. */
-    public static function writtenTime(string $text): Time
-    {
-        if (preg_match('/\A' . self::TIME . '\z/', $text, $read) !== 1) {
-            throw self::unread('Time', 'LocalTime', $text);
-        }
-        return self::time($read, 1);
-    }
-
-    /** The `DateTime` the library wrote, which is what `LocalDateTime.toString` writes. */
-    public static function writtenDateTime(string $text): DateTime
-    {
-        if (preg_match('/\A' . self::DATE . 'T' . self::TIME . '\z/', $text, $read) !== 1) {
-            throw self::unread('DateTime', 'LocalDateTime', $text);
-        }
-        return new DateTime(self::date($read, 1), self::time($read, 5));
-    }
-
-    /** The `Instant` the library wrote, which is what `Instant.toString` writes: in UTC. */
-    public static function writtenInstant(string $text): Instant
-    {
-        if (preg_match('/\A' . self::DATE . 'T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z\z/', $text,
-                $read) !== 1) {
-            throw self::unread('Instant', 'Instant', $text);
-        }
-        // Read as numbers, not as a Date: an Instant reaches a year past what a Date holds.
-        $year = $read[1] === '-' ? -(int) $read[2] : (int) $read[2];
-        $second = self::daysFromCivil($year, (int) $read[3], (int) $read[4]) * self::SECONDS_PER_DAY
-            + (int) $read[5] * 3600 + (int) $read[6] * 60 + (int) $read[7];
-        $fraction = $read[8] ?? '';
-        return new Instant($second, (int) str_pad($fraction, 9, '0'));
-    }
-
-    /** A date as `LocalDate.toString` writes it: its sign, year, month and day. */
-    private const DATE = '([+-]?)(\d{4,})-(\d{2})-(\d{2})';
-
-    /** A time of day as `LocalTime.toString` writes one held to the second. */
-    private const TIME = '(\d{2}):(\d{2})(?::(\d{2}))?';
-
-    /**
-     * The `Date` of what `DATE` matched, its sign at `$sign` and its year, month and day after it.
-     *
-     * @param array<int, string> $read
-     */
-    private static function date(array $read, int $sign): Date
-    {
-        $year = (int) $read[$sign + 1];
-        return new Date($read[$sign] === '-' ? -$year : $year, (int) $read[$sign + 2],
-            (int) $read[$sign + 3]);
-    }
-
-    /**
-     * The `Time` of what `TIME` matched, its hour at `$hour` and its minute and second after it.
-     *
-     * @param array<int, string> $read
-     */
-    private static function time(array $read, int $hour): Time
-    {
-        $second = $read[$hour + 2] ?? '';
-        return new Time((int) $read[$hour], (int) $read[$hour + 1], $second === '' ? 0 : (int) $second);
-    }
-
-    private static function unread(string $type, string $java, string $text): \LogicException
-    {
-        return new \LogicException(
-            "the library writes a {$type} as {$java}.toString does, and wrote '{$text}'");
     }
 }

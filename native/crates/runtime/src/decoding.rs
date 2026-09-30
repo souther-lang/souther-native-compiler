@@ -1797,9 +1797,17 @@ mod tests {
     }
 
     fn decimal(unscaled: &str, scale: i64) -> *mut Decimal {
-        unsafe {
-            crate::souther_decimal_of_parts(unscaled.as_ptr(), Count(unscaled.len() as i64), scale)
-        }
+        let mut out = std::ptr::null_mut();
+        let made = unsafe {
+            crate::souther_decimal_of_parts(
+                unscaled.as_ptr(),
+                Count(unscaled.len() as i64),
+                scale,
+                &mut out,
+            )
+        };
+        assert_eq!(made, 1, "{unscaled} at {scale} names a Decimal");
+        out
     }
 
     fn ints(values: &[i64]) -> *mut crate::List {

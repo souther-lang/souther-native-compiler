@@ -156,6 +156,7 @@ shaped!(A, B, C);
 shaped!(A, B, C, D);
 shaped!(A, B, C, D, E);
 shaped!(A, B, C, D, E, F);
+shaped!(A, B, C, D, E, F, G);
 
 fn shape_of<F: Shaped>(_: F) -> Shape {
     F::shape()
@@ -626,7 +627,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_decimal_of_parts",
             shape_of(
                 souther_decimal_of_parts
-                    as unsafe extern "C" fn(*const u8, Count, i64) -> *mut Decimal,
+                    as unsafe extern "C" fn(*const u8, Count, i64, *mut *mut Decimal) -> i8,
             ),
         ),
         (
@@ -871,16 +872,68 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_case_date_read as unsafe extern "C" fn(*const Value) -> *const Date),
         ),
         (
-            "souther_date_of_iso",
-            shape_of(souther_date_of_iso as unsafe extern "C" fn(T) -> *mut Date),
+            "souther_date_of_parts",
+            shape_of(
+                souther_date_of_parts as unsafe extern "C" fn(i64, i64, i64, *mut *mut Date) -> i8,
+            ),
+        ),
+        (
+            "souther_date_parts",
+            shape_of(
+                souther_date_parts
+                    as unsafe extern "C" fn(*const Date, *mut i64, *mut i64, *mut i64),
+            ),
+        ),
+        (
+            "souther_time_of_parts",
+            shape_of(
+                souther_time_of_parts as unsafe extern "C" fn(i64, i64, i64, *mut *mut Time) -> i8,
+            ),
+        ),
+        (
+            "souther_time_parts",
+            shape_of(
+                souther_time_parts
+                    as unsafe extern "C" fn(*const Time, *mut i64, *mut i64, *mut i64),
+            ),
+        ),
+        (
+            "souther_datetime_of_parts",
+            shape_of(
+                souther_datetime_of_parts
+                    as unsafe extern "C" fn(i64, i64, i64, i64, i64, i64, *mut *mut DateTime) -> i8,
+            ),
+        ),
+        (
+            "souther_datetime_parts",
+            shape_of(
+                souther_datetime_parts
+                    as unsafe extern "C" fn(
+                        *const DateTime,
+                        *mut i64,
+                        *mut i64,
+                        *mut i64,
+                        *mut i64,
+                        *mut i64,
+                        *mut i64,
+                    ),
+            ),
+        ),
+        (
+            "souther_instant_of_parts",
+            shape_of(
+                souther_instant_of_parts as unsafe extern "C" fn(i64, i64, *mut *mut Instant) -> i8,
+            ),
+        ),
+        (
+            "souther_instant_parts",
+            shape_of(
+                souther_instant_parts as unsafe extern "C" fn(*const Instant, *mut i64, *mut i64),
+            ),
         ),
         (
             "souther_date_literal",
             shape_of(souther_date_literal as extern "C" fn(i64) -> *mut Date),
-        ),
-        (
-            "souther_date_iso",
-            shape_of(souther_date_iso as unsafe extern "C" fn(*const Date) -> M),
         ),
         (
             "souther_date_compare",
@@ -909,16 +962,8 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_case_time_read as unsafe extern "C" fn(*const Value) -> *const Time),
         ),
         (
-            "souther_time_of_iso",
-            shape_of(souther_time_of_iso as unsafe extern "C" fn(T) -> *mut Time),
-        ),
-        (
             "souther_time_literal",
             shape_of(souther_time_literal as extern "C" fn(i64) -> *mut Time),
-        ),
-        (
-            "souther_time_iso",
-            shape_of(souther_time_iso as unsafe extern "C" fn(*const Time) -> M),
         ),
         (
             "souther_time_compare",
@@ -949,16 +994,8 @@ fn functions() -> Vec<(&'static str, Shape)> {
             ),
         ),
         (
-            "souther_datetime_of_iso",
-            shape_of(souther_datetime_of_iso as unsafe extern "C" fn(T) -> *mut DateTime),
-        ),
-        (
             "souther_datetime_literal",
             shape_of(souther_datetime_literal as extern "C" fn(i64) -> *mut DateTime),
-        ),
-        (
-            "souther_datetime_iso",
-            shape_of(souther_datetime_iso as unsafe extern "C" fn(*const DateTime) -> M),
         ),
         (
             "souther_datetime_compare",
@@ -991,16 +1028,8 @@ fn functions() -> Vec<(&'static str, Shape)> {
             ),
         ),
         (
-            "souther_instant_of_iso",
-            shape_of(souther_instant_of_iso as unsafe extern "C" fn(T) -> *mut Instant),
-        ),
-        (
             "souther_instant_literal",
             shape_of(souther_instant_literal as extern "C" fn(i64, i64) -> *mut Instant),
-        ),
-        (
-            "souther_instant_iso",
-            shape_of(souther_instant_iso as unsafe extern "C" fn(*const Instant) -> M),
         ),
         (
             "souther_instant_compare",

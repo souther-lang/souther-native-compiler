@@ -295,12 +295,12 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 decoded("read wrong", "{\\"price\\": -1, \\"quantity\\": 5}");
                 decoded("not json", "{\\"price\\"");
 
-                souther_decimal price =
-                        souther_decimal_of_parts((const uint8_t *) "1999", 4, 2);
-                souther_decimal rate =
-                        souther_decimal_of_parts((const uint8_t *) "150", 3, 3);
-                souther_decimal nought =
-                        souther_decimal_of_parts((const uint8_t *) "-0", 2, 7);
+                souther_decimal price = NULL;
+                souther_decimal_of_parts((const uint8_t *) "1999", 4, 2, &price);
+                souther_decimal rate = NULL;
+                souther_decimal_of_parts((const uint8_t *) "150", 3, 3, &rate);
+                souther_decimal nought = NULL;
+                souther_decimal_of_parts((const uint8_t *) "-0", 2, 7, &nought);
                 souther_value rated = NULL;
                 status = souther@_m_shop_b_rated(NULL, price, rate, &rated);
                 souther_decimal product = souther_case_decimal_read(rated);
@@ -492,9 +492,12 @@ class AHostCallsALibraryThroughItsHeaderTest {
             decoded($ffi, "read wrong", '{"price": -1, "quantity": 5}');
             decoded($ffi, "not json", '{"price"');
 
-            $price = $ffi->souther_decimal_of_parts(bytes($ffi, "1999"), 4, 2);
-            $rate = $ffi->souther_decimal_of_parts(bytes($ffi, "150"), 3, 3);
-            $nought = $ffi->souther_decimal_of_parts(bytes($ffi, "-0"), 2, 7);
+            $price = $ffi->new("souther_decimal");
+            $ffi->souther_decimal_of_parts(bytes($ffi, "1999"), 4, 2, FFI::addr($price));
+            $rate = $ffi->new("souther_decimal");
+            $ffi->souther_decimal_of_parts(bytes($ffi, "150"), 3, 3, FFI::addr($rate));
+            $nought = $ffi->new("souther_decimal");
+            $ffi->souther_decimal_of_parts(bytes($ffi, "-0"), 2, 7, FFI::addr($nought));
             $rated = $ffi->new("souther_value");
             $status = $ffi->souther@_m_shop_b_rated(null, $price, $rate, FFI::addr($rated));
             $product = $ffi->souther_case_decimal_read($rated);

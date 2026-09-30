@@ -152,6 +152,14 @@ pub const GENERATIONS: &[(u32, &str)] = &[
          never the value's written form and were never fallible on a String's own bound \
          (souther-native-compiler#109)",
     ),
+    (
+        9,
+        "what a host hands in never ends the process: a temporal is made of and read as the numbers \
+         it means, each an `Int` (`souther_date_of_parts`, `_parts`, and the same for `time`, \
+         `datetime` and `instant`), in place of the ISO text `souther_date_of_iso` and the rest took \
+         and answered and ended the process on; and `souther_decimal_of_parts` writes the `Decimal` \
+         through room and answers whether its parts name one (souther-native-compiler#137)",
+    ),
 ];
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
@@ -1121,7 +1129,9 @@ pub const STRING_LENGTH: &str = "souther_string_length";
 pub const STRING_BYTES: &str = "souther_string_bytes";
 
 /// The symbol a caller outside a Souther program makes a `Decimal` with: its integer, as integer
-/// text in a string, and its scale.
+/// text in bytes, and its scale, written through room where they name one, answering whether they
+/// did. What does not name one is answered as that, and never ends the process: the runtime decides
+/// what a `Decimal` is, so no binding has to.
 ///
 /// A `Decimal` is an address and nothing a host reads behind: how the runtime keeps one is the
 /// runtime's alone, so a host hands over and reads back the two numbers the language says a
@@ -1221,31 +1231,36 @@ pub const RATIONAL_TO_INT: &str = "souther_rational_to_int";
 pub const RATIONAL_TO_DECIMAL: &str = "souther_rational_to_decimal";
 
 /// The symbols a caller outside a Souther program makes a temporal with, and reads one back
-/// through: the ISO 8601 text that names it, as a string.
+/// through: the numbers that are what it means, each an `Int`, and never the text it is written as.
 ///
 /// A temporal is an address and nothing a host reads behind, for the reason a `Decimal` is: how the
-/// runtime keeps one is the runtime's alone, so a host hands over and reads back the text the
-/// language writes it as. What the text is, for each, is what a boundary reads and writes
-/// (spec §primitives): `2026-07-25`, `09:30`, `2026-07-25T09:30`, `2026-07-25T00:00:00Z`. Making
-/// one is asking for a value the text names, so text that names none is a violation of what the
-/// binding promised and ends the process as a `Decimal`'s integer that is no integer does, and it
-/// is a boundary's decoder alone that reports outside text as an issue.
-pub const DATE_OF_ISO: &str = "souther_date_of_iso";
-/// The text a `Date` is written as.
-pub const DATE_ISO: &str = "souther_date_iso";
-/// As [`DATE_OF_ISO`], for a `Time`.
-pub const TIME_OF_ISO: &str = "souther_time_of_iso";
-/// The text a `Time` is written as.
-pub const TIME_ISO: &str = "souther_time_iso";
-/// As [`DATE_OF_ISO`], for a `DateTime`.
-pub const DATETIME_OF_ISO: &str = "souther_datetime_of_iso";
-/// The text a `DateTime` is written as.
-pub const DATETIME_ISO: &str = "souther_datetime_iso";
-/// As [`DATE_OF_ISO`], for an `Instant`, which may be written with an offset and is read as the
-/// moment it names.
-pub const INSTANT_OF_ISO: &str = "souther_instant_of_iso";
-/// The text an `Instant` is written as: in UTC.
-pub const INSTANT_ISO: &str = "souther_instant_iso";
+/// runtime keeps one is the runtime's alone. What a host hands over is the coordinate each type is
+/// defined by (spec §primitives): a `Date` its year, month and day; a `Time` its hour, minute and
+/// second, since it is held to the second; a `DateTime` both; an `Instant` its second from
+/// 1970-01-01T00:00:00Z and the nanosecond within it. Text is one way of writing those, which a host
+/// has its own ways of doing, and taking it here would put the grammar `java.time` writes into every
+/// binding.
+///
+/// Making one writes it through room where the numbers name one and answers whether they did, so
+/// a month of 13 or the thirtieth of February is answered as that and ends nothing: the runtime
+/// decides which numbers name a value, and a binding that checks first does so only to say it in
+/// its own words. Every number is a whole `Int`, and none is narrowed on the way, so a wrong one
+/// reaches the runtime as the number it is. Reading one writes each number through room for it.
+pub const DATE_OF_PARTS: &str = "souther_date_of_parts";
+/// The year, month and day of a `Date`.
+pub const DATE_PARTS: &str = "souther_date_parts";
+/// As [`DATE_OF_PARTS`], for a `Time`.
+pub const TIME_OF_PARTS: &str = "souther_time_of_parts";
+/// The hour, minute and second of a `Time`.
+pub const TIME_PARTS: &str = "souther_time_parts";
+/// As [`DATE_OF_PARTS`], for a `DateTime`: the parts of its date, then of its time.
+pub const DATETIME_OF_PARTS: &str = "souther_datetime_of_parts";
+/// The parts of the date and then of the time of a `DateTime`.
+pub const DATETIME_PARTS: &str = "souther_datetime_parts";
+/// As [`DATE_OF_PARTS`], for an `Instant`: its second from the epoch and the nanosecond within it.
+pub const INSTANT_OF_PARTS: &str = "souther_instant_of_parts";
+/// The second from the epoch and the nanosecond within it of an `Instant`.
+pub const INSTANT_PARTS: &str = "souther_instant_parts";
 
 /// What each temporal holds, as the counts a transport document and the runtime's literal functions
 /// speak in: the days from 1970-01-01 that a `Date` holds, and the seconds from 1970-01-01T00:00:00
@@ -1736,16 +1751,16 @@ pub enum HostWord {
     /// The address of a `Decimal`, which a host never reads behind: made through
     /// [`DECIMAL_OF_PARTS`], and read through [`DECIMAL_UNSCALED`] and [`DECIMAL_SCALE`].
     Decimal,
-    /// The address of a `Date`, which a host never reads behind: made through [`DATE_OF_ISO`] and
-    /// read through [`DATE_ISO`].
+    /// The address of a `Date`, which a host never reads behind: made through [`DATE_OF_PARTS`]
+    /// and read through [`DATE_PARTS`].
     Date,
-    /// The address of a `Time`: made through [`TIME_OF_ISO`] and read through [`TIME_ISO`].
+    /// The address of a `Time`: made through [`TIME_OF_PARTS`] and read through [`TIME_PARTS`].
     Time,
-    /// The address of a `DateTime`: made through [`DATETIME_OF_ISO`] and read through
-    /// [`DATETIME_ISO`].
+    /// The address of a `DateTime`: made through [`DATETIME_OF_PARTS`] and read through
+    /// [`DATETIME_PARTS`].
     DateTime,
-    /// The address of an `Instant`: made through [`INSTANT_OF_ISO`] and read through
-    /// [`INSTANT_ISO`].
+    /// The address of an `Instant`: made through [`INSTANT_OF_PARTS`] and read through
+    /// [`INSTANT_PARTS`].
     Instant,
     /// A reading a decoder answered, asked through the `DECODED_*` functions.
     Decoded,
@@ -2011,8 +2026,8 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
         },
         RuntimeFunction {
             name: DECIMAL_OF_PARTS,
-            takes: &[Given(Bytes), Given(Count), Given(Int)],
-            answers: Some(Decimal),
+            takes: &[Given(Bytes), Given(Count), Given(Int), Room(Decimal)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
             name: DECIMAL_UNSCALED,
@@ -2025,44 +2040,60 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
             answers: Some(Int),
         },
         RuntimeFunction {
-            name: DATE_OF_ISO,
-            takes: &[Given(String)],
-            answers: Some(Date),
+            name: DATE_OF_PARTS,
+            takes: &[Given(Int), Given(Int), Given(Int), Room(Date)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
-            name: DATE_ISO,
-            takes: &[Given(Date)],
-            answers: Some(String),
+            name: DATE_PARTS,
+            takes: &[Given(Date), Room(Int), Room(Int), Room(Int)],
+            answers: None,
         },
         RuntimeFunction {
-            name: TIME_OF_ISO,
-            takes: &[Given(String)],
-            answers: Some(Time),
+            name: TIME_OF_PARTS,
+            takes: &[Given(Int), Given(Int), Given(Int), Room(Time)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
-            name: TIME_ISO,
-            takes: &[Given(Time)],
-            answers: Some(String),
+            name: TIME_PARTS,
+            takes: &[Given(Time), Room(Int), Room(Int), Room(Int)],
+            answers: None,
         },
         RuntimeFunction {
-            name: DATETIME_OF_ISO,
-            takes: &[Given(String)],
-            answers: Some(DateTime),
+            name: DATETIME_OF_PARTS,
+            takes: &[
+                Given(Int),
+                Given(Int),
+                Given(Int),
+                Given(Int),
+                Given(Int),
+                Given(Int),
+                Room(DateTime),
+            ],
+            answers: Some(Bool),
         },
         RuntimeFunction {
-            name: DATETIME_ISO,
-            takes: &[Given(DateTime)],
-            answers: Some(String),
+            name: DATETIME_PARTS,
+            takes: &[
+                Given(DateTime),
+                Room(Int),
+                Room(Int),
+                Room(Int),
+                Room(Int),
+                Room(Int),
+                Room(Int),
+            ],
+            answers: None,
         },
         RuntimeFunction {
-            name: INSTANT_OF_ISO,
-            takes: &[Given(String)],
-            answers: Some(Instant),
+            name: INSTANT_OF_PARTS,
+            takes: &[Given(Int), Given(Int), Room(Instant)],
+            answers: Some(Bool),
         },
         RuntimeFunction {
-            name: INSTANT_ISO,
-            takes: &[Given(Instant)],
-            answers: Some(String),
+            name: INSTANT_PARTS,
+            takes: &[Given(Instant), Room(Int), Room(Int)],
+            answers: None,
         },
         RuntimeFunction {
             name: DECODED_OUTCOME,
@@ -3579,13 +3610,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther8.calculation.add"
+            "souther9.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther8.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther9.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -3625,7 +3656,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther8.calculation.add$example$0"
+            "souther9.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -3640,7 +3671,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther8.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther9.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -3711,7 +3742,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther8.pricing$value$standard"
+            "souther9.pricing$value$standard"
         );
     }
 
@@ -3749,7 +3780,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther8.pricing$construct$Amount"
+            "souther9.pricing$construct$Amount"
         );
     }
 
@@ -3769,7 +3800,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther8.pricing$checked$Amount"
+            "souther9.pricing$checked$Amount"
         );
     }
 
@@ -3799,23 +3830,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther8_m_pricing_t_Amount_construct"
+            "souther9_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther8_m_pricing_t_Amount_f_value"
+            "souther9_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther8_m_pricing_t_Result_case"
+            "souther9_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther8_m_pricing_t_Amount_decode"
+            "souther9_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther8_m_pricing_t_Amount_encode"
+            "souther9_m_pricing_t_Amount_encode"
         );
     }
 
@@ -3823,15 +3854,15 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther8_m_lib_m_shop_b_quote"
+            "souther9_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther8_m_lib_m_shop_v_standard"
+            "souther9_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther8_m_lib_m_shop_b_find_answer_case"
+            "souther9_m_lib_m_shop_b_find_answer_case"
         );
     }
 
@@ -3844,7 +3875,7 @@ mod tests {
                 &HostShape::Leaf(Value),
                 HostListOperation::Construct
             ),
-            "souther8_m_shop_l_value_construct"
+            "souther9_m_shop_l_value_construct"
         );
         assert_eq!(
             host_list_symbol(
@@ -3852,7 +3883,7 @@ mod tests {
                 &HostShape::Option(Box::new(HostShape::Leaf(Int))),
                 HostListOperation::At
             ),
-            "souther8_m_lib_m_shop_l_o_int_at"
+            "souther9_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
             host_list_symbol(
@@ -3863,7 +3894,7 @@ mod tests {
                 ]))),
                 HostListOperation::Length
             ),
-            "souther8_m_shop_l_l_t2_int_o_bool_length"
+            "souther9_m_shop_l_l_t2_int_o_bool_length"
         );
     }
 
@@ -3876,11 +3907,11 @@ mod tests {
         };
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Call),
-            "souther8_m_shop_fn_f2_int_string_o_int_call"
+            "souther9_m_shop_fn_f2_int_string_o_int_call"
         );
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Implement),
-            "souther8_m_shop_fn_f2_int_string_o_int_implement"
+            "souther9_m_shop_fn_f2_int_string_o_int_implement"
         );
     }
 
@@ -3964,11 +3995,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther8_m_shop_b_foo__bar"
+            "souther9_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther8_m_shop_b__u6570__u91cf_"
+            "souther9_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -3978,7 +4009,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther8.pricing$read$Amount"
+            "souther9.pricing$read$Amount"
         );
     }
 

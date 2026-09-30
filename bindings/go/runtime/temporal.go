@@ -3,17 +3,17 @@ package souther
 import (
 	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"time"
 )
 
 // A Souther Date, Time, DateTime and Instant as Go holds one.
 //
-// The library takes one as the text that names it and ends the process on text that names none, so
-// each is held here as its numbers, checked where it is made against what the type holds, and
-// handed over as the text java.time writes for it, which the library reads. What the library
-// answers is read back out of the text it writes, which is that same form. They are held apart
+// Each is held here as the numbers it means and handed to the library as those numbers, which is how
+// the library takes one and answers one (souther-native-compiler#137). It is checked where it is
+// made against what the type holds, so that a value a Go program has is always one: the library
+// decides the same again where it is handed one, and a refusal from it is this package and the
+// library disagreeing. The text java.time writes for each is for a Go program to show, and never
+// crosses to the library. They are held apart
 // from time.Time because none of them is what it is: a Date and a Time have no zone and no
 // instant, and an Instant reaches a billion years either way, where time.Time's text stops at
 // year 9999.
@@ -36,23 +36,6 @@ var ErrNotTemporal = errors.New("numbers that name no value of a temporal type")
 
 func notTemporal(format string, arguments ...any) error {
 	return fmt.Errorf("%w: %s", ErrNotTemporal, fmt.Sprintf(format, arguments...))
-}
-
-// daysFromCivil is the days from 1970-01-01 to a day of the proleptic Gregorian calendar (Howard
-// Hinnant's days_from_civil), as the library's runtime counts them.
-func daysFromCivil(year, month, day int64) int64 {
-	if month <= 2 {
-		year--
-	}
-	era := floorDiv(year, 400)
-	yearOfEra := year - era*400
-	monthFromMarch := month + 9
-	if month > 2 {
-		monthFromMarch = month - 3
-	}
-	dayOfYear := (153*monthFromMarch+2)/5 + day - 1
-	dayOfEra := yearOfEra*365 + yearOfEra/4 - yearOfEra/100 + dayOfYear
-	return era*146_097 + dayOfEra - 719_468
 }
 
 // civilFromDays is the year, the month and the day a count of days from 1970-01-01 names.
@@ -143,7 +126,7 @@ func (d Date) Month() uint8 { return d.month }
 // Day is the day of the month, from 1.
 func (d Date) Day() uint8 { return d.day }
 
-// String is the text the library takes for it, which is what LocalDate.toString writes.
+// String is the text LocalDate.toString writes for it.
 func (d Date) String() string { return dateText(int64(d.year), int64(d.month), int64(d.day)) }
 
 // Time is a Souther Time: a time of day, held to the second. Its zero value is midnight.
@@ -169,8 +152,8 @@ func (t Time) Minute() uint8 { return t.minute }
 // Second is the second, from 0.
 func (t Time) Second() uint8 { return t.second }
 
-// String is the text the library takes for it: HH:mm, and :ss where the second is not nought, as
-// LocalTime.toString writes a time held to the second.
+// String is the text LocalTime.toString writes for it, held to the second: HH:mm, and :ss where the
+// second is not nought.
 func (t Time) String() string {
 	if t.second == 0 {
 		return fmt.Sprintf("%02d:%02d", t.hour, t.minute)
@@ -193,7 +176,7 @@ func (d DateTime) Date() Date { return d.date }
 // Time is the time of day.
 func (d DateTime) Time() Time { return d.time }
 
-// String is the text the library takes for it, as LocalDateTime.toString writes one.
+// String is the text LocalDateTime.toString writes for it.
 func (d DateTime) String() string { return d.date.String() + "T" + d.time.String() }
 
 // Instant is a Souther Instant: a moment, as the second from 1970-01-01T00:00:00Z and the
@@ -226,8 +209,8 @@ func (i Instant) Nano() uint32 { return i.nano }
 // Time is the moment as a time.Time in UTC.
 func (i Instant) Time() time.Time { return time.Unix(i.second, int64(i.nano)).UTC() }
 
-// String is the text the library takes for it: in UTC, with a fraction only where there is one, as
-// Instant.toString writes one.
+// String is the text Instant.toString writes for it: in UTC, with a fraction only where there is
+// one.
 func (i Instant) String() string {
 	year, month, day := civilFromDays(floorDiv(i.second, secondsPerDay))
 	ofDay := floorMod(i.second, secondsPerDay)
@@ -242,134 +225,4 @@ func (i Instant) String() string {
 		written += fmt.Sprintf(".%09d", i.nano)
 	}
 	return written + "Z"
-}
-
-// readCivil is the year, month and day at the start of what LocalDate.toString wrote, and what
-// follows.
-func readCivil(text string) (year, month, day int64, rest string, ok bool) {
-	sign := int64(1)
-	switch {
-	case strings.HasPrefix(text, "-"):
-		sign, text = -1, text[1:]
-	case strings.HasPrefix(text, "+"):
-		text = text[1:]
-	}
-	digits := strings.IndexByte(text, '-')
-	if digits < 0 {
-		return 0, 0, 0, "", false
-	}
-	y, err := strconv.ParseInt(text[:digits], 10, 64)
-	if err != nil {
-		return 0, 0, 0, "", false
-	}
-	tail := text[digits:]
-	if len(tail) < 6 {
-		return 0, 0, 0, "", false
-	}
-	m, errM := strconv.ParseInt(tail[1:3], 10, 64)
-	d, errD := strconv.ParseInt(tail[4:6], 10, 64)
-	if errM != nil || errD != nil {
-		return 0, 0, 0, "", false
-	}
-	return sign * y, m, d, tail[6:], true
-}
-
-func readDate(text string) (Date, string, bool) {
-	year, month, day, rest, ok := readCivil(text)
-	if !ok || year < minYear || year > maxYear {
-		return Date{}, "", false
-	}
-	date, err := NewDate(int32(year), uint8(month), uint8(day))
-	return date, rest, err == nil
-}
-
-func readTime(text string) (Time, string, bool) {
-	two := func(at int) (uint8, bool) {
-		if len(text) < at+2 {
-			return 0, false
-		}
-		n, err := strconv.ParseUint(text[at:at+2], 10, 8)
-		return uint8(n), err == nil
-	}
-	hour, okH := two(0)
-	minute, okM := two(3)
-	if !okH || !okM {
-		return Time{}, "", false
-	}
-	second, rest := uint8(0), ""
-	if len(text) > 5 && text[5] == ':' {
-		s, ok := two(6)
-		if !ok {
-			return Time{}, "", false
-		}
-		second, rest = s, text[8:]
-	} else {
-		rest = text[5:]
-	}
-	t, err := NewTime(hour, minute, second)
-	return t, rest, err == nil
-}
-
-// writtenDate is the Date of the text the library writes for one, which is what LocalDate writes.
-func writtenDate(text string) Date {
-	date, rest, ok := readDate(text)
-	if !ok || rest != "" {
-		panic(fmt.Sprintf("souther: the library writes a Date as LocalDate does, and wrote %q", text))
-	}
-	return date
-}
-
-func writtenTime(text string) Time {
-	t, rest, ok := readTime(text)
-	if !ok || rest != "" {
-		panic(fmt.Sprintf("souther: the library writes a Time as LocalTime does, and wrote %q", text))
-	}
-	return t
-}
-
-func writtenDateTime(text string) DateTime {
-	date, rest, ok := readDate(text)
-	if ok && strings.HasPrefix(rest, "T") {
-		if t, tail, okT := readTime(rest[1:]); okT && tail == "" {
-			return DateTime{date, t}
-		}
-	}
-	panic(fmt.Sprintf("souther: the library writes a DateTime as LocalDateTime does, and wrote %q", text))
-}
-
-func writtenInstant(text string) Instant {
-	fail := func() Instant {
-		panic(fmt.Sprintf("souther: the library writes an Instant as Instant does, and wrote %q", text))
-	}
-	year, month, day, rest, ok := readCivil(text)
-	if !ok || !strings.HasPrefix(rest, "T") || len(rest) < 9 {
-		return fail()
-	}
-	rest = rest[1:]
-	clock := func(from string) int64 {
-		n, err := strconv.ParseInt(from, 10, 64)
-		if err != nil {
-			fail()
-		}
-		return n
-	}
-	hour, minute, second := clock(rest[0:2]), clock(rest[3:5]), clock(rest[6:8])
-	rest = rest[8:]
-	nano := uint32(0)
-	if strings.HasPrefix(rest, ".") {
-		end := strings.IndexByte(rest, 'Z')
-		if end < 0 {
-			return fail()
-		}
-		fraction := (rest[1:end] + "000000000")[:9]
-		n, err := strconv.ParseUint(fraction, 10, 32)
-		if err != nil {
-			return fail()
-		}
-		nano, rest = uint32(n), rest[end:]
-	}
-	if rest != "Z" {
-		return fail()
-	}
-	return Instant{daysFromCivil(year, month, day)*secondsPerDay + hour*3600 + minute*60 + second, nano}
 }

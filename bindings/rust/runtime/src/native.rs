@@ -138,6 +138,12 @@ impl std::error::Error for LoadError {}
 type Of<A, R> = unsafe extern "C" fn(A) -> R;
 type Of2<A, B, R> = unsafe extern "C" fn(A, B) -> R;
 type Of3<A, B, C, R> = unsafe extern "C" fn(A, B, C) -> R;
+type Of4<A, B, C, D, R> = unsafe extern "C" fn(A, B, C, D) -> R;
+/// What a temporal with `N` numbers is read through: the value, then room for each number.
+type Parts3 = unsafe extern "C" fn(Word, *mut i64, *mut i64, *mut i64);
+type Parts6 =
+    unsafe extern "C" fn(Word, *mut i64, *mut i64, *mut i64, *mut i64, *mut i64, *mut i64);
+type Parts2 = unsafe extern "C" fn(Word, *mut i64, *mut i64);
 
 /// The runtime's functions a binding reads and makes the words of a value through that are not
 /// the model's own: text, a `Decimal`, and what a reading came to.
@@ -145,17 +151,17 @@ pub struct Words {
     string_of_utf8: Of3<*const u8, i64, *mut Word, i8>,
     string_length: Of<Word, i64>,
     string_bytes: Of<Word, *const u8>,
-    decimal_of_parts: Of3<*const u8, i64, i64, Word>,
+    decimal_of_parts: Of4<*const u8, i64, i64, *mut Word, i8>,
     decimal_unscaled: Of<Word, Word>,
     decimal_scale: Of<Word, i64>,
-    date_of_iso: Of<Word, Word>,
-    date_iso: Of<Word, Word>,
-    time_of_iso: Of<Word, Word>,
-    time_iso: Of<Word, Word>,
-    datetime_of_iso: Of<Word, Word>,
-    datetime_iso: Of<Word, Word>,
-    instant_of_iso: Of<Word, Word>,
-    instant_iso: Of<Word, Word>,
+    date_of_parts: Of4<i64, i64, i64, *mut Word, i8>,
+    date_parts: Parts3,
+    time_of_parts: Of4<i64, i64, i64, *mut Word, i8>,
+    time_parts: Parts3,
+    datetime_of_parts: unsafe extern "C" fn(i64, i64, i64, i64, i64, i64, *mut Word) -> i8,
+    datetime_parts: Parts6,
+    instant_of_parts: Of3<i64, i64, *mut Word, i8>,
+    instant_parts: Parts2,
     decoded_outcome: Of<Word, i32>,
     decoded_value: Of<Word, Word>,
     decoded_malformed_at: Of<Word, i64>,
@@ -201,14 +207,14 @@ impl Words {
                 decimal_of_parts: library.function("souther_decimal_of_parts")?,
                 decimal_unscaled: library.function("souther_decimal_unscaled")?,
                 decimal_scale: library.function("souther_decimal_scale")?,
-                date_of_iso: library.function("souther_date_of_iso")?,
-                date_iso: library.function("souther_date_iso")?,
-                time_of_iso: library.function("souther_time_of_iso")?,
-                time_iso: library.function("souther_time_iso")?,
-                datetime_of_iso: library.function("souther_datetime_of_iso")?,
-                datetime_iso: library.function("souther_datetime_iso")?,
-                instant_of_iso: library.function("souther_instant_of_iso")?,
-                instant_iso: library.function("souther_instant_iso")?,
+                date_of_parts: library.function("souther_date_of_parts")?,
+                date_parts: library.function("souther_date_parts")?,
+                time_of_parts: library.function("souther_time_of_parts")?,
+                time_parts: library.function("souther_time_parts")?,
+                datetime_of_parts: library.function("souther_datetime_of_parts")?,
+                datetime_parts: library.function("souther_datetime_parts")?,
+                instant_of_parts: library.function("souther_instant_of_parts")?,
+                instant_parts: library.function("souther_instant_parts")?,
                 decoded_outcome: library.function("souther_decoded_outcome")?,
                 decoded_value: library.function("souther_decoded_value")?,
                 decoded_malformed_at: library.function("souther_decoded_malformed_at")?,
@@ -273,13 +279,31 @@ impl Words {
     ///
     /// The unscaled digits are handed over as bytes, not a `String`: they are the integer's text
     /// and never the value's written form, so they are not measured against what a `String` holds
-    /// (souther-native-compiler#109) and this cannot fail the way [`Words::string`] can.
-    pub fn decimal<L: Loaded>(&self, _run: &mut Run<'_, L>, decimal: &Decimal) -> Word {
+    /// (souther-native-compiler#109).
+    ///
+    /// # Errors
+    ///
+    /// [`Failure::ProtocolViolation`] where the library says the parts name no `Decimal`, which a
+    /// [`Decimal`] never is: it holds itself to what the library takes where it is made.
+    pub fn decimal<L: Loaded>(
+        &self,
+        _run: &mut Run<'_, L>,
+        decimal: &Decimal,
+    ) -> Result<Word, Failure> {
         let unscaled = decimal.unscaled();
         let length = i64::try_from(unscaled.len()).expect("an integer's length is a 64-bit count");
-        // SAFETY: the bytes are `length` bytes that may be read, and ASCII integer text, which is
-        // one `Decimal` has held to what the library takes; the scale is a 32-bit number.
-        unsafe { (self.decimal_of_parts)(unscaled.as_ptr(), length, i64::from(decimal.scale())) }
+        let mut word = std::ptr::null();
+        // SAFETY: the bytes are `length` bytes that may be read, `word` is room for a `Word`, and
+        // the function is the library's, loaded while `self` is.
+        let made = unsafe {
+            (self.decimal_of_parts)(
+                unscaled.as_ptr(),
+                length,
+                i64::from(decimal.scale()),
+                &mut word,
+            )
+        };
+        made_or_refused(made, word)
     }
 
     /// A `Decimal` the library answered.
@@ -297,16 +321,24 @@ impl Words {
         }
     }
 
-    /// `date` as the library holds one, made in `run` of the text that names it.
+    /// `date` as the library holds one, made in `run` of its year, month and day.
     ///
     /// # Errors
     ///
-    /// As [`Words::string`], though a `Date`'s ISO text never comes near what a `String` holds.
-    pub fn date<L: Loaded>(&self, run: &mut Run<'_, L>, date: Date) -> Result<Word, Failure> {
-        let iso = self.string(run, &date.iso())?;
-        // SAFETY: the text is what `LocalDate` writes of a day a `Date` holds, which the library
-        // reads.
-        Ok(unsafe { (self.date_of_iso)(iso) })
+    /// [`Failure::ProtocolViolation`] where the library says they name no `Date`, which a [`Date`]
+    /// never is: it is held to the days a `Date` holds where it is made.
+    pub fn date<L: Loaded>(&self, _run: &mut Run<'_, L>, date: Date) -> Result<Word, Failure> {
+        let mut word = std::ptr::null();
+        // SAFETY: `word` is room for a `Word`, and the function is the library's.
+        let made = unsafe {
+            (self.date_of_parts)(
+                i64::from(date.year()),
+                i64::from(date.month()),
+                i64::from(date.day()),
+                &mut word,
+            )
+        };
+        made_or_refused(made, word)
     }
 
     /// A `Date` the library answered.
@@ -315,8 +347,9 @@ impl Words {
     ///
     /// `at` is a `Date` the library answered, in a run that is still open.
     pub unsafe fn date_of(&self, at: Word) -> Date {
-        // SAFETY: what the caller says.
-        Date::written(&unsafe { self.text((self.date_iso)(at)) })
+        let [year, month, day] = unsafe { self.three(self.date_parts, at) };
+        Date::new(narrowed(year), narrowed(month), narrowed(day))
+            .expect("the library's Date is a day a Date holds")
     }
 
     /// `time` as the library holds one, made in `run`.
@@ -324,10 +357,18 @@ impl Words {
     /// # Errors
     ///
     /// As [`Words::date`].
-    pub fn time<L: Loaded>(&self, run: &mut Run<'_, L>, time: Time) -> Result<Word, Failure> {
-        let iso = self.string(run, &time.iso())?;
+    pub fn time<L: Loaded>(&self, _run: &mut Run<'_, L>, time: Time) -> Result<Word, Failure> {
+        let mut word = std::ptr::null();
         // SAFETY: as in `date`.
-        Ok(unsafe { (self.time_of_iso)(iso) })
+        let made = unsafe {
+            (self.time_of_parts)(
+                i64::from(time.hour()),
+                i64::from(time.minute()),
+                i64::from(time.second()),
+                &mut word,
+            )
+        };
+        made_or_refused(made, word)
     }
 
     /// A `Time` the library answered.
@@ -336,8 +377,9 @@ impl Words {
     ///
     /// As [`Words::date_of`].
     pub unsafe fn time_of(&self, at: Word) -> Time {
-        // SAFETY: what the caller says.
-        Time::written(&unsafe { self.text((self.time_iso)(at)) })
+        let [hour, minute, second] = unsafe { self.three(self.time_parts, at) };
+        Time::new(narrowed(hour), narrowed(minute), narrowed(second))
+            .expect("the library's Time is a time of day")
     }
 
     /// `date_time` as the library holds one, made in `run`.
@@ -347,12 +389,24 @@ impl Words {
     /// As [`Words::date`].
     pub fn date_time<L: Loaded>(
         &self,
-        run: &mut Run<'_, L>,
+        _run: &mut Run<'_, L>,
         date_time: DateTime,
     ) -> Result<Word, Failure> {
-        let iso = self.string(run, &date_time.iso())?;
+        let (date, time) = (date_time.date(), date_time.time());
+        let mut word = std::ptr::null();
         // SAFETY: as in `date`.
-        Ok(unsafe { (self.datetime_of_iso)(iso) })
+        let made = unsafe {
+            (self.datetime_of_parts)(
+                i64::from(date.year()),
+                i64::from(date.month()),
+                i64::from(date.day()),
+                i64::from(time.hour()),
+                i64::from(time.minute()),
+                i64::from(time.second()),
+                &mut word,
+            )
+        };
+        made_or_refused(made, word)
     }
 
     /// A `DateTime` the library answered.
@@ -361,8 +415,17 @@ impl Words {
     ///
     /// As [`Words::date_of`].
     pub unsafe fn date_time_of(&self, at: Word) -> DateTime {
-        // SAFETY: what the caller says.
-        DateTime::written(&unsafe { self.text((self.datetime_iso)(at)) })
+        let mut parts = [0_i64; 6];
+        let [year, month, day, hour, minute, second] = &mut parts;
+        // SAFETY: what the caller says, and each is room for an `Int`.
+        unsafe { (self.datetime_parts)(at, year, month, day, hour, minute, second) };
+        let [year, month, day, hour, minute, second] = parts;
+        DateTime::new(
+            Date::new(narrowed(year), narrowed(month), narrowed(day))
+                .expect("the library's DateTime is on a day a Date holds"),
+            Time::new(narrowed(hour), narrowed(minute), narrowed(second))
+                .expect("the library's DateTime is at a time of day"),
+        )
     }
 
     /// `instant` as the library holds one, made in `run`.
@@ -372,12 +435,15 @@ impl Words {
     /// As [`Words::date`].
     pub fn instant<L: Loaded>(
         &self,
-        run: &mut Run<'_, L>,
+        _run: &mut Run<'_, L>,
         instant: Instant,
     ) -> Result<Word, Failure> {
-        let iso = self.string(run, &instant.iso())?;
+        let mut word = std::ptr::null();
         // SAFETY: as in `date`.
-        Ok(unsafe { (self.instant_of_iso)(iso) })
+        let made = unsafe {
+            (self.instant_of_parts)(instant.second(), i64::from(instant.nano()), &mut word)
+        };
+        made_or_refused(made, word)
     }
 
     /// An `Instant` the library answered.
@@ -386,8 +452,22 @@ impl Words {
     ///
     /// As [`Words::date_of`].
     pub unsafe fn instant_of(&self, at: Word) -> Instant {
-        // SAFETY: what the caller says.
-        Instant::written(&unsafe { self.text((self.instant_iso)(at)) })
+        let (mut second, mut nano) = (0, 0);
+        // SAFETY: what the caller says, and each is room for an `Int`.
+        unsafe { (self.instant_parts)(at, &mut second, &mut nano) };
+        Instant::new(second, narrowed(nano)).expect("the library's Instant is a moment one holds")
+    }
+
+    /// The three numbers `parts` writes of `at`.
+    ///
+    /// # Safety
+    ///
+    /// As [`Words::date_of`], and `parts` is the library's function reading a value of `at`'s type.
+    unsafe fn three(&self, parts: Parts3, at: Word) -> [i64; 3] {
+        let [mut a, mut b, mut c] = [0; 3];
+        // SAFETY: what the caller says, and each is room for an `Int`.
+        unsafe { parts(at, &mut a, &mut b, &mut c) };
+        [a, b, c]
     }
 
     /// What a reading came to: the value `made` makes of what was read, the issues found in it,
@@ -504,4 +584,23 @@ impl<T> Construction<T> {
             Construction::Rejected(issue) => Err(issue),
         }
     }
+}
+
+/// The value a function making one wrote, where it answered that it made one.
+///
+/// A value this crate hands over is one of its own types, each held where it is made to what the
+/// library takes, so a refusal is the library and this binding disagreeing about what a value is.
+fn made_or_refused(made: i8, word: Word) -> Result<Word, Failure> {
+    if made != 0 {
+        Ok(word)
+    } else {
+        Err(Failure::ProtocolViolation)
+    }
+}
+
+/// A number the library answered for a part of a value, as the narrower type this crate holds it
+/// in: the library answers only numbers a value of the type has.
+fn narrowed<T: TryFrom<i64>>(number: i64) -> T {
+    T::try_from(number)
+        .unwrap_or_else(|_| panic!("the library answered {number}, which no part of the value is"))
 }

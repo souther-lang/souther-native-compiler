@@ -52,18 +52,21 @@ public final class RuntimeFunctions {
         add.accept("souther_string_bytes", List.of(Word.STRING, Word.BYTES));
         // The unscaled digits as bytes and a count, not a String: they are the integer's text and
         // never the value's written form, so they are never fallible on what a String holds
-        // (souther-native-compiler#109).
-        add.accept("souther_decimal_of_parts", List.of(Word.BYTES, Word.COUNT, Word.INT, Word.DECIMAL));
+        // (souther-native-compiler#109). Written through room and answering whether the parts name
+        // a Decimal, so a host's wrong parts end nothing (souther-native-compiler#137).
+        functions.put("souther_decimal_of_parts", new Function("souther_decimal_of_parts",
+                List.of(Parameter.given(Word.BYTES), Parameter.given(Word.COUNT),
+                        Parameter.given(Word.INT), Parameter.room(Word.DECIMAL)),
+                Word.BOOL));
         add.accept("souther_decimal_unscaled", List.of(Word.DECIMAL, Word.STRING));
         add.accept("souther_decimal_scale", List.of(Word.DECIMAL, Word.INT));
-        add.accept("souther_date_of_iso", List.of(Word.STRING, Word.DATE));
-        add.accept("souther_date_iso", List.of(Word.DATE, Word.STRING));
-        add.accept("souther_time_of_iso", List.of(Word.STRING, Word.TIME));
-        add.accept("souther_time_iso", List.of(Word.TIME, Word.STRING));
-        add.accept("souther_datetime_of_iso", List.of(Word.STRING, Word.DATETIME));
-        add.accept("souther_datetime_iso", List.of(Word.DATETIME, Word.STRING));
-        add.accept("souther_instant_of_iso", List.of(Word.STRING, Word.INSTANT));
-        add.accept("souther_instant_iso", List.of(Word.INSTANT, Word.STRING));
+        // A temporal crosses as the numbers it means, each an Int, and never as text: made through
+        // room, answering whether the numbers name one, and read by writing each through room
+        // (souther-native-compiler#137).
+        parts(functions, "date", Word.DATE, 3);
+        parts(functions, "time", Word.TIME, 3);
+        parts(functions, "datetime", Word.DATETIME, 6);
+        parts(functions, "instant", Word.INSTANT, 2);
         add.accept("souther_decoded_outcome", List.of(Word.DECODED, Word.OUTCOME));
         add.accept("souther_decoded_value", List.of(Word.DECODED, Word.VALUE));
         add.accept("souther_decoded_malformed_at", List.of(Word.DECODED, Word.COUNT));
@@ -74,6 +77,25 @@ public final class RuntimeFunctions {
         add.accept("souther_issue_path", List.of(Word.ISSUE, Word.STRING));
         add.accept("souther_issue_meta", List.of(Word.ISSUE, Word.STRING));
         return Map.copyOf(functions);
+    }
+
+    /**
+     * {@code souther_<type>_of_parts}, taking {@code count} Ints and room for the value and
+     * answering whether they name one, and {@code souther_<type>_parts}, taking the value and room
+     * for each of its {@code count} Ints.
+     */
+    private static void parts(Map<String, Function> functions, String type, Word word, int count) {
+        List<Parameter> of = new ArrayList<>();
+        List<Parameter> read = new ArrayList<>(List.of(Parameter.given(word)));
+        for (int at = 0; at < count; at++) {
+            of.add(Parameter.given(Word.INT));
+            read.add(Parameter.room(Word.INT));
+        }
+        of.add(Parameter.room(word));
+        String make = "souther_" + type + "_of_parts";
+        String parts = "souther_" + type + "_parts";
+        functions.put(make, new Function(make, of, Word.BOOL));
+        functions.put(parts, new Function(parts, read, null));
     }
 
     /**

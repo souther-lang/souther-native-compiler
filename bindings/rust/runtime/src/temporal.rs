@@ -1,9 +1,11 @@
 //! A Souther `Date`, `Time`, `DateTime` and `Instant` as Rust holds one.
 //!
-//! The library takes one as the text that names it and ends the process on text that names none,
-//! so each is held here as its numbers, checked where it is made against what the type holds, and
-//! handed over as the text `java.time` writes for it, which the library reads. What the library
-//! answers is read back out of the text it writes, which is that same form.
+//! Each is held here as the numbers it means and handed to the library as those numbers, which is
+//! how the library takes one and answers one (souther-native-compiler#137). It is checked where it
+//! is made against what the type holds, so that a value a Rust program has is always one: the
+//! library decides the same again where it is handed one, and a refusal from it is this crate and
+//! the library disagreeing. The text `java.time` writes for each ([`Date::iso`] and the rest) is
+//! for a Rust program to show, and never crosses to the library.
 
 use std::fmt;
 
@@ -137,23 +139,13 @@ impl Date {
         self.day
     }
 
-    /// The text the library takes for it, which is what `LocalDate.toString` writes.
+    /// The text `LocalDate.toString` writes for it.
     pub fn iso(&self) -> String {
         date_text(
             i64::from(self.year),
             i64::from(self.month),
             i64::from(self.day),
         )
-    }
-
-    /// The `Date` of the text the library writes for one.
-    pub(crate) fn written(text: &str) -> Self {
-        let (date, rest) = read_date(text).expect("the library writes a Date as LocalDate does");
-        assert!(
-            rest.is_empty(),
-            "the library writes a Date and nothing after it"
-        );
-        date
     }
 }
 
@@ -202,23 +194,14 @@ impl Time {
         self.second
     }
 
-    /// The text the library takes for it: `HH:mm`, and `:ss` where the second is not nought, as
-    /// `LocalTime.toString` writes a time held to the second.
+    /// The text `LocalTime.toString` writes for it, held to the second: `HH:mm`, and `:ss` where
+    /// the second is not nought.
     pub fn iso(&self) -> String {
         if self.second == 0 {
             format!("{:02}:{:02}", self.hour, self.minute)
         } else {
             format!("{:02}:{:02}:{:02}", self.hour, self.minute, self.second)
         }
-    }
-
-    pub(crate) fn written(text: &str) -> Self {
-        let (time, rest) = read_time(text).expect("the library writes a Time as LocalTime does");
-        assert!(
-            rest.is_empty(),
-            "the library writes a Time and nothing after it"
-        );
-        time
     }
 }
 
@@ -249,24 +232,9 @@ impl DateTime {
         self.time
     }
 
-    /// The text the library takes for it, as `LocalDateTime.toString` writes one.
+    /// The text `LocalDateTime.toString` writes for it.
     pub fn iso(&self) -> String {
         format!("{}T{}", self.date.iso(), self.time.iso())
-    }
-
-    pub(crate) fn written(text: &str) -> Self {
-        let (date, rest) =
-            read_date(text).expect("the library writes a DateTime as LocalDateTime does");
-        let rest = rest
-            .strip_prefix('T')
-            .expect("the library writes a DateTime's time after a T");
-        let (time, rest) =
-            read_time(rest).expect("the library writes a DateTime as LocalDateTime does");
-        assert!(
-            rest.is_empty(),
-            "the library writes a DateTime and nothing after it"
-        );
-        DateTime { date, time }
     }
 }
 
@@ -310,8 +278,7 @@ impl Instant {
         self.nano
     }
 
-    /// The text the library takes for it: in UTC, with a fraction only where there is one, as
-    /// `Instant.toString` writes one.
+    /// The text `Instant.toString` writes for it: in UTC, with a fraction only where there is one.
     pub fn iso(&self) -> String {
         let (year, month, day) = civil_from_days(self.second.div_euclid(SECONDS_PER_DAY));
         let of_day = self.second.rem_euclid(SECONDS_PER_DAY);
@@ -335,34 +302,6 @@ impl Instant {
         written.push('Z');
         written
     }
-
-    pub(crate) fn written(text: &str) -> Self {
-        let (year, month, day, rest) =
-            read_civil(text).expect("the library writes an Instant as Instant does");
-        let rest = rest
-            .strip_prefix('T')
-            .expect("the library writes an Instant's time after a T");
-        let clock = |from: &str| from.parse::<i64>().expect("two digits");
-        let (hour, minute, second) = (clock(&rest[0..2]), clock(&rest[3..5]), clock(&rest[6..8]));
-        let rest = &rest[8..];
-        let (nano, rest) = match rest.strip_prefix('.') {
-            Some(fraction) => {
-                let digits = fraction.find('Z').expect("an Instant ends with Z");
-                let written = &fraction[..digits];
-                let nano = format!("{written:0<9}")
-                    .parse::<u32>()
-                    .expect("a fraction is digits");
-                (nano, &fraction[digits..])
-            }
-            None => (0, rest),
-        };
-        assert_eq!(rest, "Z", "the library writes an Instant in UTC");
-        let second = days_from_civil(year, month, day) * SECONDS_PER_DAY
-            + hour * 3600
-            + minute * 60
-            + second;
-        Instant { second, nano }
-    }
 }
 
 impl fmt::Display for Instant {
@@ -371,75 +310,9 @@ impl fmt::Display for Instant {
     }
 }
 
-/// The year, month and day at the start of what `LocalDate.toString` wrote, and what follows.
-fn read_civil(text: &str) -> Option<(i64, i64, i64, &str)> {
-    let (sign, unsigned) = match text.as_bytes().first()? {
-        b'-' => (-1, &text[1..]),
-        b'+' => (1, &text[1..]),
-        _ => (1, text),
-    };
-    let digits = unsigned.find('-')?;
-    let year = sign * unsigned[..digits].parse::<i64>().ok()?;
-    let rest = &unsigned[digits..];
-    let month = rest.get(1..3)?.parse::<i64>().ok()?;
-    let day = rest.get(4..6)?.parse::<i64>().ok()?;
-    Some((year, month, day, &rest[6..]))
-}
-
-fn read_date(text: &str) -> Option<(Date, &str)> {
-    let (year, month, day, rest) = read_civil(text)?;
-    let date = Date::new(
-        i32::try_from(year).ok()?,
-        u8::try_from(month).ok()?,
-        u8::try_from(day).ok()?,
-    )
-    .ok()?;
-    Some((date, rest))
-}
-
-fn read_time(text: &str) -> Option<(Time, &str)> {
-    let two = |at: usize| text.get(at..at + 2)?.parse::<u8>().ok();
-    let (hour, minute) = (two(0)?, two(3)?);
-    let (second, rest) = if text.as_bytes().get(5) == Some(&b':') {
-        (two(6)?, &text[8..])
-    } else {
-        (0, &text[5..])
-    };
-    Some((Time::new(hour, minute, second).ok()?, rest))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn what_is_written_is_what_is_read_back() {
-        for date in [
-            Date::new(2024, 2, 29).unwrap(),
-            Date::new(-44, 3, 15).unwrap(),
-            Date::new(0, 1, 1).unwrap(),
-            Date::new(12_345, 12, 31).unwrap(),
-        ] {
-            assert_eq!(Date::written(&date.iso()), date);
-        }
-        for time in [Time::new(0, 0, 0).unwrap(), Time::new(23, 59, 1).unwrap()] {
-            assert_eq!(Time::written(&time.iso()), time);
-        }
-        let at = DateTime::new(
-            Date::new(1999, 12, 31).unwrap(),
-            Time::new(12, 30, 0).unwrap(),
-        );
-        assert_eq!(DateTime::written(&at.iso()), at);
-        for instant in [
-            Instant::new(0, 0).unwrap(),
-            Instant::new(-1, 500_000_000).unwrap(),
-            Instant::new(1_700_000_000, 123_456).unwrap(),
-            Instant::new(MIN_MOMENT, 0).unwrap(),
-            Instant::new(MAX_MOMENT, 999_999_999).unwrap(),
-        ] {
-            assert_eq!(Instant::written(&instant.iso()), instant);
-        }
-    }
 
     #[test]
     fn a_day_the_calendar_does_not_have_is_refused() {

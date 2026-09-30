@@ -212,7 +212,7 @@ sealed interface Crossing {
                 // The unscaled digits never go through String admission (souther-native-compiler#109):
                 // an integer's text is never the value's written form, so it is not fallible on a
                 // String's own capacity.
-                case DECIMAL -> "library.words.decimal(run, " + value + ")";
+                case DECIMAL -> "library.words.decimal(run, " + value + ")?";
                 case DATE -> "library.words.date(run, " + value + ")?";
                 case TIME -> "library.words.time(run, " + value + ")?";
                 case DATETIME -> "library.words.date_time(run, " + value + ")?";

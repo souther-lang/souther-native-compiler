@@ -150,9 +150,12 @@ unsafe fn of_parts(unscaled: *const Text, scale: i64) -> *mut Decimal {
     decimal_of(&amount)
 }
 
-/// A `Decimal` of this integer and scale, for a caller outside a Souther program: the integer as
-/// integer text (an optional sign and ASCII digits, `length` bytes at `unscaled`) and the scale as
-/// a number a scale may be.
+/// A `Decimal` of this integer and scale, for a caller outside a Souther program, written through
+/// `out` where they name one, and answering whether they did: the integer as integer text (an
+/// optional sign and ASCII digits, `length` bytes at `unscaled`) and the scale as a number a scale
+/// may be. Bytes that are not integer text, a count below nought and a scale past the 32-bit range
+/// name none, and are answered as that rather than ending the process: the runtime is what decides
+/// what a `Decimal` is, and a binding that checks first does so only to say it in its own words.
 ///
 /// Bytes and a count, and not a `String` of the runtime's layout: the unscaled digits are the
 /// integer's text and not the value's written form (spec §what-a-string-holds says what a
@@ -162,33 +165,28 @@ unsafe fn of_parts(unscaled: *const Text, scale: i64) -> *mut Decimal {
 ///
 /// # Safety
 ///
-/// `unscaled` points at `length` bytes that may be read.
-///
-/// # Panics
-///
-/// Where the bytes are not UTF-8, are not integer text, or the scale is outside the 32-bit range,
-/// which ends the process as a string of bytes that are not UTF-8 does: a binding says so first in
-/// its own terms.
+/// `unscaled` points at `length` bytes that may be read, where `length` is above nought, and `out`
+/// is room for the address of a `Decimal`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_decimal_of_parts(
     unscaled: *const u8,
     length: Count,
     scale: i64,
-) -> *mut Decimal {
-    let held =
-        usize::try_from(length.0).expect("text is handed over as bytes, and never fewer than 0");
-    let bytes = if held == 0 {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(unscaled, held) }
-    };
-    let written =
-        std::str::from_utf8(bytes).expect("a Decimal's integer is handed over as UTF-8 text");
-    let scale = i32::try_from(scale).expect("a Decimal is handed over at a scale a Decimal has");
-    let amount = souther_text::decimal_text(souther_text::Text::held(written))
-        .and_then(|it| Amount::of_integer_text(it, scale))
-        .expect("a Decimal's integer is handed over as integer text");
-    decimal_of(&amount)
+    out: *mut *mut Decimal,
+) -> i8 {
+    let named = usize::try_from(length.0).ok().and_then(|held| {
+        let bytes = if held == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(unscaled, held) }
+        };
+        let written = std::str::from_utf8(bytes).ok()?;
+        let scale = i32::try_from(scale).ok()?;
+        souther_text::decimal_text(souther_text::Text::held(written))
+            .and_then(|it| Amount::of_integer_text(it, scale))
+            .map(|amount| decimal_of(&amount))
+    });
+    unsafe { answered(named, out) }
 }
 
 /// A `Decimal` literal: the integer the checker read it as, which the object carries as a string,
@@ -439,7 +437,17 @@ mod tests {
     }
 
     fn of(unscaled: &str, scale: i64) -> *mut Decimal {
-        unsafe { souther_decimal_of_parts(unscaled.as_ptr(), Count(unscaled.len() as i64), scale) }
+        let mut out = ptr::null_mut();
+        let made = unsafe {
+            souther_decimal_of_parts(
+                unscaled.as_ptr(),
+                Count(unscaled.len() as i64),
+                scale,
+                &mut out,
+            )
+        };
+        assert_eq!(made, 1, "{unscaled} at {scale} names a Decimal");
+        out
     }
 
     fn parts(at: *const Decimal) -> (String, i64) {
@@ -623,5 +631,41 @@ mod tests {
                 format!("souther$type${module}${name}")
             );
         }
+    }
+
+    /// Parts that name no `Decimal` are answered as that, and end nothing.
+    #[test]
+    fn parts_that_name_no_decimal_are_refused() {
+        let mark = souther_mark();
+        let mut out = ptr::null_mut();
+        for (unscaled, scale) in [
+            ("12.5", 0),
+            ("", 0),
+            ("1e3", 0),
+            (" 1", 0),
+            ("1", i64::from(i32::MAX) + 1),
+            ("1", i64::from(i32::MIN) - 1),
+        ] {
+            let made = unsafe {
+                souther_decimal_of_parts(
+                    unscaled.as_ptr(),
+                    Count(unscaled.len() as i64),
+                    scale,
+                    &mut out,
+                )
+            };
+            assert_eq!(made, 0, "{unscaled:?} at {scale}");
+        }
+        let invalid = [0xff_u8, b'1'];
+        assert_eq!(
+            unsafe { souther_decimal_of_parts(invalid.as_ptr(), Count(2), 0, &mut out) },
+            0
+        );
+        assert_eq!(
+            unsafe { souther_decimal_of_parts(invalid.as_ptr(), Count(-1), 0, &mut out) },
+            0
+        );
+        assert_eq!(parts(of("-120", 2)), (String::from("-120"), 2));
+        souther_reset(mark);
     }
 }

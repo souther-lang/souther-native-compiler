@@ -7,4 +7,4 @@ package souther
 //
 // It says nothing of the native library, whose ABI generation is in the name of each function of
 // it, and everything of what a generated package and this package agree on, which Go compiles.
-const Protocol = 2
+const Protocol = 3

@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 10;
+    public const PROTOCOL = 11;
 
     /**
      * What each version of the protocol moved, by its number, oldest first. The versions before the
@@ -53,6 +53,10 @@ abstract class Binding
             . 'DateTime, Instant, Calendar, Session::date, Session::dateOf, Session::time, '
             . 'Session::timeOf, Session::dateTime, Session::dateTimeOf, Session::instant, '
             . 'Session::instantOf)',
+        11 => 'a Date, a Time, a DateTime and an Instant are handed over and read back as the numbers '
+            . 'they mean, each an int, and never as text: the library answers whether they name one, '
+            . 'and a refusal is a LogicException; the text java.time writes is only for PHP to show '
+            . '(Session::date and the rest, Calendar)',
     ];
 
     /**
