@@ -644,11 +644,8 @@ public final class PhpBindings {
     }
 
     private static Set<String> cases(Declaration.Sum sum) {
-        return sum.cases().stream().map(it -> switch (it) {
-            case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> "primitive:" + p.primitive().spelt();
-            case Case.Language l -> "language:" + l.name();
-        }).collect(Collectors.toCollection(LinkedHashSet::new));
+        return sum.cases().stream().map(it -> it.module() + "." + it.name())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     /**

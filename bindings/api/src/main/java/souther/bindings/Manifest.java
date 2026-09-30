@@ -152,12 +152,6 @@ public final class Manifest {
                 module.values(), module.declarations())) {
             carried(crossing, carried);
         }
-        for (Declaration declaration : module.declarations()) {
-            if (declaration instanceof Declaration.Sum sum && sum.which() != null) {
-                sum.cases().stream().filter(it -> !(it instanceof Case.Declared))
-                        .forEach(carried::add);
-            }
-        }
         return carried;
     }
 
@@ -798,7 +792,7 @@ public final class Manifest {
         }
     }
 
-    private static List<Case> oneOrMore(List<Case> cases, String of) {
+    private static <C extends Case> List<C> oneOrMore(List<C> cases, String of) {
         if (cases.isEmpty()) {
             throw new IllegalArgumentException(of + " with no case in it");
         }
@@ -963,8 +957,11 @@ public final class Manifest {
             }
         }
 
-        /** A sum, and the cases {@code which} counts, where a host can be handed each of them. */
-        record Sum(String name, List<Case> cases, @Nullable Function which,
+        /**
+         * A sum, and the cases {@code which} counts, where a host can be handed each of them. Every
+         * case of a sum is a declaration, as the language says, so none is carried by the runtime.
+         */
+        record Sum(String name, List<Case.Declared> cases, @Nullable Function which,
                    @Nullable Function decode, @Nullable Function decodeHost,
                    @Nullable Function encode) implements Declaration {
 

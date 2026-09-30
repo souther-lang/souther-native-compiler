@@ -630,7 +630,7 @@ public final class GoBindings {
      *               the sum's package, which the method of the cases is written on. Any other case
      *               is a type of the sum's, holding its value as {@code Value} where it has one.
      */
-    private record Arm(String variant, @Nullable String holds, @Nullable Case each, boolean itself) {
+    private record Arm(String variant, String holds, boolean itself) {
     }
 
     /**
@@ -647,8 +647,8 @@ public final class GoBindings {
 
     /**
      * Each case of {@code sum} in the order its {@code which} counts them, or null where a case has
-     * no variant this binding can write: where nothing says which case a value is, a primitive Go
-     * holds no way, or two cases that would be one variant. A case the model keeps, a declared type
+     * no variant this binding can write: where nothing says which case a value is, or two cases
+     * that would be one variant. A case the model keeps, a declared type
      * it does not publish, is {@value #KEPT}, holding the value as the sum.
      */
     private @Nullable List<Arm> arms(GoModule at, Declared of, Declaration.Sum sum) {
@@ -657,24 +657,13 @@ public final class GoBindings {
         }
         List<Arm> arms = new ArrayList<>();
         Set<String> variants = new java.util.HashSet<>();
-        Arm kept = new Arm(KEPT, of.name(), null, false);
-        for (Case each : sum.cases()) {
-            Arm arm = switch (each) {
-                case Case.Declared d -> {
-                    Declared it = declared.get(d.module() + "." + d.name());
-                    yield it == null ? kept : new Arm(it.name(),
-                            at.imports.module(it.importPath()) + it.name(), each,
-                            it.importPath().equals(at.importPath));
-                }
-                case Case.Primitive p -> {
-                    Word held = manifest.crossing(p).holds();
-                    Crossing.Whole whole = held == null ? null : Crossing.Whole.primitive(p.primitive(), held);
-                    yield whole == null ? null : new Arm(p.primitive().spelt(), whole.type(at.imports), each, false);
-                }
-                case Case.Language l -> new Arm(GoNames.exported(l.name(), "case `" + l.name() + "`"),
-                        null, each, false);
-            };
-            if (arm == null || !variants.add(arm.variant()) && arm != kept) {
+        Arm kept = new Arm(KEPT, of.name(), false);
+        for (Case.Declared each : sum.cases()) {
+            Declared it = declared.get(each.module() + "." + each.name());
+            Arm arm = it == null ? kept : new Arm(it.name(),
+                    at.imports.module(it.importPath()) + it.name(),
+                    it.importPath().equals(at.importPath));
+            if (!variants.add(arm.variant()) && arm != kept) {
                 return null;
             }
             arms.add(arm);
@@ -687,11 +676,8 @@ public final class GoBindings {
     }
 
     private static Set<String> cases(Declaration.Sum sum) {
-        return sum.cases().stream().map(it -> switch (it) {
-            case Case.Declared d -> d.module() + "." + d.name();
-            case Case.Primitive p -> "primitive:" + p.primitive().spelt();
-            case Case.Language l -> "language:" + l.name();
-        }).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        return sum.cases().stream().map(it -> it.module() + "." + it.name())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
     }
 
     /**
@@ -717,7 +703,7 @@ public final class GoBindings {
             if (arm.itself()) {
                 out.append("\n// ").append(marker).append(" makes a value of ").append(arm.holds())
                         .append(" a case of `").append(it.key()).append("`.\n")
-                        .append(noBody(Objects.requireNonNull(arm.holds()), marker));
+                        .append(noBody(arm.holds(), marker));
                 continue;
             }
             String variant = it.name() + arm.variant();
@@ -725,7 +711,7 @@ public final class GoBindings {
             out.append("\n// ").append(variant).append(" is the case ").append(arm.variant())
                     .append(" of `").append(it.key()).append("`.\n").append("type ").append(variant)
                     .append(" struct");
-            out.append(arm.holds() == null ? "{}\n" : " {\n\tValue " + arm.holds() + "\n}\n");
+            out.append(" {\n\tValue " + arm.holds() + "\n}\n");
             out.append("\n").append(noBody(variant, marker));
         }
         Body body = new Body(at.imports, at::shim, new Names(List.of()), "run", "return", 1);
@@ -740,18 +726,6 @@ public final class GoBindings {
             String held = souther + ".NewRef(run, value)";
             if (arm.itself()) {
                 body.line("\treturn " + arm.holds() + "{Ref__: " + held + "}");
-            } else if (arm.holds() == null) {
-                body.line("\treturn " + variant + "{}");
-            } else if (arm.each() instanceof Case.Primitive p) {
-                Manifest.CaseCrossing crossing = manifest.crossing(p);
-                Crossing.Whole whole = Crossing.Whole.primitive(p.primitive(), crossing.holds());
-                Body inner = new Body(at.imports, at::shim, new Names(List.of()), "run", "return", 2);
-                String word = inner.temp("held");
-                inner.line(word + " := " + at.shim(crossing.read()) + "(run.Library().Symbol(\""
-                        + crossing.read().name() + "\"), value)");
-                String made = whole.of(inner, List.of(word));
-                inner.line("return " + variant + "{Value: " + made + "}");
-                body.raw(inner.toString());
             } else {
                 body.line("\treturn " + variant + "{Value: " + arm.holds() + "{Ref__: " + held + "}}");
             }
@@ -1674,8 +1648,8 @@ public final class GoBindings {
                 + "// Capability stands for a behavior another requires, made in a run.\n"
                 + "type Capability = souther.Capability[binding.Tag]\n\n"
                 + "// Load opens the library file at path.\n//\n"
-                + "// It checks that every function this binding calls is there, which a library of another ABI"
-                + " generation\n// has none of. That path is the library this binding was generated from is"
+                + "// It refuses a library of another ABI generation, and checks that every function this"
+                + " binding\n// calls is there. That path is the library this binding was generated from is"
                 + " the caller's to\n// hold: a library built from another program may have a function"
                 + " of the same name that is\n// something else, and Load cannot tell.\n"
                 + "func Load(path string) (*Library, error) {\n"
@@ -1747,7 +1721,8 @@ public final class GoBindings {
 
     private void goMod() throws IOException {
         file(List.of("go.mod"), "// Generated by souther-native-compiler from souther.json. Written"
-                + " again on every build.\nmodule " + importPath + "\n\ngo 1.27\n\nrequire (\n\t"
+                + " again on every build.\nmodule " + importPath + "\n\ngo " + RuntimeModule.THE.go()
+                + "\n\nrequire (\n\t"
                 + Body.Imports.RAOH + " " + RAOH_VERSION + "\n\t" + RUNTIME_MODULE + " "
                 + RuntimeModule.THE.requirement() + "\n)\n");
     }

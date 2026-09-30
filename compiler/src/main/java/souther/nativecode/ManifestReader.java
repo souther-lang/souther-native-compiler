@@ -117,9 +117,13 @@ public final class ManifestReader {
             field("takes", list(PARAMETER)),
             nullableField("answers", WORD)).strict(Function::new);
 
-    private static final Decoder<JsonNode, Case> CASE = oneOf(
+    /** A case a declaration names: what every case of a sum is, since the language says so. */
+    private static final Decoder<JsonNode, Case.Declared> DECLARED_CASE =
             combine(field("kind", literal("declared")), field("module", string()),
-                    field("name", string())).strict((kind, module, name) -> new Case.Declared(module, name)),
+                    field("name", string())).strict((kind, module, name) -> new Case.Declared(module, name));
+
+    private static final Decoder<JsonNode, Case> CASE = oneOf(
+            DECLARED_CASE.map(it -> it),
             combine(field("kind", literal("primitive")), field("name", PRIMITIVE))
                     .strict((kind, name) -> new Case.Primitive(name)),
             combine(field("kind", literal("language")), field("name", string()))
@@ -438,7 +442,7 @@ public final class ManifestReader {
                     .strict((kind, name, construct, decode, decodeHost, encode) ->
                             new Declaration.Unit(name, built(zip, List.of(), construct), decode, decodeHost, encode)),
             combine(field("kind", literal("sum")), field("name", string()),
-                    field("cases", list(CASE)), nullableField("case", FUNCTION),
+                    field("cases", list(DECLARED_CASE)), nullableField("case", FUNCTION),
                     nullableField("decode", FUNCTION), nullableField("decodehost", FUNCTION),
                     nullableField("encode", FUNCTION))
                     .strict((kind, name, cases, which, decode, decodeHost, encode) ->
