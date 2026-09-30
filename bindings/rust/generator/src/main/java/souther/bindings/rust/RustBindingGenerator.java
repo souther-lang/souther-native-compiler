@@ -2,12 +2,12 @@ package souther.bindings.rust;
 
 import souther.bindings.BindingGenerator;
 import souther.bindings.BindingInput;
-import souther.bindings.Generated;
 import souther.bindings.NotBindable;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Set;
 
 /** The Rust binding, as the command finds it: asked for the {@code crate} it is written as. */
 public final class RustBindingGenerator implements BindingGenerator {
@@ -18,14 +18,19 @@ public final class RustBindingGenerator implements BindingGenerator {
     }
 
     @Override
-    public void preflight(Path into, Map<String, String> options) throws IOException {
-        RustBindings.refuseAhead(into, crate(options));
+    public Set<String> options() {
+        return Set.of("crate");
     }
 
     @Override
-    public Generated generate(BindingInput input, Path into, Map<String, String> options)
+    public void preflight(Map<String, String> options) {
+        RustBindings.refuseAhead(crate(options));
+    }
+
+    @Override
+    public void generate(BindingInput input, Path into, Map<String, String> options)
             throws IOException {
-        return RustBindings.generate(input, into, crate(options));
+        RustBindings.generate(input, into, crate(options));
     }
 
     private static String crate(Map<String, String> options) {

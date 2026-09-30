@@ -1,6 +1,6 @@
 package souther.bindings.php;
 
-import souther.bindings.Generated;
+import souther.nativecode.Generated;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;

@@ -2,7 +2,6 @@ package souther.bindings.php;
 
 import org.jspecify.annotations.Nullable;
 import souther.bindings.BindingInput;
-import souther.bindings.Generated;
 import souther.bindings.Manifest;
 import souther.bindings.Manifest.Case;
 import souther.bindings.Manifest.Declaration;
@@ -11,7 +10,6 @@ import souther.bindings.Manifest.Shape;
 import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
-import souther.bindings.Output;
 import souther.bindings.ValueCrossing;
 import souther.bindings.php.Crossing.Given;
 import souther.bindings.php.Crossing.GivenFunction;
@@ -64,7 +62,6 @@ public final class PhpBindings {
     static final String DECLARATIONS = "souther.ffi.h";
 
     /** What says a directory is a PHP binding this wrote, and may be replaced whole. */
-    static final String MARK = ".souther-php-binding";
 
     private static final String RUNTIME = "\\Souther\\Runtime\\";
 
@@ -77,7 +74,6 @@ public final class PhpBindings {
     private final Manifest manifest;
     private final String root;
     private final Path into;
-    private final List<Path> written = new ArrayList<>();
 
     /** What each declared type is, by {@code module.Name}. */
     private final Map<String, Declared> declared = new LinkedHashMap<>();
@@ -130,50 +126,33 @@ public final class PhpBindings {
     }
 
     /**
-     * Refuses what a generation into {@code into} under {@code namespace} would refuse whatever the
-     * manifest said: a namespace PHP will not take, and a directory holding what no generation
-     * wrote. For a caller that builds the library in the same step, so that a binding it was never
-     * going to write is refused before the library is.
+     * Refuses what a generation under {@code namespace} would refuse whatever the manifest said: a
+     * namespace PHP will not take. For a caller that builds the library in the same step, so that a
+     * binding it was never going to write is refused before the library is.
      *
-     * @throws NotBindable where the namespace or the directory would be refused
+     * @throws NotBindable where the namespace would be refused
      */
-    public static void refuseAhead(Path into, String namespace) throws IOException {
+    public static void refuseAhead(String namespace) {
         PhpNames.rootNamespace(namespace);
-        Output.replaceable(into, MARK);
     }
 
     /**
      * Writes the binding of what the input's manifest describes into {@code into}, under the namespace
      * {@code namespace}, beside a copy of its declarations, the C declarations the build wrote
-     * for an FFI to read, which the binding loads the library through.
+     * for an FFI to read, which the binding loads the library through; and answers {@code into}.
      *
      * <p>The namespace is the binding's own, and not read off the model, so that two libraries
      * publishing a module of the same name can stand in one application.
      *
-     * <p>{@code into} is then that binding and nothing else: it is written beside it and put in
-     * place whole ({@link Output}), so a class the model no longer declares does not survive a
-     * generation, and a refused one leaves what was there as it was.
-     *
      * @throws NotBindable where a name in the model is not one PHP takes
      */
-    public static Generated generate(BindingInput input, Path into, String namespace)
+    public static Path generate(BindingInput input, Path into, String namespace)
             throws IOException {
-        Manifest read = input.manifest();
         String root = PhpNames.rootNamespace(namespace);
-        Output output = Output.replacing(into, MARK);
-        PhpBindings binding = new PhpBindings(read, root, output.staging());
-        try {
-            binding.write();
-            Path copied = output.staging().resolve(DECLARATIONS);
-            input.declarations().copyTo(copied);
-            binding.written.add(copied);
-            output.commit();
-        } catch (IOException | RuntimeException e) {
-            output.abandon();
-            throw e;
-        }
-        return new Generated(output.placed(output.staging()),
-                binding.written.stream().map(output::placed).toList());
+        Files.createDirectories(into);
+        new PhpBindings(input.manifest(), root, into).write();
+        input.declarations().copyTo(into.resolve(DECLARATIONS));
+        return into;
     }
 
     /** A declared type, and what PHP calls what is generated for it. */
@@ -1623,7 +1602,6 @@ public final class PhpBindings {
         Path at = into.resolve("autoload.php");
         Files.createDirectories(into);
         Files.writeString(at, php, StandardCharsets.UTF_8);
-        written.add(at);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1684,6 +1662,5 @@ public final class PhpBindings {
         Files.createDirectories(directory);
         Path at = directory.resolve(name + ".php");
         Files.writeString(at, php, StandardCharsets.UTF_8);
-        written.add(at);
     }
 }

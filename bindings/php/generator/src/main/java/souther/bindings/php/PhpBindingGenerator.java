@@ -2,12 +2,12 @@ package souther.bindings.php;
 
 import souther.bindings.BindingGenerator;
 import souther.bindings.BindingInput;
-import souther.bindings.Generated;
 import souther.bindings.NotBindable;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Set;
 
 /** The PHP binding, as the command finds it: asked for a {@code namespace} to write it under. */
 public final class PhpBindingGenerator implements BindingGenerator {
@@ -18,14 +18,19 @@ public final class PhpBindingGenerator implements BindingGenerator {
     }
 
     @Override
-    public void preflight(Path into, Map<String, String> options) throws IOException {
-        PhpBindings.refuseAhead(into, namespace(options));
+    public Set<String> options() {
+        return Set.of("namespace");
     }
 
     @Override
-    public Generated generate(BindingInput input, Path into, Map<String, String> options)
+    public void preflight(Map<String, String> options) {
+        PhpBindings.refuseAhead(namespace(options));
+    }
+
+    @Override
+    public void generate(BindingInput input, Path into, Map<String, String> options)
             throws IOException {
-        return PhpBindings.generate(input, into, namespace(options));
+        PhpBindings.generate(input, into, namespace(options));
     }
 
     private static String namespace(Map<String, String> options) {

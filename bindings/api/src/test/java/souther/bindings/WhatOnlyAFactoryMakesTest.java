@@ -14,23 +14,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WhatOnlyAFactoryMakesTest {
 
     /**
-     * A manifest is made by reading one and no other way: its own constructor holds what
+     * A manifest is made by its factory and no other way: its own constructor holds what
      * constructing a behavior requires closed over every module, which no part of it can hold
      * alone.
      */
     @Test
-    void aManifestIsMadeOnlyByReadingOne() {
+    void aManifestIsMadeOnlyByItsFactory() {
         assertMadeOnlyByItsOwn(Manifest.class);
-    }
-
-    /**
-     * An output is made only where the directory it replaces was found to be a binding of the
-     * same host, and what it writes is marked as one: made any other way, {@code commit} would put
-     * a directory nothing marked in place of one nothing checked.
-     */
-    @Test
-    void anOutputIsMadeOnlyWhereWhatItReplacesWasChecked() {
-        assertMadeOnlyByItsOwn(Output.class);
     }
 
     private static void assertMadeOnlyByItsOwn(Class<?> type) {

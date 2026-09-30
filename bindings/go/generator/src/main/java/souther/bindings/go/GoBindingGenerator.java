@@ -2,12 +2,12 @@ package souther.bindings.go;
 
 import souther.bindings.BindingGenerator;
 import souther.bindings.BindingInput;
-import souther.bindings.Generated;
 import souther.bindings.NotBindable;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Set;
 
 /** The Go binding, as the command finds it: asked for the {@code package} it is written as. */
 public final class GoBindingGenerator implements BindingGenerator {
@@ -18,14 +18,19 @@ public final class GoBindingGenerator implements BindingGenerator {
     }
 
     @Override
-    public void preflight(Path into, Map<String, String> options) throws IOException {
-        GoBindings.refuseAhead(into, importPath(options));
+    public Set<String> options() {
+        return Set.of("package");
     }
 
     @Override
-    public Generated generate(BindingInput input, Path into, Map<String, String> options)
+    public void preflight(Map<String, String> options) {
+        GoBindings.refuseAhead(importPath(options));
+    }
+
+    @Override
+    public void generate(BindingInput input, Path into, Map<String, String> options)
             throws IOException {
-        return GoBindings.generate(input, into, importPath(options));
+        GoBindings.generate(input, into, importPath(options));
     }
 
     private static String importPath(Map<String, String> options) {

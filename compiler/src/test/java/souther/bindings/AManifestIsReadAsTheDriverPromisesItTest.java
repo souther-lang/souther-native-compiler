@@ -361,15 +361,18 @@ class AManifestIsReadAsTheDriverPromisesItTest {
                 .hasMessageContaining("module `m` hands a function of");
     }
 
-    /** Why nothing reaches a value is read as the reason and where it stands. */
+    /**
+     * A value nothing reaches is read as that: the model still has it, and a generator knows it is
+     * there. Why, which the driver writes, is read strictly and kept by nothing a generator is
+     * handed.
+     */
     @Test
-    void whyNothingReachesAValueIsRead(@TempDir Path into) throws Exception {
+    void aValueNothingReachesIsReadAsThat(@TempDir Path into) throws Exception {
         Manifest read = ManifestReader.read(built(into, SHAPED).manifest());
 
         Manifest.PublishedValue either = read.modules().getFirst().values().stream()
                 .filter(it -> it.name().equals("either")).findFirst().orElseThrow();
-        assertThat(either.read()).isEqualTo(new Manifest.Reach.Unavailable<>(new Manifest.Refusal(
-                Manifest.Reason.NO_DISCRIMINATOR, List.of(new Manifest.Step.Answers()))));
+        assertThat(either.read()).isEqualTo(new Manifest.Reach.Unavailable<>());
     }
 
     /** A tuple, a list of tuples, and a union a host would be handed with nothing to say which case it is. */

@@ -96,15 +96,12 @@ class WhatARecordHoldsIsItsOwnTest {
                 }
             }
         }
-        Path written = into.resolve("written");
-        owning.walk(new Generated(written, List.of(written.resolve("a"))));
 
         assertThat(owning.wrong).isEmpty();
         assertThat(Owning.collectionsIn(Manifest.class, "souther.bindings")).contains(
-                Generated.class.getName() + ".files",
                 Manifest.Function.class.getName() + ".takes",
                 Manifest.Signature.class.getName() + ".takes",
-                Manifest.Refusal.class.getName() + ".path");
+                ValueCrossing.Tuple.class.getName() + ".members");
         assertThat(owning.asked).containsAll(Owning.collectionsIn(Manifest.class, "souther.bindings"));
     }
 

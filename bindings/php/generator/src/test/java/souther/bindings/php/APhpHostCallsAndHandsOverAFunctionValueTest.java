@@ -1,6 +1,6 @@
 package souther.bindings.php;
 
-import souther.bindings.Generated;
+import souther.nativecode.Generated;
 import souther.bindings.Manifest;
 import souther.nativecode.ManifestReader;
 import org.junit.jupiter.api.Test;

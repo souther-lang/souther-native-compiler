@@ -1,8 +1,8 @@
 package souther.bindings.go;
 
 import org.jspecify.annotations.Nullable;
+import souther.bindings.Claimed;
 import souther.bindings.BindingInput;
-import souther.bindings.Generated;
 import souther.bindings.Manifest;
 import souther.bindings.Manifest.Case;
 import souther.bindings.Manifest.Declaration;
@@ -12,7 +12,6 @@ import souther.bindings.Manifest.Shape;
 import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
-import souther.bindings.Output;
 import souther.bindings.ValueCrossing;
 
 import java.io.IOException;
@@ -49,7 +48,6 @@ import java.util.TreeSet;
 public final class GoBindings {
 
     /** What says a directory is a Go binding this wrote, and may be replaced whole. */
-    static final String MARK = ".souther-go-binding";
 
     /**
      * The protocol of the runtime module this writes for: what its public surface is, as recorded
@@ -70,7 +68,6 @@ public final class GoBindings {
     private final BindingInput input;
     private final String importPath;
     private final Path into;
-    private final List<Path> written = new ArrayList<>();
 
     /** What each declared type is, by {@code module.Name}. */
     private final Map<String, Declared> declared = new LinkedHashMap<>();
@@ -89,40 +86,27 @@ public final class GoBindings {
     }
 
     /**
-     * Refuses what a generation into {@code into} as {@code importPath} would refuse whatever the
-     * manifest said: a path Go will not take, and a directory holding what no generation wrote.
+     * Refuses what a generation as {@code importPath} would refuse whatever the manifest said: a
+     * path Go will not take.
      *
-     * @throws NotBindable where the path or the directory would be refused
+     * @throws NotBindable where the path would be refused
      */
-    public static void refuseAhead(Path into, String importPath) throws IOException {
+    public static void refuseAhead(String importPath) {
         GoNames.importPath(importPath);
-        Output.replaceable(into, MARK);
     }
 
     /**
      * Writes the binding of what the input's manifest describes into {@code into}, as the package
-     * {@code importPath}, which a host depends on by path.
-     *
-     * <p>{@code into} is then that package and nothing else: it is written beside it and put in
-     * place whole ({@link Output}), so a module the model no longer declares does not survive a
-     * generation, and a refused one leaves what was there as it was.
+     * {@code importPath}, which a host depends on by path; and answers {@code into}.
      *
      * @throws NotBindable where a name in the model is not one Go takes
      */
-    public static Generated generate(BindingInput input, Path into, String importPath)
+    public static Path generate(BindingInput input, Path into, String importPath)
             throws IOException {
         String path = GoNames.importPath(importPath);
-        Output output = Output.replacing(into, MARK);
-        GoBindings binding = new GoBindings(input, path, output.staging());
-        try {
-            binding.write();
-            output.commit();
-        } catch (IOException | RuntimeException e) {
-            output.abandon();
-            throw e;
-        }
-        return new Generated(output.placed(output.staging()),
-                binding.written.stream().map(output::placed).toList());
+        Files.createDirectories(into);
+        new GoBindings(input, path, into).write();
+        return into;
     }
 
     /** One module of the model: the package it is written as, and the Go written in it. */
@@ -131,7 +115,7 @@ public final class GoBindings {
         final List<String> path;
         final String importPath;
         final Body.Imports imports;
-        final GoNames.Claimed names;
+        final Claimed names;
         final StringBuilder items = new StringBuilder();
         final Map<String, Function> shims = new LinkedHashMap<>();
         /** What a host implements that the library calls back: each an exported function and what it needs declared. */
@@ -144,7 +128,7 @@ public final class GoBindings {
             this.path = path;
             this.importPath = GoBindings.this.importPath + "/" + String.join("/", path);
             this.imports = new Body.Imports(GoBindings.this.importPath, importPath);
-            this.names = new GoNames.Claimed("the package of module `" + module.name() + "`");
+            this.names = new Claimed("the package of module `" + module.name() + "`");
         }
 
         /** The name of the C function that calls {@code function} through its address. */
@@ -628,7 +612,7 @@ public final class GoBindings {
     /** The struct a value of {@code it} is held as, with what reads it and makes it. */
     private void handleType(GoModule at, Declared it) {
         Declaration declaration = it.declaration();
-        GoNames.Claimed methods = new GoNames.Claimed("the methods of `" + it.key() + "`");
+        Claimed methods = new Claimed("the methods of `" + it.key() + "`");
         methods.claim("Encode", "the generated `Encode`");
         List<String> readers = new ArrayList<>();
         for (Manifest.Field field : declaration.fields()) {
@@ -835,7 +819,7 @@ public final class GoBindings {
         }
         String what = "the constructor of `" + it.key() + "`";
         String name = at.names.claim("New" + it.name(), what);
-        GoNames.Claimed claimed = new GoNames.Claimed("the parameters of " + what);
+        Claimed claimed = new Claimed("the parameters of " + what);
         List<String> names = new ArrayList<>();
         for (Manifest.Field field : fields) {
             names.add(claimed.claim(GoNames.local(field.name(),
@@ -946,7 +930,7 @@ public final class GoBindings {
             }
             String what = "behavior `" + at.module.name() + "." + behavior.name() + "`";
             String name = at.names.claim(GoNames.exported(behavior.name(), what), what);
-            GoNames.Claimed claimed = new GoNames.Claimed("the parameters of " + what);
+            Claimed claimed = new Claimed("the parameters of " + what);
             List<String> names = switch (behavior.parameters()) {
                 case Manifest.Parameters.Named named -> named.parameters().stream()
                         .map(it -> claimed.claim(GoNames.local(it.name(),
@@ -1185,7 +1169,7 @@ public final class GoBindings {
 
     /** The names a behavior's parameters are written under. */
     private static List<String> parameterNames(Manifest.Parameters parameters, String what) {
-        GoNames.Claimed claimed = new GoNames.Claimed("the parameters of " + what);
+        Claimed claimed = new Claimed("the parameters of " + what);
         return switch (parameters) {
             case Manifest.Parameters.Named named -> named.parameters().stream()
                     .map(it -> claimed.claim(GoNames.local(it.name(),
@@ -1540,7 +1524,6 @@ public final class GoBindings {
         }
         Files.createDirectories(at.getParent());
         input.declarations().copyTo(at);
-        written.add(at);
     }
 
     /**
@@ -1807,6 +1790,5 @@ public final class GoBindings {
         }
         Files.createDirectories(at.getParent());
         Files.writeString(at, content, StandardCharsets.UTF_8);
-        written.add(at);
     }
 }

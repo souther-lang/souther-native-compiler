@@ -396,66 +396,13 @@ public final class Manifest {
         record Available<T>(T it) implements Reach<T> {
         }
 
-        /** Why nothing does. */
-        record Unavailable<T>(Refusal refusal) implements Reach<T> {
+        /** Nothing does: the model has the thing, and a host has no way to it. */
+        record Unavailable<T>() implements Reach<T> {
         }
 
         /** What reaches it, or null where nothing does. */
         default @Nullable T available() {
             return this instanceof Available<T>(T it) ? it : null;
-        }
-    }
-
-    /**
-     * Why a host has no way to a value: what stands in the way, and where in what the function
-     * would hand over or be handed it stands, from the outside in. A binding says it in its own
-     * language's words.
-     */
-    public record Refusal(Reason reason, List<Step> path) {
-
-        public Refusal {
-            path = List.copyOf(path);
-        }
-    }
-
-    /** What stands in the way of a value crossing to a host. */
-    public enum Reason {
-        /**
-         * A type with no representation for a host: a {@code Rational}, which has no external
-         * form, and a set or a map in what a function value takes or answers.
-         */
-        NO_REPRESENTATION,
-        /** A type with no value to hand over. */
-        NO_VALUE,
-        /** A union a host would be handed with nothing to say which case it is. */
-        NO_DISCRIMINATOR
-    }
-
-    /** One step into what a function hands over or is handed. */
-    public sealed interface Step {
-
-        /** What is taken at this place, counted from nought. */
-        record Takes(int at) implements Step {
-        }
-
-        /** What is answered. */
-        record Answers() implements Step {
-        }
-
-        /** A field of a declared type, by its name. */
-        record Field(String name) implements Step {
-        }
-
-        /** What an optional holds. */
-        record Option() implements Step {
-        }
-
-        /** A tuple's member at this place. */
-        record Member(int at) implements Step {
-        }
-
-        /** A list's element. */
-        record Element() implements Step {
         }
     }
 

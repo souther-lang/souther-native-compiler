@@ -2,7 +2,8 @@ package souther.bindings.php;
 
 import souther.bindings.BindingInput;
 import souther.bindings.Declarations;
-import souther.bindings.Generated;
+import souther.nativecode.BindingDirectory;
+import souther.nativecode.Generated;
 import souther.bindings.Manifest;
 import souther.nativecode.ManifestReader;
 import souther.nativecode.NativeCompiler;
@@ -24,8 +25,10 @@ final class LibraryBinding {
     /** From a manifest that is not the one the library wrote, as a test that changes one does. */
     static Generated generated(Path manifest, Path declarations, Path into, String namespace)
             throws IOException {
-        return PhpBindings.generate(
-                new BindingInput(ManifestReader.read(manifest), Declarations.at(declarations)), into,
-                namespace);
+        BindingInput input =
+                new BindingInput(ManifestReader.read(manifest), Declarations.at(declarations));
+        // Written and put in place as the command does.
+        return Generated.of(BindingDirectory.written(into, "php",
+                staging -> PhpBindings.generate(input, staging, namespace)));
     }
 }

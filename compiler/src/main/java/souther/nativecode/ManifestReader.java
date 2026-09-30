@@ -184,24 +184,28 @@ public final class ManifestReader {
                         Set.of("function")));
     }
 
-    private static final Decoder<JsonNode, Reason> REASON = string().flatMap(written -> {
-        for (Reason reason : Reason.values()) {
-            if (reason.name().toLowerCase(java.util.Locale.ROOT).equals(written)) {
-                return Result.ok(reason);
-            }
-        }
-        return Result.fail("invalid_value", "no reason is spelt " + written);
-    });
+    /**
+     * Why nothing reaches a value, as the driver writes it: what stands in the way, and where in
+     * what a function hands over or is handed. Read strictly, as everything is, and kept by no
+     * generator: the model says only that nothing reaches it.
+     */
+    private record Refusal(String reason, List<Object> path) {
+    }
 
-    private static final Decoder<JsonNode, Step> STEP = oneOf(
-            literal("answers").<Step>map(it -> new Step.Answers()),
-            literal("option").<Step>map(it -> new Step.Option()),
-            literal("element").<Step>map(it -> new Step.Element()),
-            strict(field("takes", int_()).asDecoder().<Step>map(Step.Takes::new), Set.of("takes")),
-            strict(field("member", int_()).asDecoder().<Step>map(Step.Member::new),
-                    Set.of("member")),
-            strict(field("field", string()).asDecoder().<Step>map(Step.Field::new),
-                    Set.of("field")));
+    private static final Set<String> REASONS = Set.of("no_representation", "no_value",
+            "no_discriminator");
+
+    private static final Decoder<JsonNode, String> REASON = string().flatMap(written ->
+            REASONS.contains(written) ? Result.ok(written)
+                    : Result.fail("invalid_value", "no reason is spelt " + written));
+
+    private static final Decoder<JsonNode, Object> STEP = oneOf(
+            literal("answers").<Object>map(it -> it),
+            literal("option").<Object>map(it -> it),
+            literal("element").<Object>map(it -> it),
+            strict(field("takes", int_()).asDecoder().<Object>map(it -> it), Set.of("takes")),
+            strict(field("member", int_()).asDecoder().<Object>map(it -> it), Set.of("member")),
+            strict(field("field", string()).asDecoder().<Object>map(it -> it), Set.of("field")));
 
     private static final Decoder<JsonNode, Refusal> REFUSAL = combine(
             field("reason", REASON),
@@ -213,7 +217,7 @@ public final class ManifestReader {
                 strict(field("available", of).asDecoder()
                         .<Reach<T>>map(Reach.Available::new), Set.of("available")),
                 strict(field("unavailable", REFUSAL).asDecoder()
-                        .<Reach<T>>map(Reach.Unavailable::new), Set.of("unavailable")));
+                        .<Reach<T>>map(it -> new Reach.Unavailable<>()), Set.of("unavailable")));
     }
 
     private static final Decoder<JsonNode, Call> CALL = combine(

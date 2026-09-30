@@ -1,8 +1,8 @@
 package souther.bindings.rust;
 
 import org.jspecify.annotations.Nullable;
+import souther.bindings.Claimed;
 import souther.bindings.BindingInput;
-import souther.bindings.Generated;
 import souther.bindings.Manifest;
 import souther.bindings.Manifest.Case;
 import souther.bindings.Manifest.Declaration;
@@ -12,7 +12,6 @@ import souther.bindings.Manifest.Shape;
 import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
-import souther.bindings.Output;
 import souther.bindings.ValueCrossing;
 
 import java.io.IOException;
@@ -49,7 +48,6 @@ import java.util.stream.Collectors;
 public final class RustBindings {
 
     /** What says a directory is a Rust binding this wrote, and may be replaced whole. */
-    static final String MARK = ".souther-rust-binding";
 
     /** The version of the runtime crate what this writes calls. */
     static final String RUNTIME_VERSION = "0.1";
@@ -66,7 +64,6 @@ public final class RustBindings {
     private final Manifest manifest;
     private final String crate;
     private final Path into;
-    private final List<Path> written = new ArrayList<>();
 
     /** What each declared type is, by {@code module.Name}. */
     private final Map<String, Declared> declared = new LinkedHashMap<>();
@@ -90,41 +87,26 @@ public final class RustBindings {
     }
 
     /**
-     * Refuses what a generation into {@code into} as {@code crate} would refuse whatever the
-     * manifest said: a name Cargo will not take, and a directory holding what no generation wrote.
+     * Refuses what a generation as {@code crate} would refuse whatever the manifest said: a name
+     * Cargo will not take.
      *
-     * @throws NotBindable where the name or the directory would be refused
+     * @throws NotBindable where the name would be refused
      */
-    public static void refuseAhead(Path into, String crate) throws IOException {
+    public static void refuseAhead(String crate) {
         RustNames.crateName(crate);
-        Output.replaceable(into, MARK);
     }
 
     /**
      * Writes the binding of what the input's manifest describes into {@code into}, as the crate
-     * {@code crate}, which a host depends on by path.
-     *
-     * <p>{@code into} is then that crate and nothing else: it is written beside it and put in place
-     * whole ({@link Output}), so a module the model no longer declares does not survive a
-     * generation, and a refused one leaves what was there as it was.
+     * {@code crate}, which a host depends on by path; and answers {@code into}.
      *
      * @throws NotBindable where a name in the model is not one Rust takes
      */
-    public static Generated generate(BindingInput input, Path into, String crate)
-            throws IOException {
-        Manifest read = input.manifest();
+    public static Path generate(BindingInput input, Path into, String crate) throws IOException {
         String name = RustNames.crateName(crate);
-        Output output = Output.replacing(into, MARK);
-        RustBindings binding = new RustBindings(read, name, output.staging());
-        try {
-            binding.write();
-            output.commit();
-        } catch (IOException | RuntimeException e) {
-            output.abandon();
-            throw e;
-        }
-        return new Generated(output.placed(output.staging()),
-                binding.written.stream().map(output::placed).toList());
+        Files.createDirectories(into);
+        new RustBindings(input.manifest(), name, into).write();
+        return into;
     }
 
     /** A declared type, and where the crate writes it. */
@@ -144,12 +126,12 @@ public final class RustBindings {
     private static final class RustModule {
         final Set<String> children = new LinkedHashSet<>();
         final StringBuilder items = new StringBuilder();
-        final RustNames.Claimed types;
-        final RustNames.Claimed values;
+        final Claimed types;
+        final Claimed values;
 
         RustModule(String where) {
-            types = new RustNames.Claimed("the types of " + where);
-            values = new RustNames.Claimed("the functions of " + where);
+            types = new Claimed("the types of " + where);
+            values = new Claimed("the functions of " + where);
             types.claim("rt", "the runtime crate's alias");
         }
     }
@@ -763,7 +745,7 @@ public final class RustBindings {
     // A handle: what every declared type is held as.
 
     /** The struct a value of {@code it} is held as, and what reads and writes it. */
-    private void handleStruct(RustModule at, Declared it, String doc, RustNames.Claimed methods) {
+    private void handleStruct(RustModule at, Declared it, String doc, Claimed methods) {
         for (String fixed : List.of("__word", "__held")) {
             methods.claim(fixed, "the generated `" + fixed + "`");
         }
@@ -802,7 +784,7 @@ public final class RustBindings {
 
     private void handleType(RustModule at, Manifest.Module module, Declared it) {
         Declaration declaration = it.declaration();
-        RustNames.Claimed methods = new RustNames.Claimed("the methods of `" + it.key() + "`");
+        Claimed methods = new Claimed("the methods of `" + it.key() + "`");
         for (String fixed : List.of("new", "decode", "decoder", "encode")) {
             methods.claim(fixed, "the generated `" + fixed + "`");
         }
@@ -834,7 +816,7 @@ public final class RustBindings {
         if (takes == null) {
             return;
         }
-        RustNames.Claimed claimed = new RustNames.Claimed("the parameters of `" + it.key()
+        Claimed claimed = new Claimed("the parameters of `" + it.key()
                 + "::new`");
         claimed.claim("run", "the run it is made in");
         List<String> names = new ArrayList<>();
@@ -957,7 +939,7 @@ public final class RustBindings {
     // A sum.
 
     private void sum(RustModule at, Manifest.Module module, Declared it, Declaration.Sum sum) {
-        RustNames.Claimed methods = new RustNames.Claimed("the methods of `" + it.key() + "`");
+        Claimed methods = new Claimed("the methods of `" + it.key() + "`");
         for (String fixed : List.of("case", "decode", "decoder", "encode")) {
             methods.claim(fixed, "the generated `" + fixed + "`");
         }
@@ -1118,7 +1100,7 @@ public final class RustBindings {
             }
             String what = "behavior `" + key + "`";
             String name = at.values.claim(RustNames.identifier(behavior.name(), what), what);
-            RustNames.Claimed claimed = new RustNames.Claimed("the parameters of " + what);
+            Claimed claimed = new Claimed("the parameters of " + what);
             claimed.claim("run", "the run it is called in");
             List<String> names = switch (behavior.parameters()) {
                 case Manifest.Parameters.Named named -> named.parameters().stream()
@@ -1345,7 +1327,7 @@ public final class RustBindings {
     /** The names a behavior's parameters are written under, the run's name taken already. */
     private static List<String> parameterNames(Manifest.Parameters parameters, String what,
                                                String... taken) {
-        RustNames.Claimed claimed = new RustNames.Claimed("the parameters of " + what);
+        Claimed claimed = new Claimed("the parameters of " + what);
         for (String it : taken) {
             claimed.claim(it, "the generated `" + it + "`");
         }
@@ -1794,6 +1776,5 @@ public final class RustBindings {
         }
         Files.createDirectories(at.getParent());
         Files.writeString(at, content, StandardCharsets.UTF_8);
-        written.add(at);
     }
 }

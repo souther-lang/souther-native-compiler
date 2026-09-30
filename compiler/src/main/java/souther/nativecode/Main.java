@@ -197,10 +197,15 @@ public final class Main {
                     for (HostBinding binding : library.bindings()) {
                         BindingGenerator generator = generator(generators, fetching, binding.kind());
                         try {
-                            generator.preflight(binding.into(), binding.options());
+                            taken(generator, binding);
+                            generator.preflight(binding.options());
+                            BindingDirectory.replaceable(binding.into(), generator.id());
                         } catch (NotBindable e) {
                             problems.println(e.getMessage());
                             return WRONG_COMMAND;
+                        } catch (RuntimeException e) {
+                            problems.println(failed(binding, e));
+                            return REFUSED;
                         }
                         generating.put(binding, generator);
                     }
@@ -214,15 +219,37 @@ public final class Main {
                     out.println("wrote the library " + library.into() + " from " + sources(files));
                     BindingInput input = new BindingInput(ManifestReader.read(built.manifest()),
                             Declarations.at(built.declarations()));
-                    for (Map.Entry<HostBinding, BindingGenerator> each : generating.entrySet()) {
-                        HostBinding binding = each.getKey();
-                        try {
-                            each.getValue().generate(input, binding.into(), binding.options());
-                        } catch (NotBindable e) {
-                            problems.println("the " + binding.kind().display()
-                                    + " binding is not written: " + e.getMessage());
-                            return REFUSED;
+                    // Every binding is written before any is put in place, so that one refused or
+                    // failed leaves every directory as it was.
+                    List<BindingDirectory> staged = new ArrayList<>();
+                    try {
+                        for (Map.Entry<HostBinding, BindingGenerator> each : generating.entrySet()) {
+                            HostBinding binding = each.getKey();
+                            BindingDirectory directory =
+                                    BindingDirectory.staging(binding.into(), each.getValue().id());
+                            staged.add(directory);
+                            try {
+                                each.getValue().generate(input, directory.staging(),
+                                        binding.options());
+                            } catch (NotBindable e) {
+                                problems.println("the " + binding.kind().display()
+                                        + " binding is not written: " + e.getMessage());
+                                abandoned(staged);
+                                return REFUSED;
+                            } catch (RuntimeException e) {
+                                problems.println(failed(binding, e));
+                                abandoned(staged);
+                                return REFUSED;
+                            }
                         }
+                    } catch (IOException e) {
+                        abandoned(staged);
+                        throw e;
+                    }
+                    int at = 0;
+                    for (HostBinding binding : generating.keySet()) {
+                        BindingDirectory directory = staged.get(at++);
+                        directory.commit();
                         out.println("wrote the " + binding.kind().display() + " binding "
                                 + binding.into());
                     }
@@ -245,6 +272,33 @@ public final class Main {
             return WRONG_COMMAND;
         }
         return WROTE_IT;
+    }
+
+    /**
+     * Refuses an option given for {@code binding} that its generator does not take: the catalog
+     * and the generator disagreeing about what a binding is asked with, which the command says
+     * rather than hand the generator what it never named.
+     */
+    private static void taken(BindingGenerator generator, HostBinding binding) {
+        for (String option : binding.options().keySet()) {
+            if (!generator.options().contains(option)) {
+                throw new NotBindable("the " + binding.kind().display() + " generator takes no --"
+                        + option);
+            }
+        }
+    }
+
+    /** What a generator throwing anything but a refusal is reported as: its own failure. */
+    private static String failed(HostBinding binding, RuntimeException e) {
+        return "the " + binding.kind().display() + " generator failed, and wrote nothing: "
+                + e.getClass().getName() + (e.getMessage() == null ? "" : ": " + e.getMessage());
+    }
+
+    /** Drops every binding written so far, none of which was put in place. */
+    private static void abandoned(List<BindingDirectory> staged) throws IOException {
+        for (BindingDirectory directory : staged) {
+            directory.abandon();
+        }
     }
 
     /**
