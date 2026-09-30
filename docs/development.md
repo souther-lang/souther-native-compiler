@@ -81,11 +81,12 @@ workflow's artifact `maven-repository`, with the compiler in it carrying those c
 creates the GitHub release with the bundles and the checksums file.
 
 The Go runtime is a module of its own in a directory of this repository, and its version is its own:
-the file `bindings/go/runtime/VERSION`, beside its `go.mod`, which the Go generator is built with and
-requires. It is not the compiler's, which has no reason to move when the runtime does not, and cannot
-be a module's from version 2 on, where the path of the module says its major version. A module in a
-directory is versioned by a tag that begins with the directory, `bindings/go/runtime/v<version>`, and
-the repository's own `v<version>` is the version of no module in it. A release publishes that tag
+the file `bindings/go/runtime/VERSION`, beside its `go.mod`, which the Go generator is built with
+and requires. It is not the compiler's, which has no reason to move when the runtime does not, and
+cannot be a module's from version 2 on, where the path of the module says its major version. A
+module in a directory is versioned by a tag that begins with the directory,
+`bindings/go/runtime/v<version>`, and the repository's own `v<version>` is the version of no module
+in it. A release publishes that tag
 ([`scripts/publish-go-runtime.sh`](../scripts/publish-go-runtime.sh)) as the last thing before the
 GitHub release, when it is not published already, since the Go module proxy keeps what it has
 fetched of a tag and does not take it back. So nothing is pushed that has not been asked for first,
@@ -101,16 +102,17 @@ built, and each refusal is exercised. The tests that build a host do use a `repl
 in a clone, so that is what holds the resolution.
 
 The checksums are a fact about builds that follow the commit, so the file is not committed, and a
-build of a release version that does not have every one of them fails ([`ReleaseChecksums`](../compiler/src/main/java/souther/nativecode/ReleaseChecksums.java), checked
+build of a release version that does not have every one of them fails
+([`ReleaseChecksums`](../compiler/src/main/java/souther/nativecode/ReleaseChecksums.java), checked
 when the compiler is packaged). The check has a skip of its own, `souther.skipReleaseCheck`, so
 `-Dexec.skip`, which leaves Cargo out, does not leave it out; the release sets that skip only where
 it builds the generators, whose compiler is thrown away. A clone cannot rebuild a release into a
 compiler that fetches nothing it can check. The generators' jars are built twice, before their
 checksums are written and after, and have to be the same bytes (`project.build.outputTimestamp` is
 fixed for it), which [`scripts/verify-release-build.sh`](../scripts/verify-release-build.sh) checks
-of what is about to be published, together with that the publication holds the artifacts the
-modules publish and no others. Tests hold the places that name the platforms, and the path of the
-file, to one answer.
+of what is about to be published, together with that the publication holds the artifacts the modules
+publish and no others. Tests hold the places that name the platforms, and the path of the file, to
+one answer.
 
 ## Where it runs
 

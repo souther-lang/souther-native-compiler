@@ -101,14 +101,14 @@ normalise nothing.
 A boundary writes a temporal as `toString` of its `java.time` class does — a time without its
 seconds where they are nought, an instant in UTC — and reads it by the same `TemporalText` authority
 a literal is checked against: `atBoundary`'s grammar, which a literal is held to as well, plus one
-condition more a source `Instant` alone answers to, that its offset is spelled `Z` and nothing else —
-so the sets are not equal, only decided by the one language either way. A text held to the second
+condition more a source `Instant` alone answers to, that its offset is spelled `Z` and nothing else
+— so the sets are not equal, only decided by the one language either way. A text held to the second
 refuses a fraction of one even where it is nought, since `09:30:00.000` and `09:30:00` name one
-second once the point is read past and only the text still says which was sent, and an instant's
-end of day, `24:00:00`, admits none of a minute, a second or a fraction after it for the same
-reason. An instant is read from an offset spelling as the moment it names, and a leap second is
-refused. `ATemporalAnswersWhatTheJvmAnswersTest` holds every kernel and comparison to what
-`java.time` answers over the ends of every range and a seeded run of the rest.
+second once the point is read past and only the text still says which was sent, and an instant's end
+of day, `24:00:00`, admits none of a minute, a second or a fraction after it for the same reason. An
+instant is read from an offset spelling as the moment it names, and a leap second is refused.
+`ATemporalAnswersWhatTheJvmAnswersTest` holds every kernel and comparison to what `java.time`
+answers over the ends of every range and a seeded run of the rest.
 
 ## Unions and a model's own types
 
@@ -183,8 +183,8 @@ nothing the construction can end for.
 The function belongs to the build that declared the type, the way the type's token does. That
 build's object defines it for every type a body there builds through it, every type its modules
 publish, since another build can name and build one of those, and every type a value of a published
-one is read through, kept or not, since reading one builds it. A build constructing a value of a type
-another declared calls that one: what a clause reads and calls, a helper among them, is the
+one is read through, kept or not, since reading one builds it. A build constructing a value of a
+type another declared calls that one: what a clause reads and calls, a helper among them, is the
 declaring build's own, and a copy run elsewhere would run without it. It is a call between objects
 this compiler built, under `souther<n>.<module>$construct$<Name>`, where `<n>` is the ABI
 generation. What a host calls to build a value is a boundary of its own and not this; it is
@@ -252,11 +252,11 @@ what both runtimes read once #17 moves it.
 A `List` is laid out inside a run as its length and then its elements, one slot each. Every list
 kernel the standard library declares (the `intrinsic`s in `souther/list.sou`) is lowered:
 `List.length`, `List.get`, `List.find`, `List.sort`, `List.sortBy`, `List.max`, `List.min`,
-`List.reverse`, `List.sum`, `List.product` and `List.rangeInclusive`. `List.fold` is not one of them:
-it is an ordinary recursive helper over `List.get`, as `souther/list.sou` writes it, and so are the
-combinators written over it. In the external form a list is an array of its elements, and a mistake
-inside one is answered at the element's index (`/lines/2/quantity`). Two lists compare element by
-element.
+`List.reverse`, `List.sum`, `List.product` and `List.rangeInclusive`. `List.fold` is not one of
+them: it is an ordinary recursive helper over `List.get`, as `souther/list.sou` writes it, and so
+are the combinators written over it. In the external form a list is an array of its elements, and a
+mistake inside one is answered at the element's index (`/lines/2/quantity`). Two lists compare
+element by element.
 
 A `Set` and a `Map` are the runtime's: a persistent hash trie in the arena, which generated code
 holds the address of and never reads behind. What a member hashes to and what it is equal to are
@@ -294,5 +294,6 @@ one document happened to bring could never be.
 Everything else the language admits says so rather than being written as whatever it resembles. A
 closed set crosses whole — every operator and every primitive — and the driver answers whether it
 can write one; a node whose shape on the wire has not been designed cannot be written at all, and
-the writer says so. Either way it is [`NotLowered`](../compiler/src/main/java/souther/nativecode/NotLowered.java), which is not what a program the language refuses
-gets.
+the writer says so. Either way it is
+[`NotLowered`](../compiler/src/main/java/souther/nativecode/NotLowered.java), which is not what a
+program the language refuses gets.

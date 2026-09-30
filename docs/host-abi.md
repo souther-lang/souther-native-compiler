@@ -16,10 +16,11 @@ A build for a host writes five things into a directory: the object, `souther.o`;
 every function a host calls, `souther.ffi.h`; a header a C or C++ compiler includes, `souther.h`; a
 manifest, `souther.json`; and a shared library of the object and the runtime, `libsouther.dylib` or
 `libsouther.so`. The driver writes them when run with `--library <directory>`, and
-[`NativeCompiler.library`](../compiler/src/main/java/souther/nativecode/NativeCompiler.java) is that from Java. Every function a host calls is put on one surface where
-its code is emitted, and the declarations, the manifest and what the library exports are each
-written from that surface, so none of them names a function the others do not. A test holds the
-three, and what the object defines, to one set.
+[`NativeCompiler.library`](../compiler/src/main/java/souther/nativecode/NativeCompiler.java) is that
+from Java. Every function a host calls is put on one surface where its code is emitted, and the
+declarations, the manifest and what the library exports are each written from that surface, so none
+of them names a function the others do not. A test holds the three, and what the object defines, to
+one set.
 
 The declarations are C and nothing else, no directive and no guard, because a reader of C
 declarations with no preprocessor, PHP's `FFI::cdef` among them, takes them as they are. They name
@@ -46,11 +47,11 @@ the statuses and the range reserved for a host; how a value is hashed; and the c
 code and the runtime agree on. A test fails when what the current generation records changes without
 a new generation, and another that a generation has no record.
 
-A host asks a library which generation it answers to before it calls anything else, with
-`uint32_t souther_abi_generation(void)`, and refuses one it was not written for. That function is
-outside the generations: its name, its signature and how it is called are the same in every one
-from 9 on, and no new generation can change them, which a test of its own holds. A library without it
-is of generation 8 or earlier.
+A host asks a library which generation it answers to before it calls anything else, with `uint32_t
+souther_abi_generation(void)`, and refuses one it was not written for. That function is outside the
+generations: its name, its signature and how it is called are the same in every one from 9 on, and
+no new generation can change them, which a test of its own holds. A library without it is of
+generation 8 or earlier.
 
 The functions a host calls for a module carry the generation in their name, so a library of another
 generation has none of the names a binding looks up. The runtime's own functions carry none, since
@@ -153,21 +154,21 @@ For a published type, `_t_<Name>_construct` takes the fields and answers a statu
 own constructor does, since it is that constructor it runs: a value whose clauses do not hold is
 answered `InvariantNotHeld` and nothing is written. A type with no clause answers a status too, so a
 clause added later does not change how a host calls it. `_f_<field>` writes a field through room and
-answers nothing. A sum has `_case`, answering which of the cases the sum descends to the value is, as
-its place among them counted from nought. `_decode` reads a value out of its external form as bytes,
-and `_decode_host` out of a value a host built of ordered maps and wrote with every container as an
-object. Each answers a status, which is not `ANSWERED` only where a clause the reading runs ended
-without a value, and otherwise writes through room a reading the host asks what it came to through
-the runtime's `souther_decoded_*` functions: a value, bytes that are not JSON and where they stopped,
-or every issue found. A clause that does not hold is one of the issues. `_encode` writes a value in its external form. A behavior
-answering a union no declaration names has `_b_<behavior>_answer_case` beside its call, which says
-which of the union's cases the value is.
+answers nothing. A sum has `_case`, answering which of the cases the sum descends to the value is,
+as its place among them counted from nought. `_decode` reads a value out of its external form as
+bytes, and `_decode_host` out of a value a host built of ordered maps and wrote with every container
+as an object. Each answers a status, which is not `ANSWERED` only where a clause the reading runs
+ended without a value, and otherwise writes through room a reading the host asks what it came to
+through the runtime's `souther_decoded_*` functions: a value, bytes that are not JSON and where they
+stopped, or every issue found. A clause that does not hold is one of the issues. `_encode` writes a
+value in its external form. A behavior answering a union no declaration names has
+`_b_<behavior>_answer_case` beside its call, which says which of the union's cases the value is.
 
 A primitive among the cases of a union is carried by the runtime, and a host makes one and reads it
 back through the runtime's functions for that case, `souther_case_int_make` and
-`souther_case_int_read` for an `Int` and the same for the other primitives; a case the language gives
-holds nothing and is only made, as `souther_case_division_by_zero_make`. A read writes through room
-and answers whether the value was that case. Those functions are the record's `case` lines.
+`souther_case_int_read` for an `Int` and the same for the other primitives; a case the language
+gives holds nothing and is only made, as `souther_case_division_by_zero_make`. A read writes through
+room and answers whether the value was that case. Those functions are the record's `case` lines.
 
 ## How a value crosses
 
@@ -175,15 +176,15 @@ How a value crosses is decided once, by the driver, as the shape it crosses in. 
 64 bits, a `Bool` as a byte, and text and a value of a declared type or of a union as an address. A
 `Decimal` crosses as an address of type `souther_decimal`, which a host makes with
 `souther_decimal_of_parts`, handing its integer as integer text in bytes and its scale, and reads
-back with `souther_decimal_unscaled` and `souther_decimal_scale`: the two numbers the language says a
-`Decimal` is, and not its text, which would be one spelling among several. A `Date`, a `Time`, a
+back with `souther_decimal_unscaled` and `souther_decimal_scale`: the two numbers the language says
+a `Decimal` is, and not its text, which would be one spelling among several. A `Date`, a `Time`, a
 `DateTime` and an `Instant` cross each as an address of a type of its own (`souther_date`,
 `souther_time`, `souther_datetime`, `souther_instant`), which a host makes of the numbers the value
 means, each an `int64_t`: `souther_date_of_parts` takes a year, a month and a day,
 `souther_time_of_parts` an hour, a minute and a second, `souther_datetime_of_parts` all six, and
 `souther_instant_of_parts` the second from the epoch and the nanosecond within it. Each is read back
-as those numbers (`souther_date_parts` and the same for the others). The runtime decides what a value
-is; a binding that checks first does so only to say it in its own words.
+as those numbers (`souther_date_parts` and the same for the others). The runtime decides what a
+value is; a binding that checks first does so only to say it in its own words.
 
 An optional crosses as a presence and then what it holds: a function takes a byte and the words of
 the value, which are ignored where the byte is nought, and a reader writes the byte, and the value
@@ -194,16 +195,16 @@ and none is answered as the function's return: what a function answers is a stat
 an index is inside a list, whether a value was made, or which case a value is.
 
 A list crosses as an address of type `souther_list`. A host builds one and reads one through
-functions the object defines for each shape an element crosses in: `_l_<element>_construct`, taking a
-count, a column of each word the element crosses as, and room for the list, and answering whether it
-made one; `_l_<element>_length`; and `_l_<element>_at`, taking the list, an index and room for the
-element and answering whether the index is inside the list. `<element>` is the shape spelt as a word
-(`value`, `int`) or a mark and what it is made of: `o` for an optional, `t` and the count of members
-for a tuple, `l` for a list, `f` and the count of what it takes for a function value, its answer
-last. So a list of optional strings is `o_string`, two columns, and a list of pairs `t2_int_string`.
-A list of one declared type is built through the same functions as a list of another. What builds a
-list is there where something takes one from a host, and what reads one where something hands one to
-a host, and not otherwise.
+functions the object defines for each shape an element crosses in: `_l_<element>_construct`, taking
+a count, a column of each word the element crosses as, and room for the list, and answering whether
+it made one; `_l_<element>_length`; and `_l_<element>_at`, taking the list, an index and room for
+the element and answering whether the index is inside the list. `<element>` is the shape spelt as a
+word (`value`, `int`) or a mark and what it is made of: `o` for an optional, `t` and the count of
+members for a tuple, `l` for a list, `f` and the count of what it takes for a function value, its
+answer last. So a list of optional strings is `o_string`, two columns, and a list of pairs
+`t2_int_string`. A list of one declared type is built through the same functions as a list of
+another. What builds a list is there where something takes one from a host, and what reads one where
+something hands one to a host, and not otherwise.
 
 A function value crosses as an address of type `souther_function`. A host calls one through
 `_fn_<shape>_call`, handing the value, what it takes and room for its answer, and is answered the
@@ -230,14 +231,14 @@ published behavior's call takes those capabilities first, null where it requires
 implementations of one behavior are two capabilities, each reached by what it was handed, on any
 thread.
 
-An implementation answers `ANSWERED`, or `HOST_EXCEPTION` to say it threw and that the host kept what
-it threw to throw again where the outermost call returns, since a host's exception cannot unwind
-through generated code. Anything else it answers is `INJECTION_PROTOCOL_VIOLATION` by the time a
-caller sees it. A call through a requirement bound to null answers `INJECTION_UNBOUND`.
+An implementation answers `ANSWERED`, or `HOST_EXCEPTION` to say it threw and that the host kept
+what it threw to throw again where the outermost call returns, since a host's exception cannot
+unwind through generated code. Anything else it answers is `INJECTION_PROTOCOL_VIOLATION` by the
+time a caller sees it. A call through a requirement bound to null answers `INJECTION_UNBOUND`.
 
-PHP's FFI makes a new C entry each time a closure is handed to C and keeps it until the request ends,
-so a runtime there makes the function pointer once for a behavior and tells its implementations apart
-by what each is handed first. The layout above allows it everywhere.
+PHP's FFI makes a new C entry each time a closure is handed to C and keeps it until the request
+ends, so a runtime there makes the function pointer once for a behavior and tells its
+implementations apart by what each is handed first. The layout above allows it everywhere.
 
 ## What a library exports, and how it is linked
 
@@ -255,18 +256,18 @@ function a host calls as wanted. By hand, what the driver runs is:
     cc -shared -o libsouther.so -Wl,--version-script=<script> -Wl,--no-undefined \
         -Wl,-u,<symbol> ... souther.o libsouther_native_runtime.a <what the archive needs>
 
-where the list and the script name every function the header declares. What the archive needs is
-the system libraries Rust's standard library reaches on the target, which the runtime's `build.rs`
-asks `rustc` for and writes beside the archive as `libsouther_native_runtime.link`, one argument to a
+where the list and the script name every function the header declares. What the archive needs is the
+system libraries Rust's standard library reaches on the target, which the runtime's `build.rs` asks
+`rustc` for and writes beside the archive as `libsouther_native_runtime.link`, one argument to a
 line. An archive with no such file beside it is refused, so ship the two together.
 
-A library is one program, so it holds every build the program reaches: a build's object defines
-what reads and builds a value of a type it declares, and another build calls that. Those objects are
+A library is one program, so it holds every build the program reaches: a build's object defines what
+reads and builds a value of a type it declares, and another build calls that. Those objects are
 handed to the driver with `--with <object>`, or to `NativeCompiler.library` beside the program. Each
 object carries its own surface in a section of its own, and the declarations, the manifest and the
-export list are written from what the objects carry. A module two of them carry is refused, and so is
-an object that carries none, and a program missing a build it reaches is refused when it is linked
-rather than when a host loads it.
+export list are written from what the objects carry. A module two of them carry is refused, and so
+is an object that carries none, and a program missing a build it reaches is refused when it is
+linked rather than when a host loads it.
 
 ## Loading a library
 

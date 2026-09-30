@@ -49,6 +49,10 @@ class EveryDocumentNamesWhatIsThereTest {
             "([A-Z][A-Za-z0-9]*)((?:\\.[A-Za-z][A-Za-z0-9_]*)*)(?:#([a-z][A-Za-z0-9]*))?(?:\\(.*\\))?");
 
     /** Where the types a document links to are defined: the binding API and the command. */
+    /** A name, dotted or with a member after `#`, as a code span holding nothing else writes it. */
+    private static final Pattern NAME = Pattern.compile(
+            "[A-Za-z][A-Za-z0-9_]*(?:[.#][A-Za-z][A-Za-z0-9_]*)*(?:\\(.*\\))?");
+
     private static final List<Path> SOURCES = List.of(
             ROOT.resolve("bindings/api/src/main/java/souther/bindings"),
             ROOT.resolve("compiler/src/main/java/souther/nativecode"));
@@ -128,10 +132,71 @@ class EveryDocumentNamesWhatIsThereTest {
                     wrong.add(where + ": `" + span + "` names nothing there");
                 }
             }
+            wrong.addAll(unqualified(where, spans(document), linkedHere, types));
         }
         assertThat(linked).as("types the documents link to").isPositive();
         assertThat(wrong).as("types and members named as they are not").isEmpty();
     }
+
+    /**
+     * What {@code spans} name of the types {@code linked} hold without saying which type holds it:
+     * a nested type or a member written on its own, which nothing can hold to what defines it. A
+     * name of the API is written from its top-level type (`Manifest.Module`,
+     * `BindingGenerator#preflight`), so that it is resolved on that type and fails when it is
+     * gone. Which names those are is read off the linked types as they are, the way a type is held
+     * to being linked while it is there: one written on its own fails while it is there to be
+     * qualified, and once qualified it is resolved.
+     */
+    private static List<String> unqualified(String where, List<String> spans, Set<String> linked,
+                                            Set<String> types) throws ClassNotFoundException {
+        Set<String> nested = new HashSet<>();
+        Set<String> members = new HashSet<>();
+        for (String name : linked) {
+            held(typeNamed(name), nested, members);
+        }
+        nested.removeAll(types);
+        List<String> wrong = new ArrayList<>();
+        for (String span : spans) {
+            if (!NAME.matcher(span).matches()) {
+                continue;
+            }
+            String first = span.replaceAll("\\(.*\\)$", "").split("[.#]")[0];
+            boolean alone = !span.replaceAll("\\(.*\\)$", "").contains(".")
+                    && !span.contains("#");
+            if (nested.contains(first) || alone && members.contains(first)) {
+                wrong.add(where + ": `" + span + "` is not written from the type that holds it");
+            }
+        }
+        return wrong;
+    }
+
+    /** Every type nested in {@code type}, at any depth, and every member any of them offers. */
+    private static void held(Class<?> type, Set<String> nested, Set<String> members) {
+        for (Method method : type.getDeclaredMethods()) {
+            if (java.lang.reflect.Modifier.isPublic(method.getModifiers()) && !method.isSynthetic()
+                    && !OBJECT_MEMBERS.contains(method.getName())) {
+                members.add(method.getName());
+            }
+        }
+        for (Field field : type.getDeclaredFields()) {
+            if (java.lang.reflect.Modifier.isPublic(field.getModifiers())) {
+                members.add(field.getName());
+            }
+        }
+        if (type.isRecord()) {
+            for (RecordComponent component : type.getRecordComponents()) {
+                members.add(component.getName());
+            }
+        }
+        for (Class<?> each : type.getDeclaredClasses()) {
+            nested.add(each.getSimpleName());
+            held(each, nested, members);
+        }
+    }
+
+    /** What every class offers, which no document names as the API's own. */
+    private static final Set<String> OBJECT_MEMBERS = Set.of("equals", "hashCode", "toString",
+            "values", "valueOf", "compareTo", "ordinal", "getDeclaringClass", "describeConstable");
 
     /** A link, and the code span its text is where it is one. */
     private record Link(Path document, String text, String target) {
