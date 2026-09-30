@@ -83,6 +83,36 @@ func (e *MissingSymbols) Error() string {
 		e.Path, strings.Join(e.Names, ", "))
 }
 
+// runtimeFunctions are the library's runtime functions this package calls, which are the ABI
+// generation's: the same in every library of [ABIGeneration], and in no manifest.
+var runtimeFunctions = []string{
+	"souther_scope_open",
+	"souther_scope_close",
+	"souther_string_of_utf8",
+	"souther_string_length",
+	"souther_string_bytes",
+	"souther_decimal_of_parts",
+	"souther_decimal_unscaled",
+	"souther_decimal_scale",
+	"souther_date_of_parts",
+	"souther_date_parts",
+	"souther_time_of_parts",
+	"souther_time_parts",
+	"souther_datetime_of_parts",
+	"souther_datetime_parts",
+	"souther_instant_of_parts",
+	"souther_instant_parts",
+	"souther_decoded_outcome",
+	"souther_decoded_value",
+	"souther_decoded_malformed_at",
+	"souther_decoded_issue_count",
+	"souther_decoded_issue",
+	"souther_issue_code",
+	"souther_issue_message_key",
+	"souther_issue_path",
+	"souther_issue_meta",
+}
+
 // ABIGeneration is the ABI generation this package calls a library as, which [Load] refuses any
 // other of.
 const ABIGeneration uint32 = 9
@@ -147,7 +177,7 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 	}
 	symbols := make(map[string]unsafe.Pointer, len(spec.Symbols)+2)
 	var missing []string
-	for _, name := range append([]string{"souther_scope_open", "souther_scope_close"}, spec.Symbols...) {
+	for _, name := range append(slices.Clone(runtimeFunctions), spec.Symbols...) {
 		if at, ok := native.symbol(name); ok {
 			symbols[name] = at
 		} else if !slices.Contains(missing, name) {

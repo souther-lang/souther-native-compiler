@@ -44,6 +44,33 @@ uint8_t souther_scope_close(int64_t scope) {
 #define CAT(a, b) CAT_(a, b)
 #define CAT_(a, b) a##b
 int CAT(souther_runtime_abi_, ABI)(void) { return ABI; }
+/* The runtime's other functions, which a library of this generation exports and a runtime looks
+   up when it loads one. Nothing here calls them: they stand for being there. */
+#define PRESENT(name) void name(void) {}
+PRESENT(souther_string_of_utf8)
+PRESENT(souther_string_length)
+PRESENT(souther_string_bytes)
+PRESENT(souther_decimal_of_parts)
+PRESENT(souther_decimal_unscaled)
+PRESENT(souther_decimal_scale)
+PRESENT(souther_date_of_parts)
+PRESENT(souther_date_parts)
+PRESENT(souther_time_of_parts)
+PRESENT(souther_time_parts)
+PRESENT(souther_datetime_of_parts)
+PRESENT(souther_datetime_parts)
+PRESENT(souther_instant_of_parts)
+PRESENT(souther_instant_parts)
+PRESENT(souther_decoded_outcome)
+PRESENT(souther_decoded_value)
+PRESENT(souther_decoded_malformed_at)
+PRESENT(souther_decoded_issue_count)
+PRESENT(souther_decoded_issue)
+PRESENT(souther_issue_code)
+PRESENT(souther_issue_message_key)
+PRESENT(souther_issue_path)
+PRESENT(souther_issue_meta)
+
 #ifndef NO_GENERATION_QUERY
 uint32_t souther_abi_generation(void) { return ABI; }
 #endif

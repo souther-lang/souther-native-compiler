@@ -13,7 +13,6 @@ import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
 import souther.bindings.Output;
-import souther.bindings.RuntimeFunctions;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -174,7 +173,6 @@ public final class RustBindings {
     }
 
     private void write() throws IOException {
-        checkRuntime();
         RustModule root = moduleAt(List.of());
         ROOT.forEach(it -> root.types.claim(it, "the generated `" + it + "`"));
         for (Manifest.Module module : manifest.modules()) {
@@ -203,14 +201,6 @@ public final class RustBindings {
             }
         }
         cargo();
-    }
-
-    /**
-     * Refuses a manifest whose runtime functions the runtime crate would call as something they
-     * are not: each it calls is there, taking and answering what it calls it with.
-     */
-    private void checkRuntime() {
-        RuntimeFunctions.check(manifest, "Rust");
     }
 
     // ---------------------------------------------------------------------------------------------

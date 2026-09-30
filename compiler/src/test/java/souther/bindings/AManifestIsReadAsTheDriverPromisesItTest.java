@@ -117,13 +117,16 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         return Manifest.read(changed);
     }
 
-    /** What the driver writes is read, the runtime's functions among it, which a host calls too. */
+    /**
+     * What the driver writes is read, the cases a host makes and reads through the runtime among
+     * it; the runtime's other functions are the ABI generation's, and in no manifest.
+     */
     @Test
     void theManifestTheDriverWroteIsRead(@TempDir Path into) throws Exception {
         Manifest read = Manifest.read(built(into, CONSTRUCTED).manifest());
 
         assertThat(read.abi()).isEqualTo(Manifest.ABI);
-        assertThat(read.runtime()).extracting(Manifest.Function::name).contains("souther_scope_close");
+        assertThat(read.cases()).extracting(it -> it.make().name()).contains("souther_case_int_make");
         assertThat(read.modules()).extracting(Manifest.Module::name).containsExactly("demo");
     }
 
@@ -140,7 +143,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         assertThatThrownBy(() -> Manifest.read(earlier))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 14")
+                        + " 3, and this generator reads version 15")
                 .hasMessageNotContaining("answers");
     }
 

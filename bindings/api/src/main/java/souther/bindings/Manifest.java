@@ -58,7 +58,7 @@ public final class Manifest {
     public static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    public static final int VERSION = 14;
+    public static final int VERSION = 15;
 
     /** The ABI generation the functions this binds answer to. */
     public static final int ABI = 9;
@@ -66,7 +66,6 @@ public final class Manifest {
     private final int abi;
     private final Map<String, Integer> statuses;
     private final Map<String, Integer> outcomes;
-    private final List<Function> runtime;
     private final List<CaseCrossing> cases;
     private final List<Module> modules;
 
@@ -77,11 +76,10 @@ public final class Manifest {
      * call, as something no binding can build.
      */
     private Manifest(int abi, Map<String, Integer> statuses, Map<String, Integer> outcomes,
-                     List<Function> runtime, List<CaseCrossing> cases, List<Module> modules) {
+                     List<CaseCrossing> cases, List<Module> modules) {
         this.abi = abi;
         this.statuses = Collections.unmodifiableMap(new LinkedHashMap<>(statuses));
         this.outcomes = Collections.unmodifiableMap(new LinkedHashMap<>(outcomes));
-        this.runtime = List.copyOf(runtime);
         this.cases = List.copyOf(cases);
         this.modules = List.copyOf(modules);
         // One way to make and read each case, and one for every case no declaration names of a
@@ -140,11 +138,6 @@ public final class Manifest {
     /** What a reading comes to, by name. */
     public Map<String, Integer> outcomes() {
         return outcomes;
-    }
-
-    /** The runtime's functions a host calls. */
-    public List<Function> runtime() {
-        return runtime;
     }
 
     /**
@@ -1394,9 +1387,8 @@ public final class Manifest {
             field("abi", int_()),
             field("statuses", map(int_())),
             field("outcomes", map(int_())),
-            field("runtime", list(FUNCTION)),
             field("cases", list(CASE_CROSSING)),
             field("modules", list(MODULE)))
-            .strict((format, version, abi, statuses, outcomes, runtime, cases, modules) ->
-                    new Manifest(abi, statuses, outcomes, runtime, cases, modules));
+            .strict((format, version, abi, statuses, outcomes, cases, modules) ->
+                    new Manifest(abi, statuses, outcomes, cases, modules));
 }

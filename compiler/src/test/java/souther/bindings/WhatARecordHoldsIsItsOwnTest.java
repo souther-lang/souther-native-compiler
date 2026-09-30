@@ -73,7 +73,7 @@ class WhatARecordHoldsIsItsOwnTest {
         Manifest functions = Manifest.read(Documents.library(Documents.FUNCTIONS,
                 into.resolve("functions")).manifest());
         Owning owning = new Owning();
-        owning.walk(manifest.runtime());
+        owning.walk(manifest.cases());
         owning.walk(manifest.modules());
         owning.walk(functions.modules());
         Path written = into.resolve("written");
@@ -94,7 +94,7 @@ class WhatARecordHoldsIsItsOwnTest {
         Manifest manifest = Manifest.read(NativeCompiler.library(
                 Checked.of(List.of(EVERYTHING)), into).manifest());
 
-        assertThat(List.of(manifest.runtime(), manifest.modules(), manifest.statuses().keySet(),
+        assertThat(List.of(manifest.cases(), manifest.modules(), manifest.statuses().keySet(),
                 manifest.outcomes().keySet())).allSatisfy(held -> assertThat(held).isNotEmpty());
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> manifest.modules().clear())
                 .isInstanceOf(UnsupportedOperationException.class);

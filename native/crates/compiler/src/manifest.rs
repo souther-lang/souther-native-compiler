@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v14.json` is what version 14 is: every manifest this writes is read
+//! fixture `tests/interface-v15.json` is what version 15 is: every manifest this writes is read
 //! back by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -17,7 +17,9 @@
 //! ([`Parameter::Slice`]). Nothing a function of version 4 was called as changed, so the ABI
 //! generation did not move with it. Version 6 is `souther-native-compiler#56`: a behavior says
 //! what constructing it requires injected ([`Behavior::requires`]), which a binding takes as what
-//! it is bound to. No function changed, and the ABI generation did not move either.
+//! it is bound to. No function changed, and the ABI generation did not move either. Every version
+//! since is a line of [`MOVES`], and the generations the functions moved through are the `abi`
+//! crate's `GENERATIONS`.
 //!
 //! Where what reaches a value is [`Reach::Unavailable`], the model has the thing and a host has no
 //! way to reach it yet, and the manifest says why, as a reason and the place in the type it stands
@@ -111,6 +113,13 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
          (`souther_issue_meta`), in place of the count, name and text of each entry, at ABI \
          generation 7",
     ),
+    (
+        15,
+        "no `runtime`: the runtime's own functions are the ABI generation's, which a host asks a \
+         library for (`souther_abi_generation`) before it reads anything, and no generated code \
+         calls them; at ABI generation 9, where a temporal crosses as the numbers it means, a \
+         scope takes the place of a mark, and the rooms a host lays out have no fields",
+    ),
 ];
 
 /// Everything a host can call in one shared library, and the model it reaches.
@@ -129,12 +138,12 @@ pub(crate) struct Manifest {
     pub statuses: BTreeMap<String, u32>,
     /// What a reading comes to, by name.
     pub outcomes: BTreeMap<String, i32>,
-    /// The runtime's functions a host calls.
-    pub runtime: Vec<Function>,
     /// How a host makes and reads a value of each case no declaration names, as a union holds one:
-    /// a primitive and a case the language gives. The runtime's too, and apart from `runtime`,
-    /// because each is said of a case: a binding finds the functions for a case of a union here, by
-    /// the case, whatever union it stands in.
+    /// a primitive and a case the language gives. The runtime's, and said here because generated
+    /// code calls them: a binding finds the functions for a case of a union here, by the case,
+    /// whatever union it stands in. The runtime's other functions are the ABI generation's, which
+    /// a binding's own runtime calls and no generated code does, and the manifest says nothing of
+    /// them.
     pub cases: Vec<CaseCrossing>,
     /// What each module a library holds publishes.
     pub modules: Vec<Module>,
@@ -937,19 +946,19 @@ mod tests {
         }
     }
 
-    /// What version 14 is. Read by these types, which refuse a member they do not name, and
+    /// What version 15 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V14: &str = include_str!("../tests/interface-v14.json");
+    const V15: &str = include_str!("../tests/interface-v15.json");
 
     #[test]
-    fn version_fourteen_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V14).expect("version 14 reads");
+    fn version_fifteen_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V15).expect("version 15 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V14);
+        assert_eq!(written, V15);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever

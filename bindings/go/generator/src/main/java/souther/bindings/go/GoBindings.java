@@ -13,7 +13,6 @@ import souther.bindings.Manifest.Type;
 import souther.bindings.Manifest.Word;
 import souther.bindings.NotBindable;
 import souther.bindings.Output;
-import souther.bindings.RuntimeFunctions;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -168,7 +167,6 @@ public final class GoBindings {
     }
 
     private void write() throws IOException {
-        RuntimeFunctions.check(manifest, "Go");
         Map<List<String>, String> directories = new LinkedHashMap<>();
         for (Manifest.Module module : manifest.modules()) {
             List<String> path = GoNames.modulePath(module.name());
@@ -1763,9 +1761,7 @@ public final class GoBindings {
         go.append("\t},\n\tOutcomes: map[string]int32{\n");
         aligned(go, manifest.outcomes());
         go.append("\t},\n\tSymbols: []string{\n");
-        TreeSet<String> all = new TreeSet<>(symbols);
-        all.addAll(RuntimeFunctions.CALLED.keySet());
-        all.forEach(name -> go.append("\t\t\"").append(name).append("\",\n"));
+        new TreeSet<>(symbols).forEach(name -> go.append("\t\t\"").append(name).append("\",\n"));
         go.append("\t},\n}\n");
         file(List.of("internal", "binding", "binding.go"), go.toString());
         abi();
@@ -1773,17 +1769,15 @@ public final class GoBindings {
     }
 
     /**
-     * What the runtime module calls of the library and lays out room for, asked of the declarations
-     * and not worked out: the runtime's functions are asserted, by the C compiler, to be of the
-     * type their words make ({@link CTypes#asserted}), and each size is the compiler's
-     * {@code sizeof} of what the declarations declare.
+     * What the runtime module lays out room for, asked of the declarations and not worked out: each
+     * size is the compiler's {@code sizeof} of what the declarations declare. The runtime's own
+     * functions are the ABI generation's, which the runtime module asks a library for before it
+     * calls any, and its calls are held to that generation's record by its own test.
      */
     private void abi() throws IOException {
         StringBuilder go = new StringBuilder(header());
         go.append("package binding\n\n/*\n#include <stdint.h>\n#include \"souther.ffi.h\"\n\n"
                 + "typedef const souther_capability *souther_capability_ref;\n\n");
-        new TreeMap<>(RuntimeFunctions.CALLED).forEach((name, function) ->
-                go.append(CTypes.asserted(function, name)));
         go.append("*/\nimport \"C\"\n\nimport souther \"" + RUNTIME_MODULE + "\"\n\n"
                 + "// layout is what the declarations say a host lays out room for.\n"
                 + "var layout = souther.Layout{\n"

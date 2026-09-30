@@ -711,13 +711,18 @@ pub(crate) fn manifest_of(modules: Vec<manifest::Module>) -> Result<Manifest> {
         abi: ABI_GENERATION,
         statuses: numbered(statuses()),
         outcomes: numbered(outcomes()),
-        runtime: HOST_RUNTIME.iter().map(runtime_function).collect(),
         cases: case_crossings(),
         modules,
     })
 }
 
-/// A function of the runtime's, as the manifest says one.
+/// The runtime's functions a host calls, as a header declares them: the ABI generation's, and not
+/// the manifest's, which says only what a library is.
+fn host_runtime() -> Vec<manifest::Function> {
+    HOST_RUNTIME.iter().map(runtime_function).collect()
+}
+
+/// A function of the runtime's, as a header declares one.
 fn runtime_function(function: &souther_native_abi::RuntimeFunction) -> manifest::Function {
     HostFunction {
         symbol: function.name.to_string(),
@@ -840,7 +845,8 @@ pub(crate) fn written(manifest: &Manifest) -> String {
     written
 }
 
-/// Every function the manifest names, in the order the header declares them.
+/// Every function the manifest names, in the order the header declares them after the runtime's
+/// own ([`host_runtime`]).
 fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
     let modules = manifest.modules.iter().flat_map(|module| {
         let behaviors = module.behaviors.iter().flat_map(behavior_functions);
@@ -863,7 +869,7 @@ fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
         .cases
         .iter()
         .flat_map(|it| std::iter::once(&it.make).chain(&it.read));
-    manifest.runtime.iter().chain(cases).chain(modules)
+    cases.chain(modules)
 }
 
 /// The function a call reaches through, where one does.
@@ -972,6 +978,7 @@ pub(crate) fn exported(manifest: &Manifest) -> Vec<String> {
         injections.chain(functions)
     });
     std::iter::once(souther_native_abi::GENERATION_QUERY.to_owned())
+        .chain(host_runtime().into_iter().map(|function| function.name))
         .chain(
             functions(manifest)
                 .map(|function| &function.name)
@@ -1040,7 +1047,7 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
         souther_native_abi::GENERATION_QUERY_DECLARED
     ));
     written.push_str("\n/* The runtime. */\n");
-    for function in &manifest.runtime {
+    for function in &host_runtime() {
         written.push_str(&declared(function));
         written.push('\n');
     }

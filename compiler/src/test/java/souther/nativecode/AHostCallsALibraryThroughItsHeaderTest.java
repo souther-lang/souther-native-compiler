@@ -532,9 +532,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
             rated: status 0, case 0, 299850 at 5, status 0, case 1, nought 0 at 7
             """;
 
-    /** What version 14 of the manifest is, for the program above. */
-    private static final Path INTERFACE_V14 =
-            Repository.file("native", "crates", "compiler", "tests", "interface-v14.json");
+    /** What version 15 of the manifest is, for the program above. */
+    private static final Path INTERFACE_V15 =
+            Repository.file("native", "crates", "compiler", "tests", "interface-v15.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -568,21 +568,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
     }
 
     /**
-     * The manifest a binding is written against, as version 14 says it for this program. A change
+     * The manifest a binding is written against, as version 15 says it for this program. A change
      * to what the manifest says is a change here, and whether it moves the version is decided
      * looking at it.
      */
     @Test
-    void theManifestIsWhatVersionFourteenSays(@TempDir Path into) throws Exception {
+    void theManifestIsWhatVersionFifteenSays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(SHOP)), into);
 
         String written = Files.readString(library.manifest(), StandardCharsets.UTF_8);
-        String fixed = Files.exists(INTERFACE_V14)
-                ? Files.readString(INTERFACE_V14, StandardCharsets.UTF_8) : "";
+        String fixed = Files.exists(INTERFACE_V15)
+                ? Files.readString(INTERFACE_V15, StandardCharsets.UTF_8) : "";
         if (!written.equals(fixed)) {
             // Kept where it can be compared with the fixture, and copied over it once it is read.
-            Files.writeString(Path.of("target", "interface-v14.written.json"), written,
+            Files.writeString(Path.of("target", "interface-v15.written.json"), written,
                     StandardCharsets.UTF_8);
         }
         assertThat(written).isEqualTo(fixed);
@@ -604,9 +604,11 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 .contains("#include \"" + library.declarations().getFileName() + "\"");
         Set<String> declared = declaredIn(declarations);
         Set<String> described = describedIn(JSON.readTree(library.manifest().toFile()));
-        // And the generation query, which the manifest does not describe: it is outside every
-        // generation, and a host asks it before it has read what the manifest says.
+        // And what the manifest does not describe, which the ABI generation says: the generation
+        // query, outside every generation, and the runtime's own functions, which a binding's
+        // runtime calls and no generated code does, as the generation's record lists them.
         described.add("souther_abi_generation");
+        described.addAll(recordedHostFunctions());
         Set<String> exported = exportedBy(library.library());
 
         assertThat(declared).isNotEmpty();
@@ -625,6 +627,20 @@ class AHostCallsALibraryThroughItsHeaderTest {
         assertThat(exported).noneMatch(it -> it.contains("$") || it.contains("."));
         assertThat(exported).doesNotContain("souther_alloc", "souther_decode_begin",
                 "souther_read_int", "souther_external_json");
+    }
+
+    /** The runtime's functions a host calls, as the record of the current generation lists them. */
+    private static Set<String> recordedHostFunctions() throws IOException {
+        Path record = Repository.file("native", "crates", "abi", "generations", Running.ABI + ".txt");
+        Pattern host = Pattern.compile("^host RuntimeFunction \\{ name: \"(\\w+)\"");
+        Set<String> names = new TreeSet<>();
+        for (String line : Files.readAllLines(record, StandardCharsets.UTF_8)) {
+            Matcher it = host.matcher(line);
+            if (it.find()) {
+                names.add(it.group(1));
+            }
+        }
+        return names;
     }
 
     private static final Pattern DECLARATION = Pattern.compile("([A-Za-z0-9_]+)\\(.*\\);$");
