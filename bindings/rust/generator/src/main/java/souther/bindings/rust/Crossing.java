@@ -71,12 +71,21 @@ sealed interface Crossing {
 
     /** What Rust calls one word, as it stands in a function's parameters and in room. */
     static String word(Word word) {
+        // A number is the type its representation is, as the ABI records it; an address is named
+        // for what it is the address of.
+        String number = switch (word.representation()) {
+            case U8 -> "u8";
+            case U32 -> "u32";
+            case I32 -> "i32";
+            case I64 -> "i64";
+            case ADDRESS -> null;
+        };
+        if (number != null) {
+            return number;
+        }
         return switch (word) {
-            case STATUS -> "u32";
-            case INT, COUNT, SCOPE -> "i64";
-            case BOOL -> "u8";
-            case CASE -> "u32";
-            case OUTCOME -> "i32";
+            case STATUS, INT, COUNT, SCOPE, BOOL, CASE, OUTCOME ->
+                    throw new IllegalStateException(word + " is a number");
             case BYTES -> "*const u8";
             case VALUE, STRING, DECIMAL, DATE, TIME, DATETIME, INSTANT, DECODED, ISSUE, LIST,
                  FUNCTION -> "rt::Word";

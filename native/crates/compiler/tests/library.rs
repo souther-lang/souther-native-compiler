@@ -233,16 +233,17 @@ int main() {
 "#;
 
 fn ran(document: &str, program: &str) -> String {
-    ran_as(document, program, "cc", "host.c")
+    ran_as(document, program, &["cc"], "host.c")
 }
 
-fn ran_as(document: &str, program: &str, compiler: &str, named: &str) -> String {
+fn ran_as(document: &str, program: &str, compiler: &[&str], named: &str) -> String {
     let into = tempdir().unwrap();
     let built = library_for(document, &linking(vec![]), into.path()).unwrap();
     let source = into.path().join(named);
     fs::write(&source, support::harness(program)).unwrap();
     let executable = into.path().join("host");
-    let compiled = Command::new(compiler)
+    let compiled = Command::new(compiler[0])
+        .args(&compiler[1..])
         .args(["-Wall", "-Werror", "-o"])
         .arg(&executable)
         .arg(&source)
@@ -418,7 +419,16 @@ fn a_host_implements_a_behavior_with_no_body_through_a_capability() {
 
 #[test]
 fn a_cpp_program_calls_a_behavior_through_the_same_header() {
-    assert_eq!(ran_as(ADDING, CALLING_FROM_CPP, "c++", "host.cpp"), "0 5\n");
+    // As the compiler's own standard has it, which may be one with no static assertions, and as
+    // one that asks the header's measure of the room a host lays out.
+    assert_eq!(
+        ran_as(ADDING, CALLING_FROM_CPP, &["c++"], "host.cpp"),
+        "0 5\n"
+    );
+    assert_eq!(
+        ran_as(ADDING, CALLING_FROM_CPP, &["c++", "-std=c++17"], "host.cpp"),
+        "0 5\n"
+    );
 }
 
 /// A module is declared by one build, so an object carrying one this build carries too is refused

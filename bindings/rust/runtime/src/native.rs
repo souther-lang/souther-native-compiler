@@ -13,6 +13,10 @@ use std::ptr::NonNull;
 /// generation's.
 pub const ABI_GENERATION: u32 = 9;
 
+/// The one function every generation has and none changes, asked before any other.
+const GENERATION_QUERY: &str = "souther_abi_generation";
+type GenerationQuery = unsafe extern "C" fn() -> u32;
+
 /// One word the library hands over or is handed that is an address: a value, a string, a list and
 /// the rest, which only the library reads behind.
 pub type Word = *const u8;
@@ -59,7 +63,7 @@ impl NativeLibrary {
         // `uint32_t souther_abi_generation(void)`.
         let found = unsafe {
             library
-                .function::<unsafe extern "C" fn() -> u32>("souther_abi_generation")
+                .function::<GenerationQuery>(GENERATION_QUERY)
                 .ok()
                 .map(|query| query())
         };
@@ -186,32 +190,74 @@ type Parts6 =
     unsafe extern "C" fn(Word, *mut i64, *mut i64, *mut i64, *mut i64, *mut i64, *mut i64);
 type Parts2 = unsafe extern "C" fn(Word, *mut i64, *mut i64);
 
-/// The runtime's functions a binding reads and makes the words of a value through that are not
-/// the model's own: text, a `Decimal`, and what a reading came to.
+/// Declares the runtime's functions this crate calls once, each by its field, its symbol and its
+/// type, and makes of that one list the fields, the loading, and what the tests hold each type to:
+/// the symbol a type is looked up under cannot be another than the one it is checked as.
+macro_rules! runtime_functions {
+    ($($field:ident: $symbol:literal => $type:ty,)*) => {
+        /// The runtime's functions a binding reads and makes the words of a value through that are
+        /// not the model's own: text, a `Decimal`, a temporal, and what a reading came to.
+        struct Functions {
+            $($field: $type,)*
+        }
+
+        impl Functions {
+            /// Each of them in `library`.
+            ///
+            /// # Safety
+            ///
+            /// As [`Words::load`].
+            unsafe fn load(library: &NativeLibrary) -> Result<Self, LoadError> {
+                // SAFETY: each is the runtime's function of that name, of this type in the ABI
+                // generation this crate calls ([`ABI_GENERATION`]), which `NativeLibrary::load`
+                // held the library to; and the caller keeps the library loaded.
+                unsafe {
+                    Ok(Functions {
+                        $($field: library.function($symbol)?,)*
+                    })
+                }
+            }
+
+            /// Each function's symbol and what its type is on the machine, for the tests that hold
+            /// it to the generation's record.
+            #[cfg(test)]
+            fn table() -> Vec<(&'static str, crate::native::machine::Shape)> {
+                vec![$(($symbol, crate::native::machine::of::<$type>()),)*]
+            }
+        }
+    };
+}
+
+runtime_functions! {
+    string_of_utf8: "souther_string_of_utf8" => Of3<*const u8, i64, *mut Word, u8>,
+    string_length: "souther_string_length" => Of<Word, i64>,
+    string_bytes: "souther_string_bytes" => Of<Word, *const u8>,
+    decimal_of_parts: "souther_decimal_of_parts" => Of4<*const u8, i64, i64, *mut Word, u8>,
+    decimal_unscaled: "souther_decimal_unscaled" => Of<Word, Word>,
+    decimal_scale: "souther_decimal_scale" => Of<Word, i64>,
+    date_of_parts: "souther_date_of_parts" => Of4<i64, i64, i64, *mut Word, u8>,
+    date_parts: "souther_date_parts" => Parts3,
+    time_of_parts: "souther_time_of_parts" => Of4<i64, i64, i64, *mut Word, u8>,
+    time_parts: "souther_time_parts" => Parts3,
+    datetime_of_parts: "souther_datetime_of_parts" => unsafe extern "C" fn(i64, i64, i64, i64, i64, i64, *mut Word) -> u8,
+    datetime_parts: "souther_datetime_parts" => Parts6,
+    instant_of_parts: "souther_instant_of_parts" => Of3<i64, i64, *mut Word, u8>,
+    instant_parts: "souther_instant_parts" => Parts2,
+    decoded_outcome: "souther_decoded_outcome" => Of<Word, i32>,
+    decoded_value: "souther_decoded_value" => Of<Word, Word>,
+    decoded_malformed_at: "souther_decoded_malformed_at" => Of<Word, i64>,
+    decoded_issue_count: "souther_decoded_issue_count" => Of<Word, i64>,
+    decoded_issue: "souther_decoded_issue" => Of2<Word, i64, Word>,
+    issue_code: "souther_issue_code" => Of<Word, Word>,
+    issue_message_key: "souther_issue_message_key" => Of<Word, Word>,
+    issue_path: "souther_issue_path" => Of<Word, Word>,
+    issue_meta: "souther_issue_meta" => Of<Word, Word>,
+}
+
+/// The runtime's functions a binding reads and makes the words of a value through, and what a
+/// reading's outcomes are numbered.
 pub struct Words {
-    string_of_utf8: Of3<*const u8, i64, *mut Word, u8>,
-    string_length: Of<Word, i64>,
-    string_bytes: Of<Word, *const u8>,
-    decimal_of_parts: Of4<*const u8, i64, i64, *mut Word, u8>,
-    decimal_unscaled: Of<Word, Word>,
-    decimal_scale: Of<Word, i64>,
-    date_of_parts: Of4<i64, i64, i64, *mut Word, u8>,
-    date_parts: Parts3,
-    time_of_parts: Of4<i64, i64, i64, *mut Word, u8>,
-    time_parts: Parts3,
-    datetime_of_parts: unsafe extern "C" fn(i64, i64, i64, i64, i64, i64, *mut Word) -> u8,
-    datetime_parts: Parts6,
-    instant_of_parts: Of3<i64, i64, *mut Word, u8>,
-    instant_parts: Parts2,
-    decoded_outcome: Of<Word, i32>,
-    decoded_value: Of<Word, Word>,
-    decoded_malformed_at: Of<Word, i64>,
-    decoded_issue_count: Of<Word, i64>,
-    decoded_issue: Of2<Word, i64, Word>,
-    issue_code: Of<Word, Word>,
-    issue_message_key: Of<Word, Word>,
-    issue_path: Of<Word, Word>,
-    issue_meta: Of<Word, Word>,
+    f: Functions,
     value: i32,
     issues: i32,
 }
@@ -238,37 +284,12 @@ impl Words {
                 .map(|(_, number)| *number)
                 .ok_or(LoadError::Outcome(name))
         };
-        // SAFETY: each is the runtime's function of that name, which the manifest says is of this
-        // type, and the caller keeps the library loaded.
-        unsafe {
-            Ok(Words {
-                string_of_utf8: library.function("souther_string_of_utf8")?,
-                string_length: library.function("souther_string_length")?,
-                string_bytes: library.function("souther_string_bytes")?,
-                decimal_of_parts: library.function("souther_decimal_of_parts")?,
-                decimal_unscaled: library.function("souther_decimal_unscaled")?,
-                decimal_scale: library.function("souther_decimal_scale")?,
-                date_of_parts: library.function("souther_date_of_parts")?,
-                date_parts: library.function("souther_date_parts")?,
-                time_of_parts: library.function("souther_time_of_parts")?,
-                time_parts: library.function("souther_time_parts")?,
-                datetime_of_parts: library.function("souther_datetime_of_parts")?,
-                datetime_parts: library.function("souther_datetime_parts")?,
-                instant_of_parts: library.function("souther_instant_of_parts")?,
-                instant_parts: library.function("souther_instant_parts")?,
-                decoded_outcome: library.function("souther_decoded_outcome")?,
-                decoded_value: library.function("souther_decoded_value")?,
-                decoded_malformed_at: library.function("souther_decoded_malformed_at")?,
-                decoded_issue_count: library.function("souther_decoded_issue_count")?,
-                decoded_issue: library.function("souther_decoded_issue")?,
-                issue_code: library.function("souther_issue_code")?,
-                issue_message_key: library.function("souther_issue_message_key")?,
-                issue_path: library.function("souther_issue_path")?,
-                issue_meta: library.function("souther_issue_meta")?,
-                value: outcome("VALUE")?,
-                issues: outcome("ISSUES")?,
-            })
-        }
+        Ok(Words {
+            // SAFETY: what the caller says.
+            f: unsafe { Functions::load(library) }?,
+            value: outcome("VALUE")?,
+            issues: outcome("ISSUES")?,
+        })
     }
 
     /// `text` as the library holds text, made in `run`: for a call about to be made in it.
@@ -285,7 +306,7 @@ impl Words {
         let mut word = std::ptr::null();
         // SAFETY: the bytes are `length` bytes that may be read, and UTF-8; `word` is room for a
         // `Word`; the function is the library's, loaded while `self` is.
-        let admitted = unsafe { (self.string_of_utf8)(text.as_ptr(), length, &mut word) };
+        let admitted = unsafe { (self.f.string_of_utf8)(text.as_ptr(), length, &mut word) };
         if admitted != 0 {
             Ok(word)
         } else {
@@ -306,12 +327,12 @@ impl Words {
     pub unsafe fn text(&self, at: Word) -> String {
         // SAFETY: what the caller says, and the library answers a length and the bytes of it.
         unsafe {
-            let length = usize::try_from((self.string_length)(at))
+            let length = usize::try_from((self.f.string_length)(at))
                 .expect("a string's length is never below nought");
             if length == 0 {
                 return String::new();
             }
-            let bytes = std::slice::from_raw_parts((self.string_bytes)(at), length);
+            let bytes = std::slice::from_raw_parts((self.f.string_bytes)(at), length);
             String::from_utf8(bytes.to_vec()).expect("the library's text is UTF-8")
         }
     }
@@ -337,7 +358,7 @@ impl Words {
         // SAFETY: the bytes are `length` bytes that may be read, `word` is room for a `Word`, and
         // the function is the library's, loaded while `self` is.
         let answered = unsafe {
-            (self.decimal_of_parts)(
+            (self.f.decimal_of_parts)(
                 unscaled.as_ptr(),
                 length,
                 i64::from(decimal.scale()),
@@ -355,8 +376,8 @@ impl Words {
     pub unsafe fn amount(&self, at: Word) -> Decimal {
         // SAFETY: what the caller says.
         unsafe {
-            let unscaled = self.text((self.decimal_unscaled)(at));
-            let scale = i32::try_from((self.decimal_scale)(at))
+            let unscaled = self.text((self.f.decimal_unscaled)(at));
+            let scale = i32::try_from((self.f.decimal_scale)(at))
                 .expect("a Decimal's scale is a 32-bit number");
             Decimal::new(&unscaled, scale).expect("the library's Decimal is one")
         }
@@ -372,7 +393,7 @@ impl Words {
         let mut word = std::ptr::null();
         // SAFETY: `word` is room for a `Word`, and the function is the library's.
         let answered = unsafe {
-            (self.date_of_parts)(
+            (self.f.date_of_parts)(
                 i64::from(date.year()),
                 i64::from(date.month()),
                 i64::from(date.day()),
@@ -388,7 +409,7 @@ impl Words {
     ///
     /// `at` is a `Date` the library answered, in a run that is still open.
     pub unsafe fn date_of(&self, at: Word) -> Date {
-        let [year, month, day] = unsafe { self.three(self.date_parts, at) };
+        let [year, month, day] = unsafe { self.three(self.f.date_parts, at) };
         Date::new(narrowed(year), narrowed(month), narrowed(day))
             .expect("the library's Date is a day a Date holds")
     }
@@ -402,7 +423,7 @@ impl Words {
         let mut word = std::ptr::null();
         // SAFETY: as in `date`.
         let answered = unsafe {
-            (self.time_of_parts)(
+            (self.f.time_of_parts)(
                 i64::from(time.hour()),
                 i64::from(time.minute()),
                 i64::from(time.second()),
@@ -418,7 +439,7 @@ impl Words {
     ///
     /// As [`Words::date_of`].
     pub unsafe fn time_of(&self, at: Word) -> Time {
-        let [hour, minute, second] = unsafe { self.three(self.time_parts, at) };
+        let [hour, minute, second] = unsafe { self.three(self.f.time_parts, at) };
         Time::new(narrowed(hour), narrowed(minute), narrowed(second))
             .expect("the library's Time is a time of day")
     }
@@ -437,7 +458,7 @@ impl Words {
         let mut word = std::ptr::null();
         // SAFETY: as in `date`.
         let answered = unsafe {
-            (self.datetime_of_parts)(
+            (self.f.datetime_of_parts)(
                 i64::from(date.year()),
                 i64::from(date.month()),
                 i64::from(date.day()),
@@ -459,7 +480,7 @@ impl Words {
         let mut parts = [0_i64; 6];
         let [year, month, day, hour, minute, second] = &mut parts;
         // SAFETY: what the caller says, and each is room for an `Int`.
-        unsafe { (self.datetime_parts)(at, year, month, day, hour, minute, second) };
+        unsafe { (self.f.datetime_parts)(at, year, month, day, hour, minute, second) };
         let [year, month, day, hour, minute, second] = parts;
         DateTime::new(
             Date::new(narrowed(year), narrowed(month), narrowed(day))
@@ -482,7 +503,7 @@ impl Words {
         let mut word = std::ptr::null();
         // SAFETY: as in `date`.
         let answered = unsafe {
-            (self.instant_of_parts)(instant.second(), i64::from(instant.nano()), &mut word)
+            (self.f.instant_of_parts)(instant.second(), i64::from(instant.nano()), &mut word)
         };
         made(answered, word)
     }
@@ -495,7 +516,7 @@ impl Words {
     pub unsafe fn instant_of(&self, at: Word) -> Instant {
         let (mut second, mut nano) = (0, 0);
         // SAFETY: what the caller says, and each is room for an `Int`.
-        unsafe { (self.instant_parts)(at, &mut second, &mut nano) };
+        unsafe { (self.f.instant_parts)(at, &mut second, &mut nano) };
         Instant::new(second, narrowed(nano)).expect("the library's Instant is a moment one holds")
     }
 
@@ -524,19 +545,19 @@ impl Words {
     ) -> Reading<T> {
         // SAFETY: what the caller says; the library answers each of these of a reading.
         unsafe {
-            let outcome = (self.decoded_outcome)(decoded);
+            let outcome = (self.f.decoded_outcome)(decoded);
             if outcome == self.value {
-                let value = NonNull::new((self.decoded_value)(decoded).cast_mut())
+                let value = NonNull::new((self.f.decoded_value)(decoded).cast_mut())
                     .expect("a reading that read a value answers it");
                 return Reading::Value(made(value));
             }
             let mut issues = raoh::Issues::new();
             if outcome == self.issues {
-                for at in 0..(self.decoded_issue_count)(decoded) {
-                    issues.push(self.issue((self.decoded_issue)(decoded, at)));
+                for at in 0..(self.f.decoded_issue_count)(decoded) {
+                    issues.push(self.issue((self.f.decoded_issue)(decoded, at)));
                 }
             } else {
-                let at = (self.decoded_malformed_at)(decoded);
+                let at = (self.f.decoded_malformed_at)(decoded);
                 issues.push(
                     raoh::Issue::new(raoh::codes::INVALID_FORMAT)
                         .with_message(format!("the text stops being JSON at byte {at}")),
@@ -556,10 +577,10 @@ impl Words {
     unsafe fn issue(&self, issue: Word) -> raoh::Issue {
         // SAFETY: what the caller says.
         unsafe {
-            let code = self.text((self.issue_code)(issue));
-            let key = self.text((self.issue_message_key)(issue));
-            let path = self.text((self.issue_path)(issue));
-            let meta = self.text((self.issue_meta)(issue));
+            let code = self.text((self.f.issue_code)(issue));
+            let key = self.text((self.f.issue_message_key)(issue));
+            let path = self.text((self.f.issue_path)(issue));
+            let meta = self.text((self.f.issue_meta)(issue));
             let serde_json::Value::Object(meta) =
                 serde_json::from_str(&meta).expect("the library writes metadata as JSON")
             else {
@@ -650,4 +671,135 @@ pub fn made(made: u8, word: Word) -> Result<Word, Failure> {
 fn narrowed<T: TryFrom<i64>>(number: i64) -> T {
     T::try_from(number)
         .unwrap_or_else(|_| panic!("the library answered {number}, which no part of the value is"))
+}
+
+/// What a type this crate writes of the ABI is on the machine, for the tests that hold it to what
+/// the generation records: each word as its representation, handed over or room for one.
+#[cfg(test)]
+pub(crate) mod machine {
+    use souther_native_abi::{HostParameter, Representation, RuntimeFunction};
+
+    /// One parameter: a word handed over, or room the function writes one through.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Taken {
+        Given(Representation),
+        Room(Representation),
+    }
+
+    /// What a function takes and answers.
+    pub(crate) type Shape = (Vec<Taken>, Option<Representation>);
+
+    /// A word as the machine holds it.
+    pub(crate) trait Held {
+        const IS: Representation;
+    }
+
+    macro_rules! held {
+        ($($ty:ty => $is:ident),* $(,)?) => { $(impl Held for $ty { const IS: Representation = Representation::$is; })* };
+    }
+
+    held! { u8 => U8, u32 => U32, i32 => I32, i64 => I64, *const u8 => Address, crate::run::RawScope => I64 }
+
+    /// A parameter as the machine takes it.
+    pub(crate) trait Parameter {
+        const TAKEN: Taken;
+    }
+
+    macro_rules! given {
+        ($($ty:ty),*) => { $(impl Parameter for $ty { const TAKEN: Taken = Taken::Given(<$ty as Held>::IS); })* };
+    }
+
+    macro_rules! room {
+        ($($ty:ty),*) => { $(impl Parameter for *mut $ty { const TAKEN: Taken = Taken::Room(<$ty as Held>::IS); })* };
+    }
+
+    given!(u8, u32, i32, i64, *const u8, crate::run::RawScope);
+    room!(u8, i64, *const u8);
+
+    /// A function pointer as what it takes and answers.
+    pub(crate) trait Function {
+        fn shape() -> Shape;
+    }
+
+    macro_rules! function {
+        ($($taken:ident),*) => {
+            impl<$($taken: Parameter,)* R: Held> Function for unsafe extern "C" fn($($taken),*) -> R {
+                fn shape() -> Shape {
+                    (vec![$($taken::TAKEN),*], Some(R::IS))
+                }
+            }
+            impl<$($taken: Parameter),*> Function for unsafe extern "C" fn($($taken),*) {
+                fn shape() -> Shape {
+                    (vec![$($taken::TAKEN),*], None)
+                }
+            }
+        };
+    }
+
+    function!();
+    function!(A);
+    function!(A, B);
+    function!(A, B, C);
+    function!(A, B, C, D);
+    function!(A, B, C, D, E);
+    function!(A, B, C, D, E, F);
+    function!(A, B, C, D, E, F, G);
+
+    pub(crate) fn of<F: Function>() -> Shape {
+        F::shape()
+    }
+
+    /// What the generation records a function as, on the machine.
+    pub(crate) fn recorded(function: &RuntimeFunction) -> Shape {
+        (
+            function
+                .takes
+                .iter()
+                .map(|it| match it {
+                    HostParameter::Given(word) => Taken::Given(word.representation()),
+                    HostParameter::Room(word) => Taken::Room(word.representation()),
+                    HostParameter::Slice(word) => {
+                        panic!("the runtime takes no slice of {}", word.spelt())
+                    }
+                })
+                .collect(),
+            function.answers.map(|it| it.representation()),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::machine::{Shape, Taken, of, recorded};
+    use super::{ABI_GENERATION, Functions, GENERATION_QUERY, GenerationQuery};
+    use crate::run::{ScopeCloseFn, ScopeOpenFn};
+    use souther_native_abi::{HOST_RUNTIME, Representation};
+    use std::collections::BTreeMap;
+
+    /// Every function of the runtime's this crate calls is the type the generation it calls a
+    /// library as records, looked up under the symbol it records, and it calls every one: a type
+    /// written here that the ABI moved from is a call made as something it is not, which nothing
+    /// else would find before a host did.
+    #[test]
+    fn every_runtime_function_is_the_type_its_generation_records() {
+        let mut written: BTreeMap<&str, Shape> = Functions::table().into_iter().collect();
+        written.insert("souther_scope_open", of::<ScopeOpenFn>());
+        written.insert("souther_scope_close", of::<ScopeCloseFn>());
+        let recorded: BTreeMap<&str, Shape> = HOST_RUNTIME
+            .iter()
+            .map(|it| (it.name, recorded(it)))
+            .collect();
+        assert_eq!(written, recorded);
+    }
+
+    /// The generation query is the one the ABI states, and so is the generation this calls.
+    #[test]
+    fn the_generation_asked_is_the_one_the_abi_states() {
+        assert_eq!(GENERATION_QUERY, souther_native_abi::GENERATION_QUERY);
+        assert_eq!(
+            of::<GenerationQuery>(),
+            (Vec::<Taken>::new(), Some(Representation::U32))
+        );
+        assert_eq!(ABI_GENERATION, souther_native_abi::ABI_GENERATION);
+    }
 }

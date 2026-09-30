@@ -147,8 +147,13 @@ dependencies = [
  "libloading",
  "raoh",
  "serde_json",
+ "souther-native-abi",
  "trybuild",
 ]
+
+[[package]]
+name = "souther-native-abi"
+version = "0.1.0"
 
 [[package]]
 name = "syn"

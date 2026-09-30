@@ -259,9 +259,28 @@ const DECLARATIONS: &str = "souther.ffi.h";
 
 /// The header a C or C++ compiler includes. The same text for every library: what is declared is
 /// in [`DECLARATIONS`], written from the surface once, and this is only what a compiler needs
-/// around it — a guard, the header `int64_t` and the rest come from, and C linkage for C++ — none
-/// of which a reader with no preprocessor could read.
+/// around it — a guard, the header `int64_t` and the rest come from, C linkage for C++, and the
+/// compiler's own measure of the room a host lays out — none of which a reader with no preprocessor
+/// could read.
+///
+/// The declarations say each room as so many `uint64_t` slots, which is how this crate projects
+/// `HOST_STORAGE`; the assertions hold that projection to what the generation records, measured by
+/// the compiler that includes it, so a machine on which the slots are not what the record says is
+/// one no host compiles for, rather than one whose library writes past the room.
 fn header() -> String {
+    let mut measured = String::new();
+    measured.push_str(&format!(
+        "SOUTHER_ASSERT(sizeof(void *) == {SLOT}, \"an address is a slot\");\n"
+    ));
+    for storage in souther_native_abi::HOST_STORAGE {
+        measured.push_str(&format!(
+            "SOUTHER_ASSERT(sizeof({name}) == {size} && SOUTHER_ALIGNOF({name}) == {SLOT}, \
+             \"{name} is {slots} slots, aligned to one\");\n",
+            name = storage.name,
+            size = storage.slots * SLOT,
+            slots = storage.slots,
+        ));
+    }
     format!(
         "/* What a host calls in a Souther program built by souther-native-compiler: the\n \
          * declarations in {DECLARATIONS}, for a C or C++ compiler. */\n\
@@ -280,7 +299,23 @@ fn header() -> String {
          }}\n\
          #endif\n\
          \n\
-         #endif\n"
+         /* The room a host lays out, as this compiler measures it: what ABI generation {generation}\n \
+          * records. Asked of every compiler that can be asked, C11 and C++11 on. */\n\
+         #if defined(__cplusplus) && __cplusplus >= 201103L\n\
+         #define SOUTHER_ASSERT static_assert\n\
+         #define SOUTHER_ALIGNOF alignof\n\
+         #elif !defined(__cplusplus) && defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L\n\
+         #define SOUTHER_ASSERT _Static_assert\n\
+         #define SOUTHER_ALIGNOF _Alignof\n\
+         #endif\n\
+         #ifdef SOUTHER_ASSERT\n\
+         {measured}\
+         #undef SOUTHER_ASSERT\n\
+         #undef SOUTHER_ALIGNOF\n\
+         #endif\n\
+         \n\
+         #endif\n",
+        generation = souther_native_abi::ABI_GENERATION,
     )
 }
 

@@ -25,12 +25,13 @@ final class CTypes {
 
     /** What C calls the type of a word that is a number. */
     static @Nullable String scalar(Word word) {
-        return switch (word) {
-            case STATUS, CASE -> "uint32_t";
-            case INT, COUNT, SCOPE -> "int64_t";
-            case BOOL -> "uint8_t";
-            case OUTCOME -> "int32_t";
-            default -> null;
+        // The type its representation is, as the ABI records it.
+        return switch (word.representation()) {
+            case U8 -> "uint8_t";
+            case U32 -> "uint32_t";
+            case I32 -> "int32_t";
+            case I64 -> "int64_t";
+            case ADDRESS -> null;
         };
     }
 

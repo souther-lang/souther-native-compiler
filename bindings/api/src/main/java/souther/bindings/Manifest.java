@@ -243,10 +243,46 @@ public final class Manifest {
         return modules;
     }
 
-    /** One word a host hands over or is handed. */
+    /**
+     * What a word is on the machine, as the ABI generation records it: what a generator writes a
+     * word's type from, so that no generator states a width of its own.
+     */
+    public enum Representation {
+        /** Eight bits, read without a sign. */
+        U8,
+        /** Thirty-two bits, read without a sign. */
+        U32,
+        /** Thirty-two bits, read with a sign. */
+        I32,
+        /** Sixty-four bits, read with a sign. */
+        I64,
+        /** An address, as wide as the machine's. */
+        ADDRESS
+    }
+
+    /** One word a host hands over or is handed, and what it is on the machine. */
     public enum Word {
-        STATUS, INT, BOOL, CASE, OUTCOME, COUNT, SCOPE, BYTES, VALUE, STRING, DECIMAL, DATE, TIME,
-        DATETIME, INSTANT, DECODED, ISSUE, LIST, REQUIREMENTS, CAPABILITY, USERDATA, FUNCTION
+        STATUS(Representation.U32), INT(Representation.I64), BOOL(Representation.U8),
+        CASE(Representation.U32), OUTCOME(Representation.I32), COUNT(Representation.I64),
+        SCOPE(Representation.I64), BYTES(Representation.ADDRESS), VALUE(Representation.ADDRESS),
+        STRING(Representation.ADDRESS), DECIMAL(Representation.ADDRESS),
+        DATE(Representation.ADDRESS), TIME(Representation.ADDRESS),
+        DATETIME(Representation.ADDRESS), INSTANT(Representation.ADDRESS),
+        DECODED(Representation.ADDRESS), ISSUE(Representation.ADDRESS),
+        LIST(Representation.ADDRESS), REQUIREMENTS(Representation.ADDRESS),
+        CAPABILITY(Representation.ADDRESS), USERDATA(Representation.ADDRESS),
+        FUNCTION(Representation.ADDRESS);
+
+        private final Representation representation;
+
+        Word(Representation representation) {
+            this.representation = representation;
+        }
+
+        /** What the word is on the machine. */
+        public Representation representation() {
+            return representation;
+        }
     }
 
     /**

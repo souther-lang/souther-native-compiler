@@ -267,3 +267,41 @@ unsafe impl<D> Requirement for Implemented<D> {
         Some(self.made)
     }
 }
+
+#[cfg(test)]
+mod laid_out {
+    use super::{Capability, Hosted};
+    use crate::keep::HostedFunction;
+    use souther_native_abi::{HOST_STORAGE, SLOT};
+    use std::mem::{align_of, size_of};
+
+    /// The rooms this crate lays out are the size and the alignment the generation records, as
+    /// Rust lays them out: a type written with another size or another alignment is room the
+    /// library writes past or reads askew, whatever its slot count says.
+    #[test]
+    fn every_room_is_the_size_and_the_alignment_its_generation_records() {
+        let laid_out = [
+            (
+                "souther_capability",
+                size_of::<Capability>(),
+                align_of::<Capability>(),
+            ),
+            ("souther_hosted", size_of::<Hosted>(), align_of::<Hosted>()),
+            (
+                "souther_hosted_function",
+                size_of::<HostedFunction>(),
+                align_of::<HostedFunction>(),
+            ),
+        ];
+        assert_eq!(
+            laid_out.len(),
+            HOST_STORAGE.len(),
+            "every room the ABI records"
+        );
+        for (name, size, align) in laid_out {
+            let storage = HOST_STORAGE.iter().find(|it| it.name == name).expect(name);
+            assert_eq!(size as i64, storage.slots * SLOT, "{name}");
+            assert_eq!(align as i64, SLOT, "{name}");
+        }
+    }
+}
