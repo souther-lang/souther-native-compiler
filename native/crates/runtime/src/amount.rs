@@ -8,11 +8,11 @@
 //! where it answers nothing so that its caller can end the run for the reason its contract names.
 //!
 //! The integer is a [`Magnitude`], which does integer arithmetic and nothing else: in a `u128`
-//! where the value fits, which is nearly every amount, and with `num_bigint` only past that. Which
-//! scale a result has, how it is rounded, what a value is written as and where an operation
-//! refuses are all written here. So how the integer is worked out could change without a single
-//! answer moving, and nothing that reads a `Decimal` — the arena, generated code, a host — ever
-//! sees one of `num_bigint`'s types.
+//! where the value fits, which is nearly every amount, and as a wide number only past that. Which
+//! scale a result has, what a value is written as and where an operation refuses are all written
+//! here; which neighbour a mode rounds to is `souther_exact`'s, which a `Rational` rounds by too.
+//! So how the integer is worked out could change without a single answer moving, and nothing that
+//! reads a `Decimal` — the arena, generated code, a host — ever sees how it is held.
 //!
 //! No operation here builds a power of ten from a scale it was handed. A scale is a 32-bit number,
 //! and `10^2147483647` is a number no memory holds, so an operation whose answer is small but whose
@@ -20,17 +20,9 @@
 //! answer from how many digits there are, and one whose answer is itself that wide refuses before
 //! building it ([`WIDEST`]).
 
-use crate::magnitude::{Magnitude, TENS};
+use souther_exact::{Dropped, Magnitude, Rounding, TENS, WIDEST, dropped, rounded};
 use souther_text::DecimalText;
 use std::cmp::Ordering;
-
-/// How many bits the integer of a `Decimal` holds at most.
-///
-/// The language states the range of a scale and not of the integer, and a representation has to
-/// stop somewhere: this is where the JVM's `BigInteger` stops, so that a result one carrier holds is
-/// one the other holds too. A result past it has no place, and the operation that would have built
-/// it refuses (spec §an-operation-refuses-only-what-its-own-answer-has-no-place-for).
-pub(crate) const WIDEST: u64 = i32::MAX as u64;
 
 /// How many digits the text an amount is written as at a boundary may spell an exponent out into
 /// (spec §primitives): `1E+1000` is written with its thousand zeros and `1E+1001` as it stands.
@@ -48,60 +40,6 @@ pub struct Amount {
     negative: bool,
     magnitude: Magnitude,
     scale: i32,
-}
-
-/// A rounding mode, as `RoundingMode` declares its cases (spec §stdlib-decimal). Each says which of
-/// the two whole numbers of the scale's grid either side of a value it answers.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Rounding {
-    HalfUp,
-    HalfEven,
-    HalfDown,
-    Up,
-    Down,
-    Ceiling,
-    Floor,
-}
-
-/// What rounding dropped, measured against half of the unit it rounded to.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Dropped {
-    Nothing,
-    BelowHalf,
-    Half,
-    AboveHalf,
-}
-
-impl Rounding {
-    /// Whether a magnitude rounded towards nought is taken one further from nought instead.
-    fn away(self, negative: bool, odd: bool, dropped: Dropped) -> bool {
-        if dropped == Dropped::Nothing {
-            return false;
-        }
-        match self {
-            Rounding::Up => true,
-            Rounding::Down => false,
-            Rounding::Ceiling => !negative,
-            Rounding::Floor => negative,
-            Rounding::HalfUp => dropped >= Dropped::Half,
-            Rounding::HalfDown => dropped == Dropped::AboveHalf,
-            Rounding::HalfEven => {
-                dropped == Dropped::AboveHalf || (dropped == Dropped::Half && odd)
-            }
-        }
-    }
-}
-
-impl PartialOrd for Dropped {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Dropped {
-    fn cmp(&self, other: &Self) -> Ordering {
-        (*self as u8).cmp(&(*other as u8))
-    }
 }
 
 /// `log2(10)`, for how many bits a power of ten is wide.
@@ -124,33 +62,6 @@ fn scaled_up(magnitude: &Magnitude, by: u64) -> Option<Magnitude> {
         return None;
     }
     held(magnitude.times_ten_to(by))
-}
-
-/// What a remainder is, against half the divisor it was left by: twice the remainder against the
-/// divisor is the remainder against what the divisor leaves above it.
-pub(crate) fn dropped(remainder: &Magnitude, divisor: &Magnitude) -> Dropped {
-    if remainder.is_zero() {
-        return Dropped::Nothing;
-    }
-    match remainder.cmp(&divisor.sub(remainder)) {
-        Ordering::Less => Dropped::BelowHalf,
-        Ordering::Equal => Dropped::Half,
-        Ordering::Greater => Dropped::AboveHalf,
-    }
-}
-
-/// The quotient, rounded by `mode` from what the division dropped.
-pub(crate) fn rounded(
-    quotient: Magnitude,
-    negative: bool,
-    dropped: Dropped,
-    mode: Rounding,
-) -> Magnitude {
-    if mode.away(negative, quotient.is_odd(), dropped) {
-        quotient.increment()
-    } else {
-        quotient
-    }
 }
 
 impl Amount {
@@ -189,7 +100,7 @@ impl Amount {
     pub(crate) fn of_int(value: i64) -> Amount {
         Amount::new(
             value < 0,
-            Magnitude::Small(u128::from(value.unsigned_abs())),
+            Magnitude::of_u128(u128::from(value.unsigned_abs())),
             0,
         )
     }
@@ -310,8 +221,8 @@ impl Amount {
         }
         let by_magnitude = if self.scale == other.scale {
             self.magnitude.cmp(&other.magnitude)
-        } else if let (Magnitude::Small(mine), Magnitude::Small(theirs)) =
-            (&self.magnitude, &other.magnitude)
+        } else if let (Some(mine), Some(theirs)) =
+            (self.magnitude.as_u128(), other.magnitude.as_u128())
         {
             // The one at the smaller scale raised to the other's. Neither is nought here, so one
             // raised past what a `u128` holds is the greater.
@@ -321,9 +232,9 @@ impl Amount {
                     .and_then(|ten| magnitude.checked_mul(*ten))
             };
             if apart < 0 {
-                raised(*mine, -apart).map_or(Ordering::Greater, |it| it.cmp(theirs))
+                raised(mine, -apart).map_or(Ordering::Greater, |it| it.cmp(&theirs))
             } else {
-                raised(*theirs, apart).map_or(Ordering::Less, |it| mine.cmp(&it))
+                raised(theirs, apart).map_or(Ordering::Less, |it| mine.cmp(&it))
             }
         } else {
             self.compare_wide(other)
@@ -449,10 +360,7 @@ impl Amount {
             let (quotient, dropped) = self.dropping(self.scale as u64);
             rounded(quotient, self.negative, dropped, mode)
         };
-        let Magnitude::Small(whole) = whole else {
-            return None;
-        };
-        let magnitude = u64::try_from(whole).ok()?;
+        let magnitude = u64::try_from(whole.as_u128()?).ok()?;
         if self.negative {
             0i64.checked_sub_unsigned(magnitude)
         } else {

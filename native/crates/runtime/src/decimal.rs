@@ -18,11 +18,12 @@
 //! after them, little end first and with no zero byte at the top. Nought is no bytes at all, at
 //! whatever scale it was written at.
 
-use crate::amount::{Amount, Rounding};
+use crate::amount::Amount;
 use crate::collection::{Hash, hash_of_parts};
 use crate::external::Form;
 use crate::kernels::answered;
 use crate::{Bool, Comparison, Count, Text, Value, souther_alloc, string_of, text};
+use souther_exact::Rounding;
 use souther_native_abi::{SLOT, WHICH};
 use std::ptr;
 
