@@ -133,6 +133,18 @@ souther_status fake_run(const souther_capability *const *requirements, int64_t x
     return fake_call(requirements[0], x, out);
 }
 
+/* Says that the library was released, before the file is unloaded, for the same test. */
+void souther_release(void) {
+    const char *where = getenv("SOUTHER_FAKE_UNLOADED");
+    if (where != NULL) {
+        FILE *file = fopen(where, "a");
+        if (file != NULL) {
+            fputs("r", file);
+            fclose(file);
+        }
+    }
+}
+
 /* Says that the file was unloaded, for a test that asks whether a load that failed unloaded it. */
 __attribute__((destructor)) static void unloaded(void) {
     const char *where = getenv("SOUTHER_FAKE_UNLOADED");

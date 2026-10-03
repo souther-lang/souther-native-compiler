@@ -258,6 +258,10 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_scope_close as extern "C" fn(Scope) -> Bool),
         ),
         (
+            "souther_release",
+            shape_of(souther_release as extern "C" fn()),
+        ),
+        (
             "souther_string_compare",
             shape_of(souther_string_compare as unsafe extern "C" fn(T, T) -> Comparison),
         ),
@@ -1774,6 +1778,13 @@ fn hostile() -> Vec<(&'static str, Hostile)> {
                 let scope = souther_scope_open();
                 assert_eq!(souther_scope_close(scope), Bool::TRUE);
             }),
+        ),
+        (
+            "souther_release",
+            // Takes nothing, so nothing a host hands it can be wrong. It is not called here: it
+            // drops what every test matching a pattern beside this one is reading, a call in
+            // flight a host never makes. `kernels` calls it alone.
+            Refuses(|| {}),
         ),
         (
             "souther_scope_close",

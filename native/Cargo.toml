@@ -22,9 +22,11 @@ unnecessary_wraps = "deny"
 souther-native-abi = { path = "crates/abi" }
 souther-json-syntax = { path = "crates/json-syntax" }
 souther-text = { path = "crates/text" }
-# The rules for reading text that Raoh and Souther share, implemented once per language. Taken from
-# develop until a release carries the Rust crate; Cargo.lock holds the commit a build reads.
-notation199x = { git = "https://github.com/raoh-project/199x-notation", branch = "develop" }
+# The rules for reading text that Raoh and Souther share, implemented once per language: what NFC,
+# case, White_Space, a temporal's text and a pattern's image mean here. A commit of develop until a
+# release carries the Rust crate, named here and not left to the lock, so that moving it is a change
+# of what text means that a commit says, and never a side effect of updating dependencies.
+notation199x = { git = "https://github.com/raoh-project/199x-notation", rev = "078c231e0a087b2dd7feb52f066e93ac5a3700c9" }
 cranelift = { version = "0.135.2", features = ["frontend", "module", "native", "object"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

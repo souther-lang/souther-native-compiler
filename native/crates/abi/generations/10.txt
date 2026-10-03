@@ -255,6 +255,7 @@ host RuntimeFunction { name: "souther_issue_code", takes: [Given(Issue)], answer
 host RuntimeFunction { name: "souther_issue_message_key", takes: [Given(Issue)], answers: Some(String) }
 host RuntimeFunction { name: "souther_issue_meta", takes: [Given(Issue)], answers: Some(String) }
 host RuntimeFunction { name: "souther_issue_path", takes: [Given(Issue)], answers: Some(String) }
+host RuntimeFunction { name: "souther_release", takes: [], answers: None }
 host RuntimeFunction { name: "souther_scope_close", takes: [Given(Scope)], answers: Some(Bool) }
 host RuntimeFunction { name: "souther_scope_open", takes: [], answers: Some(Scope) }
 host RuntimeFunction { name: "souther_string_bytes", takes: [Given(String)], answers: Some(Bytes) }
@@ -266,6 +267,10 @@ input bool: a byte without a sign, true where it is not nought
 input bytes: read for as many as the count says where the count is above nought; a count below nought is a datum refused, and what the bytes say is a datum
 input datum: answered whatever it is; one a function does not take is refused by what it answers, and ends nothing
 input handle: one the library answered, of the type the function names, whose scope is open on the calling thread
+release after: the library is used as before, and works out again what it had kept
+release again: dropping nothing kept is nothing
+release drops: what the library keeps beyond any scope, and nothing a scope holds
+release when: before the library is unloaded, with no call into it in flight on any thread
 reserved 2147483632..=2147483647
 runtime says souther_runtime_abi_10
 scope arena: one to each thread

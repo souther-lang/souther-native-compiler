@@ -14,6 +14,7 @@ use souther_native_abi::{
 };
 use souther_text::Text as Held;
 use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 /// A list of these, each written into its slot by `slot`.
 pub(crate) fn list_of<T>(each: &[T], slot: impl Fn(&T) -> i64) -> *mut List {
@@ -142,50 +143,82 @@ pub struct HeldPattern {
     _opaque: [u8; 0],
 }
 
-/// The pattern `held` carries, read from its image the first time it is asked for and kept in its
-/// room from then on, so that a pattern is read once however many times it is matched.
+/// Every pattern this library has read, owned here from the first match that read it until
+/// [`souther_release`], beside the room it was read for.
 ///
-/// Two threads that both find the room empty both read the image, and the first to put what it
-/// read in the room is the one kept: the other drops its own. Nothing is ever taken out of the
-/// room, so what is kept lives as long as the object does.
+/// A static of the runtime, which each library links its own copy of, so it is the library's: the
+/// object's room holds only where the pattern is, and what owns it is this. The lock is taken only
+/// when a pattern is read and when the library is released, never by a match of a pattern already
+/// read.
+static KEPT: Mutex<Vec<(usize, Box<Pattern>)>> = Mutex::new(Vec::new());
+
+/// The room of a pattern the object carries, which holds where the runtime keeps what it read.
 ///
 /// # Safety
 ///
 /// `held` is a pattern an object carries, laid out as `souther_native_abi` states it, with its
-/// room writable.
-pub(crate) unsafe fn pattern(held: *const HeldPattern) -> &'static Pattern {
-    let at = held.cast::<u8>();
-    // SAFETY: the room is a slot, aligned to one, which only this function writes.
-    let read = unsafe { &*at.add(PATTERN_READ as usize).cast::<AtomicPtr<Pattern>>() };
-    let kept = read.load(Ordering::Acquire);
-    if !kept.is_null() {
-        // SAFETY: what is in the room was put there below and is never taken out.
-        return unsafe { &*kept };
+/// room writable, and the object is loaded.
+unsafe fn room<'a>(held: *const HeldPattern) -> &'a AtomicPtr<Pattern> {
+    // SAFETY: the room is a slot, aligned to one, which only this runtime writes.
+    unsafe {
+        &*held
+            .cast::<u8>()
+            .add(PATTERN_READ as usize)
+            .cast::<AtomicPtr<Pattern>>()
     }
-    // SAFETY: the object wrote the image's length and the image behind it.
-    let image = unsafe {
-        let length = at.add(PATTERN_LENGTH as usize).cast::<u64>().read();
-        std::slice::from_raw_parts(at.add(PATTERN_IMAGE as usize), length as usize)
-    };
-    let image = std::str::from_utf8(image).expect("an image is written in ASCII");
-    let made = Box::into_raw(Box::new(
-        Pattern::from_image(image).expect("the compiler read every image it wrote into the object"),
-    ));
-    match read.compare_exchange(
-        std::ptr::null_mut(),
-        made,
-        Ordering::AcqRel,
-        Ordering::Acquire,
-    ) {
-        // SAFETY: `made` is in the room now, and is never taken out.
-        Ok(_) => unsafe { &*made },
-        Err(first) => {
-            // SAFETY: `made` was never shared, and `first` is in the room for good.
-            unsafe {
-                drop(Box::from_raw(made));
-                &*first
-            }
+}
+
+/// Whether the whole of `subject` is one of the strings the pattern `held` carries accepts, read
+/// from its image the first time it is asked for and kept in [`KEPT`] from then on, so that a
+/// pattern is read once however many times it is matched.
+///
+/// Two threads that both find the room empty both wait on [`KEPT`], and the second finds the first
+/// has read it. What the room points at is not dropped while a match may read it: only
+/// [`souther_release`] drops it, which a host calls with no call in flight.
+///
+/// # Safety
+///
+/// As [`room`].
+pub(crate) unsafe fn matched(held: *const HeldPattern, subject: &str) -> bool {
+    let room = unsafe { room(held) };
+    let mut read = room.load(Ordering::Acquire);
+    if read.is_null() {
+        let mut kept = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
+        read = room.load(Ordering::Acquire);
+        if read.is_null() {
+            // SAFETY: the object wrote the image's length and the image behind it.
+            let image = unsafe {
+                let at = held.cast::<u8>();
+                let length = at.add(PATTERN_LENGTH as usize).cast::<u64>().read();
+                std::slice::from_raw_parts(at.add(PATTERN_IMAGE as usize), length as usize)
+            };
+            let image = std::str::from_utf8(image).expect("an image is written in ASCII");
+            let pattern = Box::new(
+                Pattern::from_image(image)
+                    .expect("the compiler read every image it wrote into the object"),
+            );
+            read = std::ptr::from_ref(pattern.as_ref()).cast_mut();
+            room.store(read, Ordering::Release);
+            kept.push((held as usize, pattern));
         }
+    }
+    // SAFETY: what the room points at is in `KEPT`, and is dropped only by `souther_release`.
+    unsafe { &*read }.matches(subject)
+}
+
+/// Drops every pattern this library has read and empties the room each was read for, so a match
+/// after it reads the image again ([`souther_native_abi::RELEASE`]).
+///
+/// What the library keeps beyond any scope is what this drops; what a scope holds is untouched. A
+/// host calls it before it unloads the library, with no call into it in flight: the objects whose
+/// rooms are emptied are loaded until then.
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_release() {
+    let kept = std::mem::take(&mut *KEPT.lock().unwrap_or_else(PoisonError::into_inner));
+    for (held, pattern) in kept {
+        // SAFETY: `held` is a pattern of an object still loaded, as the host holds to.
+        unsafe { room(held as *const HeldPattern) }.store(std::ptr::null_mut(), Ordering::Release);
+        drop(pattern);
     }
 }
 
@@ -193,10 +226,10 @@ pub(crate) unsafe fn pattern(held: *const HeldPattern) -> &'static Pattern {
 ///
 /// # Safety
 ///
-/// As [`souther_string_trim`], and as [`pattern`] for `held`.
+/// As [`souther_string_trim`], and as [`room`] for `held`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_matches(held: *const HeldPattern, s: *const Text) -> Bool {
-    unsafe { pattern(held).matches(text(&s).as_str()) }.into()
+    unsafe { matched(held, text(&s).as_str()) }.into()
 }
 
 /// `String.slice`, written through `out` where the string has the code points asked for.
@@ -445,10 +478,14 @@ mod tests {
         room
     }
 
-    /// A pattern is read from its image the first time it is matched and kept in its room, so that
-    /// every match after it runs on the pattern read then.
+    /// A pattern is read from its image the first time it is matched, and every match after it runs
+    /// on the pattern read then, until the library is released: that drops what was read and
+    /// empties the room, and a match after it reads the image again. Releasing again drops nothing.
+    ///
+    /// One test, since a release drops every pattern the library read, and a test matching
+    /// beside it would be a call in flight, which a host never makes.
     #[test]
-    fn a_pattern_is_read_from_its_image_once_and_kept() {
+    fn a_pattern_is_read_once_and_kept_until_the_library_is_released() {
         let scope = souther_scope_open();
         // `a+`, as P1 writes it.
         let mut held = room("P1,0,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0");
@@ -466,6 +503,15 @@ mod tests {
             Bool::FALSE
         );
         assert_eq!(held[0], kept);
+
+        souther_release();
+        assert_eq!(held[0], 0);
+        assert!(KEPT.lock().unwrap().is_empty());
+        assert_eq!(unsafe { souther_string_matches(at, made("a")) }, Bool::TRUE);
+        assert_ne!(held[0], 0);
+        souther_release();
+        souther_release();
+        assert_eq!(held[0], 0);
         souther_scope_close(scope);
     }
 

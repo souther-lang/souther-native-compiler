@@ -360,15 +360,16 @@ func BenchmarkTheSymbolLookupAlone(b *testing.B) {
 	})
 }
 
-func TestAFileThatFailedToLoadIsUnloaded(t *testing.T) {
+// A file is released before it is unloaded, as every host that unloads a library releases it first.
+func TestAFileThatFailedToLoadIsReleasedAndUnloaded(t *testing.T) {
 	unloaded := filepath.Join(t.TempDir(), "unloaded")
 	t.Setenv("SOUTHER_FAKE_UNLOADED", unloaded)
 	if _, err := bridge.Load(path("nodouble")); err == nil {
 		t.Fatal("loaded a file that lacks what the binding calls")
 	}
 	said, err := os.ReadFile(unloaded)
-	if err != nil || string(said) != "x" {
-		t.Fatalf("the file was not unloaded: %q, %v", said, err)
+	if err != nil || string(said) != "rx" {
+		t.Fatalf("the file was not released and then unloaded: %q, %v", said, err)
 	}
 }
 

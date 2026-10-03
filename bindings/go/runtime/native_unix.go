@@ -11,6 +11,7 @@ package souther
 static uint32_t call_abi_generation(void *fn) { return ((uint32_t (*)(void))fn)(); }
 static int64_t call_scope_open(void *fn) { return ((int64_t (*)(void))fn)(); }
 static uint8_t call_scope_close(void *fn, int64_t scope) { return ((uint8_t (*)(int64_t))fn)(scope); }
+static void call_release(void *fn) { ((void (*)(void))fn)(); }
 */
 import "C"
 
@@ -48,8 +49,15 @@ func open(path string) (*nativeFile, error) {
 	return &nativeFile{handle}, nil
 }
 
-// close unloads the file. It is called only where nothing was taken from it.
-func (n *nativeFile) close() { C.dlclose(n.handle) }
+// close unloads the file, releasing the library first where it has souther_release: a host that
+// unloads a library drops what the library keeps beyond any scope before it does. It is called only
+// where nothing was taken from the file, so no call into it is in flight.
+func (n *nativeFile) close() {
+	if release, ok := n.symbol("souther_release"); ok {
+		C.call_release(release)
+	}
+	C.dlclose(n.handle)
+}
 
 // symbol is where the library file has name, and whether it has.
 func (n *nativeFile) symbol(name string) (unsafe.Pointer, bool) {
@@ -87,6 +95,7 @@ func (e *MissingSymbols) Error() string {
 var runtimeFunctions = []string{
 	"souther_scope_open",
 	"souther_scope_close",
+	"souther_release",
 	"souther_string_of_utf8",
 	"souther_string_length",
 	"souther_string_bytes",

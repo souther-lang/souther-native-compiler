@@ -17,6 +17,10 @@ pub const ABI_GENERATION: u32 = 10;
 const GENERATION_QUERY: &str = "souther_abi_generation";
 type GenerationQuery = unsafe extern "C" fn() -> u32;
 
+/// `void souther_release(void)`: what the library keeps beyond any scope is dropped, before the
+/// library is unloaded.
+pub(crate) type ReleaseFn = unsafe extern "C" fn();
+
 /// One word the library hands over or is handed that is an address: a value, a string, a list and
 /// the rest, which only the library reads behind.
 pub type Word = *const u8;
@@ -28,9 +32,13 @@ pub type Word = *const u8;
 /// naming the library, so two loaded into one process would be told apart by nothing a link could
 /// say. Each is reached through its own handle here instead, as the PHP runtime reaches each
 /// through its own FFI handle.
+///
+/// It owns the library: what the library keeps beyond any scope is dropped when this is
+/// (`souther_release`), and then the library is unloaded.
 pub struct NativeLibrary {
     library: libloading::Library,
     path: PathBuf,
+    release: ReleaseFn,
 }
 
 impl NativeLibrary {
@@ -47,11 +55,12 @@ impl NativeLibrary {
     /// [`LoadError::Open`] where the loader has no library there, and [`LoadError::Generation`]
     /// where it is not of [`ABI_GENERATION`]: asked of the library before any other function of
     /// it is looked up, by the one query every generation has (`souther_abi_generation`).
+    /// [`LoadError::Missing`] where it has no `souther_release`.
     pub unsafe fn load(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref().to_path_buf();
         // SAFETY: what the caller says.
         let library = match unsafe { libloading::Library::new(&path) } {
-            Ok(library) => NativeLibrary { library, path },
+            Ok(library) => library,
             Err(source) => {
                 return Err(LoadError::Open {
                     path,
@@ -63,17 +72,28 @@ impl NativeLibrary {
         // `uint32_t souther_abi_generation(void)`.
         let found = unsafe {
             library
-                .function::<GenerationQuery>(GENERATION_QUERY)
+                .get::<GenerationQuery>(GENERATION_QUERY.as_bytes())
                 .ok()
                 .map(|query| query())
         };
         if found != Some(ABI_GENERATION) {
-            return Err(LoadError::Generation {
-                path: library.path,
-                found,
-            });
+            return Err(LoadError::Generation { path, found });
         }
-        Ok(library)
+        // SAFETY: the library is of the generation that states it as `ReleaseFn`.
+        let release = match unsafe { library.get::<ReleaseFn>(b"souther_release") } {
+            Ok(release) => *release,
+            Err(source) => {
+                return Err(LoadError::Missing {
+                    name: "souther_release".to_owned(),
+                    reason: source.to_string(),
+                });
+            }
+        };
+        Ok(NativeLibrary {
+            library,
+            path,
+            release,
+        })
     }
 
     /// Where it was loaded from.
@@ -125,6 +145,16 @@ impl NativeLibrary {
             let close: ScopeCloseFn = self.function("souther_scope_close")?;
             Ok(Runtime::new(open, close, statuses))
         }
+    }
+}
+
+impl Drop for NativeLibrary {
+    /// Drops what the library keeps beyond any scope, and then the library is unloaded. Nothing
+    /// that calls into the library outlives this, which is what `souther_release` asks: no call in
+    /// flight.
+    fn drop(&mut self) {
+        // SAFETY: the library is loaded until this returns, and nothing borrowed from it is left.
+        unsafe { (self.release)() };
     }
 }
 
@@ -770,6 +800,7 @@ pub(crate) mod machine {
 
 #[cfg(test)]
 mod tests {
+    use super::ReleaseFn;
     use super::machine::{Shape, Taken, of, recorded};
     use super::{ABI_GENERATION, Functions, GENERATION_QUERY, GenerationQuery};
     use crate::run::{ScopeCloseFn, ScopeOpenFn};
@@ -785,6 +816,7 @@ mod tests {
         let mut written: BTreeMap<&str, Shape> = Functions::table().into_iter().collect();
         written.insert("souther_scope_open", of::<ScopeOpenFn>());
         written.insert("souther_scope_close", of::<ScopeCloseFn>());
+        written.insert("souther_release", of::<ReleaseFn>());
         let recorded: BTreeMap<&str, Shape> = HOST_RUNTIME
             .iter()
             .map(|it| (it.name, recorded(it)))

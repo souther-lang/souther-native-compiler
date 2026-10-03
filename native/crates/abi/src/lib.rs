@@ -186,7 +186,9 @@ pub const GENERATIONS: &[(u32, &str)] = &[
         "a pattern crosses to the runtime as the image 199x-notation wrote its machine in, behind \
          room the runtime keeps the pattern it read in (`PATTERN_READ`, `PATTERN_LENGTH`, \
          `PATTERN_IMAGE`), in place of the words `souther_text::pattern` compiled it to: \
-         `souther_string_matches` and `souther_read_pattern` take that (souther-native-compiler#144)",
+         `souther_string_matches` and `souther_read_pattern` take that; and a host that unloads a \
+         library calls `souther_release` first, which drops what the runtime read \
+         (souther-native-compiler#144)",
     ),
 ];
 
@@ -1102,9 +1104,9 @@ pub const HELD: i64 = 0;
 pub const TEXT_LENGTH: i64 = 0;
 
 /// Where a pattern's room holds the pattern the runtime read from its image: null in the object,
-/// and written once by the first match that reads the image, so that a pattern is read once
-/// however many times it is matched. The object keeps the room writable for that and nothing else
-/// writes it.
+/// and written by the first match that reads the image, so that a pattern is read once however
+/// many times it is matched. The object keeps the room writable for that. What is written there is
+/// a pointer to what the runtime keeps and owns until [`RELEASE`], which empties the room again.
 ///
 /// A pattern says the same thing every run, so what it is run as is worked out from the image and
 /// not carried in a layout of the runtime's own: the image is 199x-notation's format, which every
@@ -1583,6 +1585,34 @@ pub const SCOPE_OPEN: &str = "souther_scope_open";
 /// The symbol a host closes a scope with, dropping everything made inside it, and answering whether
 /// the token was the innermost open scope of the calling thread.
 pub const SCOPE_CLOSE: &str = "souther_scope_close";
+
+/// The symbol a host calls before it unloads a library: the runtime drops what the library keeps
+/// beyond any scope, and nothing the library answered is touched.
+///
+/// A scope is what a run makes lives for, and closing it drops that. What the library keeps beyond
+/// a run is what it works out once and keeps for every run after: a pattern read from the image the
+/// object carries (`PATTERN_READ`). That is owned by the library, and kept on the runtime's heap
+/// and not in the object, so unloading the object does not drop it; this does, and the room is
+/// left empty, so a match after it reads the image again. What it holds to is
+/// [`RELEASE_CONTRACT`].
+pub const RELEASE: &str = "souther_release";
+
+/// What [`RELEASE`] promises and what a host holds to, in the words a generation records.
+pub const RELEASE_CONTRACT: &[(&str, &str)] = &[
+    (
+        "when",
+        "before the library is unloaded, with no call into it in flight on any thread",
+    ),
+    (
+        "drops",
+        "what the library keeps beyond any scope, and nothing a scope holds",
+    ),
+    (
+        "after",
+        "the library is used as before, and works out again what it had kept",
+    ),
+    ("again", "dropping nothing kept is nothing"),
+];
 
 /// What a host function takes of what a host hands it, in the words a generation records.
 ///
@@ -2267,6 +2297,11 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
             answers: Some(Bool),
         },
         RuntimeFunction {
+            name: RELEASE,
+            takes: &[],
+            answers: None,
+        },
+        RuntimeFunction {
             name: STRING_OF_UTF8,
             takes: &[Given(Bytes), Given(Count), Room(String)],
             answers: Some(Bool),
@@ -2556,7 +2591,7 @@ pub enum Word {
     /// Which of two strings comes first: below, at or above nought.
     Comparison,
     /// A pattern, as the object carries it: the image its machine is written in, behind room the
-    /// runtime keeps what it read of the image in ([`PATTERN_READ`]).
+    /// runtime keeps what it read of the image in ([`PATTERN_READ`]) until [`RELEASE`].
     Pattern,
     /// A piece of the external form being built, owned by whoever [`EXTERNAL_NULL`] and the rest
     /// say.
