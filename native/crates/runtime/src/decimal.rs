@@ -18,7 +18,7 @@
 //! after them, little end first and with no zero byte at the top. Nought is no bytes at all, at
 //! whatever scale it was written at.
 
-use crate::amount::Amount;
+use crate::amount::{Amount, of_decimal_text, of_integer_text, plain_text};
 use crate::collection::{Hash, hash_of_parts};
 use crate::external::Form;
 use crate::kernels::answered;
@@ -146,7 +146,7 @@ unsafe fn of_parts(unscaled: *const Text, scale: i64) -> *mut Decimal {
     let written = unsafe { text(&unscaled) };
     let scale = i32::try_from(scale).expect("a Decimal is handed over at a scale a Decimal has");
     let amount = souther_text::decimal_text(written)
-        .and_then(|it| Amount::of_integer_text(it, scale))
+        .and_then(|it| of_integer_text(it, scale))
         .expect("a Decimal's integer is handed over as integer text");
     decimal_of(&amount)
 }
@@ -184,7 +184,7 @@ pub unsafe extern "C" fn souther_decimal_of_parts(
         let written = std::str::from_utf8(bytes).ok()?;
         let scale = i32::try_from(scale).ok()?;
         souther_text::decimal_text(souther_text::Text::held(written))
-            .and_then(|it| Amount::of_integer_text(it, scale))
+            .and_then(|it| of_integer_text(it, scale))
             .map(|amount| decimal_of(&amount))
     });
     unsafe { answered(named, out) }
@@ -388,7 +388,7 @@ pub unsafe extern "C" fn souther_decimal_divide(
 /// As [`crate::souther_string_compare`], and `out` is room for the address of a `Decimal`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_to_decimal(s: *const Text, out: *mut *mut Decimal) -> Bool {
-    let read = souther_text::decimal_text(unsafe { text(&s) }).map(Amount::of_decimal_text);
+    let read = souther_text::decimal_text(unsafe { text(&s) }).map(of_decimal_text);
     unsafe { answered(read.as_ref().map(decimal_of), out) }
 }
 
@@ -404,7 +404,7 @@ pub unsafe extern "C" fn souther_string_from_decimal(
     at: *const Decimal,
     out: *mut *mut Text,
 ) -> Bool {
-    let written = unsafe { amount(at) }.plain_text();
+    let written = plain_text(&unsafe { amount(at) });
     unsafe { answered(written.as_deref().map(string_of), out) }
 }
 

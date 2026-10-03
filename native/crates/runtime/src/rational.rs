@@ -24,7 +24,7 @@ use crate::collection::{Hash, hash_of_parts};
 use crate::decimal::{Decimal, amount, decimal_of, rounding};
 use crate::kernels::answered;
 use crate::{Bool, Comparison, Count, Value, souther_alloc};
-use souther_exact::{Exact, Failure, Magnitude, Ratio, Scaled};
+use souther_exact::{Exact, Failure, Magnitude, Ratio};
 use souther_native_abi::SLOT;
 
 /// A `Rational`, as the functions here take and answer one: an address, a type of its own for the
@@ -60,21 +60,6 @@ fn settled<T>(result: Exact<T>) -> Option<T> {
             panic!("no room for the working width this answer is worked out at")
         }
     }
-}
-
-/// A `Decimal`, as the parts a `Rational` is read from and written to.
-fn scaled(decimal: &Amount) -> Scaled {
-    let (negative, magnitude, scale) = decimal.split();
-    Scaled {
-        negative,
-        magnitude: magnitude.clone(),
-        scale,
-    }
-}
-
-/// The `Decimal` these parts are, where a `Decimal` holds them.
-fn decimal(parts: Scaled) -> Option<Amount> {
-    Amount::of_magnitude(parts.negative, parts.magnitude, parts.scale)
 }
 
 /// A `Rational` holding this value, in room the arena answered: the one way one is written.
@@ -147,7 +132,7 @@ pub extern "C" fn souther_rational_from_int(value: i64) -> *mut Rational {
 /// function here that reads a `Rational`, of one.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_rational_from_decimal(at: *const Decimal) -> *mut Rational {
-    rational_of(&Ratio::of_decimal(scaled(&unsafe { amount(at) })))
+    rational_of(&Ratio::of_decimal(unsafe { amount(at) }.scaled()))
 }
 
 /// The unary `-`.
@@ -319,7 +304,7 @@ pub unsafe extern "C" fn souther_rational_to_finite_decimal(
     at: *const Rational,
     out: *mut *mut Decimal,
 ) -> Bool {
-    let written = settled(unsafe { ratio(at) }.to_finite_decimal()).and_then(decimal);
+    let written = settled(unsafe { ratio(at) }.to_finite_decimal()).and_then(Amount::of_scaled);
     unsafe { answered(written.as_ref().map(decimal_of), out) }
 }
 
@@ -352,7 +337,8 @@ pub unsafe extern "C" fn souther_rational_to_decimal(
     at: *const Rational,
     out: *mut *mut Decimal,
 ) -> Bool {
-    let rounded = settled(unsafe { ratio(at).to_decimal(scale, rounding(mode)) }).and_then(decimal);
+    let rounded =
+        settled(unsafe { ratio(at).to_decimal(scale, rounding(mode)) }).and_then(Amount::of_scaled);
     unsafe { answered(rounded.as_ref().map(decimal_of), out) }
 }
 
@@ -375,8 +361,8 @@ mod tests {
             ratio_of(1, 3),
             ratio_of(-7, 12),
             Ratio::of_int(i64::MIN),
-            Ratio::of_decimal(scaled(&Amount::of_parts(true, &[9], i32::MIN))),
-            Ratio::of_decimal(scaled(&Amount::of_parts(false, &[1], i32::MAX))),
+            Ratio::of_decimal(Amount::of_parts(true, &[9], i32::MIN).scaled()),
+            Ratio::of_decimal(Amount::of_parts(false, &[1], i32::MAX).scaled()),
         ] {
             let at = rational_of(&value);
             assert_eq!(unsafe { ratio(at) }, value);
@@ -417,10 +403,10 @@ mod tests {
             (false, 1, i32::MAX),
         ] {
             let written = Amount::of_parts(negative, &[digits], scale);
-            let back = Ratio::of_decimal(scaled(&written))
+            let back = Ratio::of_decimal(written.scaled())
                 .to_finite_decimal()
                 .ok()
-                .and_then(decimal);
+                .and_then(Amount::of_scaled);
             assert_eq!(back, Some(written));
         }
     }
