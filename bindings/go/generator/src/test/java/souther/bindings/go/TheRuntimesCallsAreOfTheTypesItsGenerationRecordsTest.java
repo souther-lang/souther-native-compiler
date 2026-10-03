@@ -55,6 +55,7 @@ class TheRuntimesCallsAreOfTheTypesItsGenerationRecordsTest {
     private static final Map<String, String> SHIM = Map.ofEntries(
             Map.entry("souther_scope_open", "scope_open"),
             Map.entry("souther_scope_close", "scope_close"),
+            Map.entry("souther_release", "release"),
             Map.entry("souther_string_of_utf8", "string_of_utf8"),
             Map.entry("souther_string_length", "string_length"),
             Map.entry("souther_string_bytes", "string_bytes"),

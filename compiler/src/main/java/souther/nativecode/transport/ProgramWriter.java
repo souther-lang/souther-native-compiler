@@ -31,8 +31,6 @@ import souther.compiler.program.Declared;
 import souther.compiler.program.DeclaredBy;
 import souther.compiler.program.Publication;
 import souther.compiler.program.StandsIn;
-import souther.compiler.regex.CodePoints;
-import souther.compiler.regex.PatternMeaning;
 import souther.compiler.types.BinOp;
 import souther.compiler.types.BindingId;
 import souther.compiler.types.LanguageCaseId;
@@ -97,7 +95,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 30;
+    public static final int TRANSPORT_VERSION = 31;
 
     private final CheckedProgram program;
 
@@ -455,8 +453,9 @@ public final class ProgramWriter {
     /**
      * One constraint, as what it is and its bound. Every one of them is named here and none by a
      * default, so a constraint added to the language is one this has to spell before it compiles.
-     * A pattern crosses as what it matches, as the checker read it, beside the text it was written
-     * as, the way a {@code String.matches} pattern does; a {@code Decimal} bound as its integer and
+     * A pattern crosses as the image of the machine of what the checker read it as
+     * ({@link PatternImages}), beside the text it was written as, the way a {@code String.matches}
+     * pattern does; a {@code Decimal} bound as its integer and
      * its scale, the way a literal does.
      */
     private static String constraint(BoundaryConstraint constraint) {
@@ -465,7 +464,8 @@ public final class ProgramWriter {
             case BoundaryConstraint.MaxLength it -> bounded("maxlength", it.n());
             case BoundaryConstraint.FixedLength it -> bounded("fixedlength", it.n());
             case BoundaryConstraint.Pattern it -> "{\"is\":\"pattern\",\"written\":"
-                    + quoted(it.written()) + ",\"meaning\":" + meaning(it.meaning()) + "}";
+                    + quoted(it.written()) + ",\"image\":"
+                    + quoted(PatternImages.of(it.written(), it.meaning())) + "}";
             case BoundaryConstraint.Min it -> bounded("min", it.n());
             case BoundaryConstraint.Max it -> bounded("max", it.n());
             case BoundaryConstraint.Positive it -> "{\"is\":\"positive\"}";
@@ -1669,63 +1669,14 @@ public final class ProgramWriter {
             case Core.KernelFact.None it -> "{\"is\":\"none\"}";
             case Core.KernelFact.StringMatches it ->
                     "{\"is\":\"stringmatches\",\"written\":" + quoted(it.written())
-                            + ",\"meaning\":" + meaning(it.meaning()) + "}";
+                            + ",\"image\":" + quoted(PatternImages.of(it.written(), it.meaning()))
+                            + "}";
             case Core.KernelFact.OrderingSubject it ->
                     "{\"is\":\"orderingsubject\",\"type\":" + type(it.type())
                             + ",\"ordering\":" + ordering(it.ordering()) + "}";
         };
         return "{\"is\":\"kernel\",\"kernel\":" + quoted(target.kernel().key())
                 + ",\"takes\":" + takes + ",\"fact\":" + fact + "}";
-    }
-
-    /**
-     * Which strings a pattern accepts, as the checker read them: its parts, each written once
-     * after the parts it is made of, the whole last.
-     *
-     * <p>A list and not a nested object. A pattern may nest its groups as deep as the checker reads
-     * one, and a document nesting as deep would be refused by a reader for its depth rather than
-     * for anything the pattern says. A part names the parts it is made of by where they stand in
-     * the list, which is always before it.
-     */
-    private static String meaning(PatternMeaning meaning) {
-        List<String> parts = new ArrayList<>();
-        part(meaning, parts);
-        return "[" + String.join(",", parts) + "]";
-    }
-
-    /** Writes {@code meaning}'s parts and then {@code meaning}, answering where it stands. */
-    private static int part(PatternMeaning meaning, List<String> parts) {
-        String written = switch (meaning) {
-            case PatternMeaning.Nothing it -> "{\"is\":\"nothing\"}";
-            case PatternMeaning.Never it -> "{\"is\":\"never\"}";
-            case PatternMeaning.Symbols it -> {
-                StringJoiner ranges = new StringJoiner(",", "[", "]");
-                for (CodePoints.Range range : it.held().ranges()) {
-                    ranges.add("[" + range.from() + "," + range.to() + "]");
-                }
-                yield "{\"is\":\"symbols\",\"ranges\":" + ranges + "}";
-            }
-            case PatternMeaning.InTurn it ->
-                    "{\"is\":\"inturn\",\"parts\":" + parts(it.parts(), parts) + "}";
-            case PatternMeaning.EitherOf it ->
-                    "{\"is\":\"eitherof\",\"arms\":" + parts(it.arms(), parts) + "}";
-            case PatternMeaning.Repeated it -> {
-                int what = part(it.what(), parts);
-                yield "{\"is\":\"repeated\",\"what\":" + what + ",\"least\":" + it.least()
-                        + ",\"most\":" + (it.unbounded() ? "null" : Integer.toString(it.most()))
-                        + "}";
-            }
-        };
-        parts.add(written);
-        return parts.size() - 1;
-    }
-
-    private static String parts(List<PatternMeaning> each, List<String> parts) {
-        StringJoiner at = new StringJoiner(",", "[", "]");
-        for (PatternMeaning one : each) {
-            at.add(Integer.toString(part(one, parts)));
-        }
-        return at.toString();
     }
 
     /** A call reaching the value {@code denotes}, split into the module that declares it and its

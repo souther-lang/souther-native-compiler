@@ -1,0 +1,309 @@
+generation 10
+answers [0, 2147483647]
+case CaseCrossing { case: "Bool", make: RuntimeFunction { name: "souther_case_bool_make", takes: [Given(Bool)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_bool_read", takes: [Given(Value), Room(Bool)], answers: Some(Bool) }) }
+case CaseCrossing { case: "Date", make: RuntimeFunction { name: "souther_case_date_make", takes: [Given(Date)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_date_read", takes: [Given(Value), Room(Date)], answers: Some(Bool) }) }
+case CaseCrossing { case: "DateTime", make: RuntimeFunction { name: "souther_case_datetime_make", takes: [Given(DateTime)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_datetime_read", takes: [Given(Value), Room(DateTime)], answers: Some(Bool) }) }
+case CaseCrossing { case: "Decimal", make: RuntimeFunction { name: "souther_case_decimal_make", takes: [Given(Decimal)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_decimal_read", takes: [Given(Value), Room(Decimal)], answers: Some(Bool) }) }
+case CaseCrossing { case: "DivisionByZero", make: RuntimeFunction { name: "souther_case_division_by_zero_make", takes: [], answers: Some(Value) }, read: None }
+case CaseCrossing { case: "Instant", make: RuntimeFunction { name: "souther_case_instant_make", takes: [Given(Instant)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_instant_read", takes: [Given(Value), Room(Instant)], answers: Some(Bool) }) }
+case CaseCrossing { case: "Int", make: RuntimeFunction { name: "souther_case_int_make", takes: [Given(Int)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_int_read", takes: [Given(Value), Room(Int)], answers: Some(Bool) }) }
+case CaseCrossing { case: "None", make: RuntimeFunction { name: "souther_case_none_make", takes: [], answers: Some(Value) }, read: None }
+case CaseCrossing { case: "NotADate", make: RuntimeFunction { name: "souther_case_not_a_date_make", takes: [], answers: Some(Value) }, read: None }
+case CaseCrossing { case: "NotAFiniteDecimal", make: RuntimeFunction { name: "souther_case_not_a_finite_decimal_make", takes: [], answers: Some(Value) }, read: None }
+case CaseCrossing { case: "NotANumber", make: RuntimeFunction { name: "souther_case_not_a_number_make", takes: [], answers: Some(Value) }, read: None }
+case CaseCrossing { case: "NotATime", make: RuntimeFunction { name: "souther_case_not_a_time_make", takes: [], answers: Some(Value) }, read: None }
+case CaseCrossing { case: "NotWhole", make: RuntimeFunction { name: "souther_case_not_whole_make", takes: [], answers: Some(Value) }, read: None }
+case CaseCrossing { case: "Some", make: RuntimeFunction { name: "souther_case_some_make", takes: [], answers: Some(Value) }, read: None }
+case CaseCrossing { case: "String", make: RuntimeFunction { name: "souther_case_string_make", takes: [Given(String)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_string_read", takes: [Given(Value), Room(String)], answers: Some(Bool) }) }
+case CaseCrossing { case: "Time", make: RuntimeFunction { name: "souther_case_time_make", takes: [Given(Time)], answers: Some(Value) }, read: Some(RuntimeFunction { name: "souther_case_time_read", takes: [Given(Value), Room(Time)], answers: Some(Bool) }) }
+const ANSWERED = 0
+const CAPABILITY_ENVIRONMENT = 8
+const CAPABILITY_INVOKE = 0
+const CARRIED = 8
+const DECODED_ISSUES = 1
+const DECODED_MALFORMED = 2
+const DECODED_VALUE = 0
+const FAKE_NO_OUTPUT = 2147483644
+const FIRST_FIELD = 8
+const FUNCTION_INVOKE = 0
+const HASH_PRESENT = 1
+const HASH_START = 0
+const HELD = 0
+const HOSTED_FUNCTION_HOSTED = 8
+const HOSTED_IMPLEMENTATION = 0
+const HOSTED_USERDATA = 8
+const HOST_EXCEPTION = 2147483647
+const INJECTION_PROTOCOL_VIOLATION = 2147483646
+const INJECTION_UNBOUND = 2147483645
+const LIST_ELEMENTS = 8
+const LIST_LENGTH = 0
+const NOTHING = 0
+const NO_FAILED_CLAUSE = -1
+const PATTERN_IMAGE = 16
+const PATTERN_LENGTH = 8
+const PATTERN_READ = 0
+const SECONDS_PER_DAY = 86400
+const SLOT = 8
+const TEXT_BYTES = 8
+const TEXT_LENGTH = 0
+const WHICH = 0
+generated souther_alloc [Given(Host(Count))] -> Some(Memory)
+generated souther_date_add_days [Given(Host(Int)), Given(Host(Date)), Room(Host(Date))] -> Some(Host(Bool))
+generated souther_date_add_months [Given(Host(Int)), Given(Host(Date)), Room(Host(Date))] -> Some(Host(Bool))
+generated souther_date_add_years [Given(Host(Int)), Given(Host(Date)), Room(Host(Date))] -> Some(Host(Bool))
+generated souther_date_compare [Given(Host(Date)), Given(Host(Date))] -> Some(Comparison)
+generated souther_date_day [Given(Host(Date))] -> Some(Host(Int))
+generated souther_date_days_between [Given(Host(Date)), Given(Host(Date))] -> Some(Host(Int))
+generated souther_date_from_parts [Given(Host(Int)), Given(Host(Int)), Given(Host(Int)), Room(Host(Date))] -> Some(Host(Bool))
+generated souther_date_hash [Given(Host(Date))] -> Some(Hash)
+generated souther_date_literal [Given(Host(Int))] -> Some(Host(Date))
+generated souther_date_month [Given(Host(Date))] -> Some(Host(Int))
+generated souther_date_year [Given(Host(Date))] -> Some(Host(Int))
+generated souther_datetime_add_days [Given(Host(Int)), Given(Host(DateTime)), Room(Host(DateTime))] -> Some(Host(Bool))
+generated souther_datetime_add_hours [Given(Host(Int)), Given(Host(DateTime)), Room(Host(DateTime))] -> Some(Host(Bool))
+generated souther_datetime_add_minutes [Given(Host(Int)), Given(Host(DateTime)), Room(Host(DateTime))] -> Some(Host(Bool))
+generated souther_datetime_compare [Given(Host(DateTime)), Given(Host(DateTime))] -> Some(Comparison)
+generated souther_datetime_from_date_and_time [Given(Host(Date)), Given(Host(Time))] -> Some(Host(DateTime))
+generated souther_datetime_hash [Given(Host(DateTime))] -> Some(Hash)
+generated souther_datetime_literal [Given(Host(Int))] -> Some(Host(DateTime))
+generated souther_datetime_minutes_between [Given(Host(DateTime)), Given(Host(DateTime))] -> Some(Host(Int))
+generated souther_datetime_to_date [Given(Host(DateTime))] -> Some(Host(Date))
+generated souther_datetime_to_time [Given(Host(DateTime))] -> Some(Host(Time))
+generated souther_decimal_add [Given(Host(Decimal)), Given(Host(Decimal)), Room(Host(Decimal))] -> Some(Host(Bool))
+generated souther_decimal_compare [Given(Host(Decimal)), Given(Host(Decimal))] -> Some(Comparison)
+generated souther_decimal_divide [Given(Host(Decimal)), Given(Host(Decimal)), Given(Host(Int)), Given(Host(Value)), Room(Host(Decimal))] -> Some(Host(Bool))
+generated souther_decimal_from_int [Given(Host(Int))] -> Some(Host(Decimal))
+generated souther_decimal_hash [Given(Host(Decimal))] -> Some(Hash)
+generated souther_decimal_is_zero [Given(Host(Decimal))] -> Some(Host(Bool))
+generated souther_decimal_literal [Given(Host(String)), Given(Host(Int))] -> Some(Host(Decimal))
+generated souther_decimal_multiply [Given(Host(Decimal)), Given(Host(Decimal)), Room(Host(Decimal))] -> Some(Host(Bool))
+generated souther_decimal_negate [Given(Host(Decimal))] -> Some(Host(Decimal))
+generated souther_decimal_round [Given(Host(Int)), Given(Host(Value)), Given(Host(Decimal)), Room(Host(Decimal))] -> Some(Host(Bool))
+generated souther_decimal_subtract [Given(Host(Decimal)), Given(Host(Decimal)), Room(Host(Decimal))] -> Some(Host(Bool))
+generated souther_decimal_to_int [Given(Host(Value)), Given(Host(Decimal)), Room(Host(Int))] -> Some(Host(Bool))
+generated souther_decode_abandon [Given(Host(Decoded))] -> None
+generated souther_decode_begin [Given(Host(Bytes)), Given(Host(Count))] -> Some(Host(Decoded))
+generated souther_decode_end [Given(Host(Decoded)), Given(Host(Value))] -> None
+generated souther_decode_host_begin [Given(Host(Bytes)), Given(Host(Count))] -> Some(Host(Decoded))
+generated souther_decode_root [Given(Host(Decoded))] -> Some(Node)
+generated souther_external_append [Given(Form), Given(Form)] -> None
+generated souther_external_array [] -> Some(Form)
+generated souther_external_bool [Given(Host(Bool))] -> Some(Form)
+generated souther_external_date [Given(Host(Date))] -> Some(Form)
+generated souther_external_datetime [Given(Host(DateTime))] -> Some(Form)
+generated souther_external_decimal [Given(Host(Decimal))] -> Some(Form)
+generated souther_external_entries [Given(Form)] -> None
+generated souther_external_instant [Given(Host(Instant))] -> Some(Form)
+generated souther_external_int [Given(Host(Int))] -> Some(Form)
+generated souther_external_json [Given(Form)] -> Some(Host(String))
+generated souther_external_null [] -> Some(Form)
+generated souther_external_object [] -> Some(Form)
+generated souther_external_order [Given(Form)] -> None
+generated souther_external_put [Given(Form), Given(Host(String)), Given(Form)] -> None
+generated souther_external_string [Given(Host(String))] -> Some(Form)
+generated souther_external_time [Given(Host(Time))] -> Some(Form)
+generated souther_hash_combine [Given(Hash), Given(Host(Int))] -> Some(Hash)
+generated souther_instant_compare [Given(Host(Instant)), Given(Host(Instant))] -> Some(Comparison)
+generated souther_instant_hash [Given(Host(Instant))] -> Some(Hash)
+generated souther_instant_literal [Given(Host(Int)), Given(Host(Int))] -> Some(Host(Instant))
+generated souther_list_duplicates [Given(Host(List)), Given(Hasher), Given(Equality)] -> Some(Host(List))
+generated souther_map_contains_key [Given(Map), Given(Host(Int)), Given(Hasher), Given(Equality)] -> Some(Host(Bool))
+generated souther_map_empty [] -> Some(Map)
+generated souther_map_equal [Given(Map), Given(Map), Given(Equality), Given(Equality)] -> Some(Host(Bool))
+generated souther_map_from_list [Given(Host(List)), Given(Hasher), Given(Equality)] -> Some(Map)
+generated souther_map_get [Given(Map), Given(Host(Int)), Given(Hasher), Given(Equality)] -> Some(Held)
+generated souther_map_hash [Given(Map), Given(Hasher)] -> Some(Hash)
+generated souther_map_insert [Given(Map), Given(Host(Int)), Given(Host(Int)), Given(Hasher), Given(Equality), Room(Map)] -> Some(Host(Bool))
+generated souther_map_keys [Given(Map)] -> Some(Host(List))
+generated souther_map_remove [Given(Map), Given(Host(Int)), Given(Hasher), Given(Equality)] -> Some(Map)
+generated souther_map_size [Given(Map)] -> Some(Host(Int))
+generated souther_map_to_list [Given(Map)] -> Some(Host(List))
+generated souther_map_values [Given(Map)] -> Some(Host(List))
+generated souther_path_at [Given(Path), Given(Host(Count))] -> Some(Path)
+generated souther_path_below [Given(Path), Given(Host(String))] -> Some(Path)
+generated souther_path_below_member [Given(Path), Given(Node), Given(Host(Count))] -> Some(Path)
+generated souther_rational_add [Given(Rational), Given(Rational), Room(Rational)] -> Some(Host(Bool))
+generated souther_rational_compare [Given(Rational), Given(Rational)] -> Some(Comparison)
+generated souther_rational_divide [Given(Rational), Given(Rational), Room(Rational)] -> Some(Host(Bool))
+generated souther_rational_from_decimal [Given(Host(Decimal))] -> Some(Rational)
+generated souther_rational_from_int [Given(Host(Int))] -> Some(Rational)
+generated souther_rational_has_finite_decimal [Given(Rational)] -> Some(Host(Bool))
+generated souther_rational_hash [Given(Rational)] -> Some(Hash)
+generated souther_rational_is_whole [Given(Rational)] -> Some(Host(Bool))
+generated souther_rational_is_zero [Given(Rational)] -> Some(Host(Bool))
+generated souther_rational_multiply [Given(Rational), Given(Rational), Room(Rational)] -> Some(Host(Bool))
+generated souther_rational_negate [Given(Rational)] -> Some(Rational)
+generated souther_rational_subtract [Given(Rational), Given(Rational), Room(Rational)] -> Some(Host(Bool))
+generated souther_rational_to_decimal [Given(Host(Int)), Given(Host(Value)), Given(Rational), Room(Host(Decimal))] -> Some(Host(Bool))
+generated souther_rational_to_finite_decimal [Given(Rational), Room(Host(Decimal))] -> Some(Host(Bool))
+generated souther_rational_to_int [Given(Host(Value)), Given(Rational), Room(Host(Int))] -> Some(Host(Bool))
+generated souther_rational_to_whole [Given(Rational), Room(Host(Int))] -> Some(Host(Bool))
+generated souther_read_array [Given(Node), Given(Path), Given(Host(Decoded))] -> Some(Host(Bool))
+generated souther_read_array_length [Given(Node)] -> Some(Host(Count))
+generated souther_read_bool [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Bool))] -> Some(Host(Bool))
+generated souther_read_case [Given(Node), Given(Path), Given(Host(Decoded))] -> Some(Host(Bool))
+generated souther_read_date [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Date))] -> Some(Host(Bool))
+generated souther_read_datetime [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(DateTime))] -> Some(Host(Bool))
+generated souther_read_decimal [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Decimal))] -> Some(Host(Bool))
+generated souther_read_decimal_max [Given(Path), Given(Host(Decoded)), Given(Host(Decimal)), Given(Host(Decimal))] -> Some(Host(Bool))
+generated souther_read_decimal_min [Given(Path), Given(Host(Decoded)), Given(Host(Decimal)), Given(Host(Decimal))] -> Some(Host(Bool))
+generated souther_read_decimal_non_negative [Given(Path), Given(Host(Decoded)), Given(Host(Decimal))] -> Some(Host(Bool))
+generated souther_read_decimal_positive [Given(Path), Given(Host(Decoded)), Given(Host(Decimal))] -> Some(Host(Bool))
+generated souther_read_duplicate_key [Given(Path), Given(Host(Decoded))] -> None
+generated souther_read_duplicates [Given(Path), Given(Host(Decoded)), Given(Form)] -> None
+generated souther_read_element [Given(Node), Given(Host(Count))] -> Some(Node)
+generated souther_read_fixed_length [Given(Path), Given(Host(Decoded)), Given(Host(String)), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_instant [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Instant))] -> Some(Host(Bool))
+generated souther_read_int [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Int))] -> Some(Host(Bool))
+generated souther_read_int_max [Given(Path), Given(Host(Decoded)), Given(Host(Int)), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_int_min [Given(Path), Given(Host(Decoded)), Given(Host(Int)), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_int_non_negative [Given(Path), Given(Host(Decoded)), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_int_positive [Given(Path), Given(Host(Decoded)), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_invariant [Given(Path), Given(Host(Decoded)), Given(Host(String)), Given(Host(String)), Given(Host(String))] -> None
+generated souther_read_is [Given(Node), Given(Host(String))] -> Some(Host(Bool))
+generated souther_read_list_fixed_size [Given(Path), Given(Host(Decoded)), Given(Host(List)), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_list_max_size [Given(Path), Given(Host(Decoded)), Given(Host(List)), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_list_min_size [Given(Path), Given(Host(Decoded)), Given(Host(List)), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_list_non_empty [Given(Path), Given(Host(Decoded)), Given(Host(List))] -> Some(Host(Bool))
+generated souther_read_map_max_size [Given(Path), Given(Host(Decoded)), Given(Map), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_map_min_size [Given(Path), Given(Host(Decoded)), Given(Map), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_map_non_empty [Given(Path), Given(Host(Decoded)), Given(Map)] -> Some(Host(Bool))
+generated souther_read_max_length [Given(Path), Given(Host(Decoded)), Given(Host(String)), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_member [Given(Node), Given(Host(String))] -> Some(Node)
+generated souther_read_member_key [Given(Node), Given(Host(Count))] -> Some(Node)
+generated souther_read_member_value [Given(Node), Given(Host(Count))] -> Some(Node)
+generated souther_read_members [Given(Node)] -> Some(Host(Count))
+generated souther_read_min_length [Given(Path), Given(Host(Decoded)), Given(Host(String)), Given(Host(Int))] -> Some(Host(Bool))
+generated souther_read_missing [Given(Path), Given(Host(Decoded))] -> None
+generated souther_read_not_a_case [Given(Node), Given(Path), Given(Host(Decoded))] -> None
+generated souther_read_null [Given(Node)] -> Some(Host(Bool))
+generated souther_read_object [Given(Node), Given(Path), Given(Host(Decoded))] -> Some(Host(Bool))
+generated souther_read_pattern [Given(Path), Given(Host(Decoded)), Given(Host(String)), Given(Pattern), Given(Host(String))] -> Some(Host(Bool))
+generated souther_read_string [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_read_tag [Given(Node), Given(Host(String)), Given(Path), Given(Host(Decoded))] -> Some(Node)
+generated souther_read_time [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Time))] -> Some(Host(Bool))
+generated souther_set_contains [Given(Set), Given(Host(Int)), Given(Hasher), Given(Equality)] -> Some(Host(Bool))
+generated souther_set_difference [Given(Set), Given(Set), Given(Equality)] -> Some(Set)
+generated souther_set_empty [] -> Some(Set)
+generated souther_set_equal [Given(Set), Given(Set), Given(Equality)] -> Some(Host(Bool))
+generated souther_set_from_list [Given(Host(List)), Given(Hasher), Given(Equality)] -> Some(Set)
+generated souther_set_hash [Given(Set)] -> Some(Hash)
+generated souther_set_insert [Given(Set), Given(Host(Int)), Given(Hasher), Given(Equality), Room(Set)] -> Some(Host(Bool))
+generated souther_set_intersection [Given(Set), Given(Set), Given(Equality)] -> Some(Set)
+generated souther_set_remove [Given(Set), Given(Host(Int)), Given(Hasher), Given(Equality)] -> Some(Set)
+generated souther_set_size [Given(Set)] -> Some(Host(Int))
+generated souther_set_to_list [Given(Set)] -> Some(Host(List))
+generated souther_set_union [Given(Set), Given(Set), Given(Equality), Room(Set)] -> Some(Host(Bool))
+generated souther_string_characters [Given(Host(String))] -> Some(Host(List))
+generated souther_string_code_point_values [Given(Host(String))] -> Some(Host(List))
+generated souther_string_code_points [Given(Host(String))] -> Some(Host(Int))
+generated souther_string_compare [Given(Host(String)), Given(Host(String))] -> Some(Comparison)
+generated souther_string_concat [Given(Host(String)), Given(Host(String)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_concat_all [Given(Host(List)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_contains [Given(Host(String)), Given(Host(String))] -> Some(Host(Bool))
+generated souther_string_ends_with [Given(Host(String)), Given(Host(String))] -> Some(Host(Bool))
+generated souther_string_from_decimal [Given(Host(Decimal)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_from_int [Given(Host(Int))] -> Some(Host(String))
+generated souther_string_hash [Given(Host(String))] -> Some(Hash)
+generated souther_string_join [Given(Host(String)), Given(Host(List)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_lines [Given(Host(String))] -> Some(Host(List))
+generated souther_string_lowercase [Given(Host(String)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_matches [Given(Pattern), Given(Host(String))] -> Some(Host(Bool))
+generated souther_string_pad_left [Given(Host(Int)), Given(Host(String)), Given(Host(String)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_pad_right [Given(Host(Int)), Given(Host(String)), Given(Host(String)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_repeat [Given(Host(Int)), Given(Host(String)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_replace [Given(Host(String)), Given(Host(String)), Given(Host(String)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_reverse [Given(Host(String)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_slice [Given(Host(Int)), Given(Host(Int)), Given(Host(String)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_split [Given(Host(String)), Given(Host(String))] -> Some(Host(List))
+generated souther_string_starts_with [Given(Host(String)), Given(Host(String))] -> Some(Host(Bool))
+generated souther_string_to_decimal [Given(Host(String)), Room(Host(Decimal))] -> Some(Host(Bool))
+generated souther_string_to_int [Given(Host(String)), Room(Host(Int))] -> Some(Host(Bool))
+generated souther_string_trim [Given(Host(String))] -> Some(Host(String))
+generated souther_string_uppercase [Given(Host(String)), Room(Host(String))] -> Some(Host(Bool))
+generated souther_string_words [Given(Host(String))] -> Some(Host(List))
+generated souther_time_compare [Given(Host(Time)), Given(Host(Time))] -> Some(Comparison)
+generated souther_time_from_parts [Given(Host(Int)), Given(Host(Int)), Given(Host(Int)), Room(Host(Time))] -> Some(Host(Bool))
+generated souther_time_hash [Given(Host(Time))] -> Some(Hash)
+generated souther_time_hour [Given(Host(Time))] -> Some(Host(Int))
+generated souther_time_literal [Given(Host(Int))] -> Some(Host(Time))
+generated souther_time_minute [Given(Host(Time))] -> Some(Host(Int))
+generated souther_time_second [Given(Host(Time))] -> Some(Host(Int))
+hashing 0 Int, Bool: combine(START, n)
+hashing 1 String, Decimal, Rational, Date, Time, DateTime, Instant: the runtime's hash
+hashing 2 tagged: combine(START, token), then each field or what is carried
+hashing 3 sum, union: as the case the value is
+hashing 4 optional: START if absent, else combine(PRESENT, held)
+hashing 5 tuple: each member from START; list: combine(START, length), then each element
+hashing 6 set: souther_set_hash; map: souther_map_hash(values' hasher)
+hashing 7 what has no value: START; what holds only it, as what holds anything
+host RuntimeFunction { name: "souther_date_of_parts", takes: [Given(Int), Given(Int), Given(Int), Room(Date)], answers: Some(Bool) }
+host RuntimeFunction { name: "souther_date_parts", takes: [Given(Date), Room(Int), Room(Int), Room(Int)], answers: None }
+host RuntimeFunction { name: "souther_datetime_of_parts", takes: [Given(Int), Given(Int), Given(Int), Given(Int), Given(Int), Given(Int), Room(DateTime)], answers: Some(Bool) }
+host RuntimeFunction { name: "souther_datetime_parts", takes: [Given(DateTime), Room(Int), Room(Int), Room(Int), Room(Int), Room(Int), Room(Int)], answers: None }
+host RuntimeFunction { name: "souther_decimal_of_parts", takes: [Given(Bytes), Given(Count), Given(Int), Room(Decimal)], answers: Some(Bool) }
+host RuntimeFunction { name: "souther_decimal_scale", takes: [Given(Decimal)], answers: Some(Int) }
+host RuntimeFunction { name: "souther_decimal_unscaled", takes: [Given(Decimal)], answers: Some(String) }
+host RuntimeFunction { name: "souther_decoded_issue", takes: [Given(Decoded), Given(Count)], answers: Some(Issue) }
+host RuntimeFunction { name: "souther_decoded_issue_count", takes: [Given(Decoded)], answers: Some(Count) }
+host RuntimeFunction { name: "souther_decoded_malformed_at", takes: [Given(Decoded)], answers: Some(Count) }
+host RuntimeFunction { name: "souther_decoded_outcome", takes: [Given(Decoded)], answers: Some(Outcome) }
+host RuntimeFunction { name: "souther_decoded_value", takes: [Given(Decoded)], answers: Some(Value) }
+host RuntimeFunction { name: "souther_instant_of_parts", takes: [Given(Int), Given(Int), Room(Instant)], answers: Some(Bool) }
+host RuntimeFunction { name: "souther_instant_parts", takes: [Given(Instant), Room(Int), Room(Int)], answers: None }
+host RuntimeFunction { name: "souther_issue_code", takes: [Given(Issue)], answers: Some(String) }
+host RuntimeFunction { name: "souther_issue_message_key", takes: [Given(Issue)], answers: Some(String) }
+host RuntimeFunction { name: "souther_issue_meta", takes: [Given(Issue)], answers: Some(String) }
+host RuntimeFunction { name: "souther_issue_path", takes: [Given(Issue)], answers: Some(String) }
+host RuntimeFunction { name: "souther_release", takes: [], answers: None }
+host RuntimeFunction { name: "souther_scope_close", takes: [Given(Scope)], answers: Some(Bool) }
+host RuntimeFunction { name: "souther_scope_open", takes: [], answers: Some(Scope) }
+host RuntimeFunction { name: "souther_string_bytes", takes: [Given(String)], answers: Some(Bytes) }
+host RuntimeFunction { name: "souther_string_length", takes: [Given(String)], answers: Some(Count) }
+host RuntimeFunction { name: "souther_string_of_utf8", takes: [Given(Bytes), Given(Count), Room(String)], answers: Some(Bool) }
+host RuntimeFunction { name: "souther_time_of_parts", takes: [Given(Int), Given(Int), Given(Int), Room(Time)], answers: Some(Bool) }
+host RuntimeFunction { name: "souther_time_parts", takes: [Given(Time), Room(Int), Room(Int), Room(Int)], answers: None }
+input bool: a byte without a sign, true where it is not nought
+input bytes: read for as many as the count says where the count is above nought; a count below nought is a datum refused, and what the bytes say is a datum
+input datum: answered whatever it is; one a function does not take is refused by what it answers, and ends nothing
+input handle: one the library answered, of the type the function names, whose scope is open on the calling thread
+release after: the library is used as before, and works out again what it had kept
+release again: dropping nothing kept is nothing
+release drops: what the library keeps beyond any scope, and nothing a scope holds
+release when: before the library is unloaded, with no call into it in flight on any thread
+reserved 2147483632..=2147483647
+runtime says souther_runtime_abi_10
+scope arena: one to each thread
+scope close-order: the innermost open scope of the calling thread, and no other
+scope close-refused: answered as false, and nothing changes
+scope token: never answered twice, on any thread
+scope value-life: until the scope it was made in closes, on the thread that made it
+status FAKE_NO_OUTPUT = 2147483644
+status HOST_EXCEPTION = 2147483647
+status INJECTION_PROTOCOL_VIOLATION = 2147483646
+status INJECTION_UNBOUND = 2147483645
+storage souther_capability: 2 slots of 8 bytes, aligned to 8
+storage souther_hosted: 2 slots of 8 bytes, aligned to 8
+storage souther_hosted_function: 3 slots of 8 bytes, aligned to 8
+word bool: U8, datum
+word bytes: Address, datum
+word capability: Address, handle
+word case: U32, datum
+word count: I64, datum
+word date: Address, handle
+word datetime: Address, handle
+word decimal: Address, handle
+word decoded: Address, handle
+word function: Address, handle
+word instant: Address, handle
+word int: I64, datum
+word issue: Address, handle
+word list: Address, handle
+word outcome: I32, datum
+word requirements: Address, handle
+word scope: I64, datum
+word status: U32, datum
+word string: Address, handle
+word time: Address, handle
+word userdata: Address, handle
+word value: Address, handle

@@ -117,7 +117,11 @@ const MAX_LOCAL: i64 = MAX_DAY * SECONDS_PER_DAY + SECONDS_PER_DAY - 1;
 
 /// The first and the last second an `Instant` holds. A year wider than a `Date` holds at each end,
 /// as `java.time.Instant` has: `-1000000000-01-01T00:00:00Z` to `+1000000000-12-31T23:59:59.999999999Z`.
+/// What is read is held to them by 199x-notation and what is made by `INSTANT_SECONDS`, so these
+/// are what both are tested against.
+#[cfg(test)]
 const MIN_MOMENT: i64 = days_from_civil(-1_000_000_000, 1, 1) * SECONDS_PER_DAY;
+#[cfg(test)]
 const MAX_MOMENT: i64 = (days_from_civil(1_000_000_000, 12, 31) + 1) * SECONDS_PER_DAY - 1;
 
 // What is written: the text `toString` of the type's `java.time` counterpart answers, which is
@@ -189,8 +193,8 @@ fn instant_text(second: i64, nano: i64) -> String {
     written
 }
 
-// What is read: the text Raoh accepts for each type, which is a regular language over ASCII that
-// this reads directly, and which everything `toString` of the counterpart writes belongs to.
+// What is read: the text Raoh and Souther accept for each type, which is 199x-notation's to say.
+// It answers the fields a text writes, and the numbers they are kept as are worked out here.
 
 /// Why text is not a value of a type that only some text is.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -198,215 +202,43 @@ pub(crate) enum Refusal {
     /// It is not written as the type is, or it names what the calendar does not have.
     Format,
     /// It names a time a `Time` or a `DateTime` would have to round: it carries a fraction of a
-    /// second that is not nought. Neither drops it (spec §a-local-temporal-is-held-to-the-second).
+    /// second, even one of nought. Neither drops it (spec §a-local-temporal-is-held-to-the-second):
+    /// `09:30:00.000` and `09:30:00` name one second once the fraction is taken, so the text and not
+    /// the value decides.
     Fraction,
 }
 
-struct Reader<'a> {
-    text: &'a [u8],
-    at: usize,
+/// The day a date counts, from 1970-01-01.
+fn day_of(date: &notation199x::TemporalDate) -> i64 {
+    days_from_civil(
+        i64::from(date.year),
+        i64::from(date.month),
+        i64::from(date.day),
+    )
 }
 
-impl<'a> Reader<'a> {
-    fn of(text: &'a [u8]) -> Self {
-        Reader { text, at: 0 }
-    }
-
-    fn peek(&self) -> Option<u8> {
-        self.text.get(self.at).copied()
-    }
-
-    fn eat(&mut self, byte: u8) -> bool {
-        let there = self.peek() == Some(byte);
-        if there {
-            self.at += 1;
-        }
-        there
-    }
-
-    /// Exactly `count` ASCII digits, as the number they write.
-    fn digits(&mut self, count: usize) -> Option<i64> {
-        let run = self.text.get(self.at..self.at + count)?;
-        if !run.iter().all(u8::is_ascii_digit) {
-            return None;
-        }
-        self.at += count;
-        Some(
-            run.iter()
-                .fold(0, |sum, digit| sum * 10 + i64::from(digit - b'0')),
-        )
-    }
-
-    /// Every ASCII digit that follows.
-    fn run(&mut self) -> &'a [u8] {
-        let start = self.at;
-        while self.peek().is_some_and(|it| it.is_ascii_digit()) {
-            self.at += 1;
-        }
-        &self.text[start..self.at]
-    }
-
-    fn finished(&self) -> bool {
-        self.at == self.text.len()
-    }
-}
-
-/// A year as `LocalDate.toString` writes it: four digits and no sign for 0000 to 9999, and
-/// otherwise a sign and as many digits as it takes but no fewer than four and no leading zero
-/// beyond them. So `+2024` and `-0000` are no year. Not held to what a `Date` holds: an `Instant`
-/// has years past it.
-fn read_year(from: &mut Reader) -> Option<i64> {
-    let sign = match from.peek() {
-        Some(b'+') => Some(false),
-        Some(b'-') => Some(true),
-        _ => None,
-    };
-    if sign.is_some() {
-        from.at += 1;
-    }
-    let run = from.run();
-    let long = (5..=10).contains(&run.len()) && run[0] != b'0';
-    let fits = match sign {
-        None => run.len() == 4,
-        Some(false) => long,
-        Some(true) => (run.len() == 4 && run != b"0000") || long,
-    };
-    if !fits {
-        return None;
-    }
-    let year = run
-        .iter()
-        .fold(0, |sum, digit| sum * 10 + i64::from(digit - b'0'));
-    Some(if sign == Some(true) { -year } else { year })
-}
-
-/// `yyyy-MM-dd`, as the year, the month and the day, of a day the calendar has.
-fn read_date(from: &mut Reader) -> Option<(i64, i64, i64)> {
-    let year = read_year(from)?;
-    if !from.eat(b'-') {
-        return None;
-    }
-    let month = from.digits(2)?;
-    if !from.eat(b'-') {
-        return None;
-    }
-    let day = from.digits(2)?;
-    ((1..=12).contains(&month) && (1..=month_length(year, month)).contains(&day))
-        .then_some((year, month, day))
-}
-
-/// `HH:mm`, and then `:ss` with as many as nine digits of fraction after a point. Whether the
-/// numbers name a time is the caller's: an `Instant` takes hour 24, a `Time` does not.
-struct Clock {
-    hour: i64,
-    minute: i64,
-    second: i64,
-    nano: i64,
-    /// Whether a point was written, whatever digits followed it. A `Time` and a `DateTime` refuse
-    /// this on its own: `09:30:00.000` and `09:30:00` name one second once `nano` is taken, so
-    /// asking `nano != 0` after the point is read would admit the first as the second (spec
-    /// §a-local-temporal-is-held-to-the-second) — the same substitution the text is refused for
-    /// naming a leap second is refused for here, made by asking the value instead of the text.
-    has_fraction: bool,
-}
-
-fn read_clock(from: &mut Reader, seconds_required: bool) -> Option<Clock> {
-    let hour = from.digits(2)?;
-    if !from.eat(b':') {
-        return None;
-    }
-    let minute = from.digits(2)?;
-    let (mut second, mut nano, mut has_fraction) = (0, 0, false);
-    if from.eat(b':') {
-        second = from.digits(2)?;
-        if from.eat(b'.') {
-            has_fraction = true;
-            let fraction = from.run();
-            if !(1..=9).contains(&fraction.len()) {
-                return None;
-            }
-            nano = fraction
-                .iter()
-                .chain(core::iter::repeat_n(&b'0', 9 - fraction.len()))
-                .fold(0, |sum, digit| sum * 10 + i64::from(digit - b'0'));
-        }
-    } else if seconds_required {
-        return None;
-    }
-    Some(Clock {
-        hour,
-        minute,
-        second,
-        nano,
-        has_fraction,
-    })
-}
-
-/// The time of day a local clock names, held to the second: none where the numbers name no time,
-/// and a refusal where the text carried a point, whatever digits followed it.
-fn local_time(clock: &Clock) -> Result<i64, Refusal> {
-    if clock.hour > 23 || clock.minute > 59 || clock.second > 59 {
-        return Err(Refusal::Format);
-    }
-    if clock.has_fraction {
+/// The second of the day a local clock names, held to the second.
+fn local_time(time: &notation199x::TemporalTime) -> Result<i64, Refusal> {
+    if time.nanosecond.is_some() {
         return Err(Refusal::Fraction);
     }
-    Ok(clock.hour * 3600 + clock.minute * 60 + clock.second)
+    Ok(i64::from(time.hour) * 3600 + i64::from(time.minute) * 60 + i64::from(time.second))
 }
 
 /// The day the text names, which is one a `Date` holds.
-pub(crate) fn parse_date(text: &[u8]) -> Option<i64> {
-    let mut from = Reader::of(text);
-    let (year, month, day) = read_date(&mut from)?;
-    (from.finished() && (MIN_YEAR..=MAX_YEAR).contains(&year))
-        .then(|| days_from_civil(year, month, day))
+pub(crate) fn parse_date(text: &str) -> Option<i64> {
+    notation199x::read_date(text).ok().map(|date| day_of(&date))
 }
 
 /// The second of the day the text names.
-pub(crate) fn parse_time(text: &[u8]) -> Result<i64, Refusal> {
-    let mut from = Reader::of(text);
-    let clock = read_clock(&mut from, false).ok_or(Refusal::Format)?;
-    if !from.finished() {
-        return Err(Refusal::Format);
-    }
-    local_time(&clock)
+pub(crate) fn parse_time(text: &str) -> Result<i64, Refusal> {
+    local_time(&notation199x::read_time(text).map_err(|_| Refusal::Format)?)
 }
 
 /// The second the text names, counted as a `DateTime` counts it.
-pub(crate) fn parse_date_time(text: &[u8]) -> Result<i64, Refusal> {
-    let mut from = Reader::of(text);
-    let (year, month, day) = read_date(&mut from).ok_or(Refusal::Format)?;
-    if !(MIN_YEAR..=MAX_YEAR).contains(&year) || !from.eat(b'T') {
-        return Err(Refusal::Format);
-    }
-    let clock = read_clock(&mut from, false).ok_or(Refusal::Format)?;
-    if !from.finished() {
-        return Err(Refusal::Format);
-    }
-    Ok(days_from_civil(year, month, day) * SECONDS_PER_DAY + local_time(&clock)?)
-}
-
-/// `Z`, or a sign and `HH:mm` and then `:ss`, as the seconds it is east of UTC. Held to what
-/// `ZoneOffset` holds: eighteen hours either way.
-fn read_offset(from: &mut Reader) -> Option<i64> {
-    if from.eat(b'Z') {
-        return Some(0);
-    }
-    let sign = if from.eat(b'+') {
-        1
-    } else if from.eat(b'-') {
-        -1
-    } else {
-        return None;
-    };
-    let hours = from.digits(2)?;
-    if !from.eat(b':') {
-        return None;
-    }
-    let minutes = from.digits(2)?;
-    let seconds = if from.eat(b':') { from.digits(2)? } else { 0 };
-    let total = hours * 3600 + minutes * 60 + seconds;
-    (minutes <= 59 && seconds <= 59 && total <= 18 * 3600).then_some(sign * total)
+pub(crate) fn parse_date_time(text: &str) -> Result<i64, Refusal> {
+    let read = notation199x::read_date_time(text).map_err(|_| Refusal::Format)?;
+    Ok(day_of(&read.date) * SECONDS_PER_DAY + local_time(&read.time)?)
 }
 
 /// The moment the text names, as its second and its nanosecond in UTC: a date, a `T`, a time with
@@ -415,34 +247,9 @@ fn read_offset(from: &mut Reader) -> Option<i64> {
 /// The end of a day, 24:00:00, is the start of the next. A leap second is no moment: the second
 /// after 59 is refused and not read as the one before it, which would be a different moment than
 /// the text says (spec §a-leap-second-is-no-moment).
-pub(crate) fn parse_instant(text: &[u8]) -> Option<(i64, i64)> {
-    let mut from = Reader::of(text);
-    let (year, month, date) = read_date(&mut from)?;
-    if !from.eat(b'T') {
-        return None;
-    }
-    let clock = read_clock(&mut from, true)?;
-    let offset = read_offset(&mut from)?;
-    if !from.finished() || clock.minute > 59 || clock.second > 59 {
-        return None;
-    }
-    // 24:00:00 is admitted only where nothing follows it: no minute, no second, and no written
-    // fraction, even one of nought. A fraction of nought collapses to the same moment once read,
-    // which is exactly why its presence has to be decided from the text and not from clock.nano:
-    // asking the value here would let "T24:00:00.000Z" through unable to tell it from
-    // "T24:00:00Z", the same substitution local_time refuses a Time and a DateTime for.
-    let end_of_day = clock.hour == 24;
-    if clock.hour > 24
-        || (end_of_day && (clock.minute != 0 || clock.second != 0 || clock.has_fraction))
-    {
-        return None;
-    }
-    let second = (days_from_civil(year, month, date) * SECONDS_PER_DAY)
-        .checked_add(clock.hour * 3600 + clock.minute * 60 + clock.second)?
-        .checked_sub(offset)?;
-    (MIN_MOMENT..=MAX_MOMENT)
-        .contains(&second)
-        .then_some((second, clock.nano))
+pub(crate) fn parse_instant(text: &str) -> Option<(i64, i64)> {
+    let read = notation199x::read_instant(text).ok()?;
+    Some((read.epoch_second, i64::from(read.nanosecond)))
 }
 
 /// Room in the arena holding these numbers, a slot to each.
@@ -1402,6 +1209,18 @@ mod tests {
         assert_eq!(MIN_DAY..=MAX_DAY, DATE_DAYS);
         assert_eq!(MIN_LOCAL..=MAX_LOCAL, DATE_TIME_SECONDS);
         assert_eq!(MIN_MOMENT..=MAX_MOMENT, INSTANT_SECONDS);
+        // And text is read as a temporal by 199x-notation, which has to hold the same ends.
+        assert_eq!(
+            (MIN_DAY, MAX_DAY),
+            (
+                days_from_civil(notation199x::YEAR_MIN, 1, 1),
+                days_from_civil(notation199x::YEAR_MAX, 12, 31)
+            )
+        );
+        assert_eq!(
+            MIN_MOMENT..=MAX_MOMENT,
+            notation199x::INSTANT_MIN..=notation199x::INSTANT_MAX
+        );
         assert_eq!(MIN_DAY, -365_243_219_162);
         assert_eq!(MAX_MOMENT, 31_556_889_864_403_199);
     }
@@ -1431,7 +1250,7 @@ mod tests {
             (MAX_DAY, "+999999999-12-31"),
         ] {
             assert_eq!(date_text(days), written);
-            assert_eq!(parse_date(written.as_bytes()), Some(days), "{written}");
+            assert_eq!(parse_date(written), Some(days), "{written}");
         }
     }
 
@@ -1453,9 +1272,9 @@ mod tests {
             "2026-07-25 ",
             "",
         ] {
-            assert_eq!(parse_date(refused.as_bytes()), None, "{refused:?}");
+            assert_eq!(parse_date(refused), None, "{refused:?}");
         }
-        assert!(parse_date("2024-02-29".as_bytes()).is_some());
+        assert!(parse_date("2024-02-29").is_some());
     }
 
     /// A time is held to the second, and its seconds are written only where there are some.
@@ -1468,20 +1287,14 @@ mod tests {
             (86_399, "23:59:59"),
         ] {
             assert_eq!(time_text(second), written);
-            assert_eq!(parse_time(written.as_bytes()), Ok(second));
+            assert_eq!(parse_time(written), Ok(second));
         }
-        assert_eq!(parse_time("09:30:00".as_bytes()), Ok(9 * 3600 + 30 * 60));
+        assert_eq!(parse_time("09:30:00"), Ok(9 * 3600 + 30 * 60));
         // A fraction of nought names the same second as no fraction at all once read, and is
         // refused for that: reading it back would not tell the two texts apart.
-        assert_eq!(
-            parse_time("09:30:00.000".as_bytes()),
-            Err(Refusal::Fraction)
-        );
-        assert_eq!(parse_time("09:30:00.5".as_bytes()), Err(Refusal::Fraction));
-        assert_eq!(
-            parse_time("09:30:00.000000001".as_bytes()),
-            Err(Refusal::Fraction)
-        );
+        assert_eq!(parse_time("09:30:00.000"), Err(Refusal::Fraction));
+        assert_eq!(parse_time("09:30:00.5"), Err(Refusal::Fraction));
+        assert_eq!(parse_time("09:30:00.000000001"), Err(Refusal::Fraction));
         for refused in [
             "24:00",
             "9:30",
@@ -1494,11 +1307,7 @@ mod tests {
             "T09:30",
             "09:30Z",
         ] {
-            assert_eq!(
-                parse_time(refused.as_bytes()),
-                Err(Refusal::Format),
-                "{refused:?}"
-            );
+            assert_eq!(parse_time(refused), Err(Refusal::Format), "{refused:?}");
         }
     }
 
@@ -1506,27 +1315,18 @@ mod tests {
     fn a_date_time_is_a_date_and_a_time() {
         let second = days_from_civil(2026, 7, 25) * SECONDS_PER_DAY + 9 * 3600 + 30 * 60;
         assert_eq!(date_time_text(second), "2026-07-25T09:30");
-        assert_eq!(parse_date_time("2026-07-25T09:30".as_bytes()), Ok(second));
+        assert_eq!(parse_date_time("2026-07-25T09:30"), Ok(second));
+        assert_eq!(parse_date_time("2026-07-25T09:30:00"), Ok(second));
         assert_eq!(
-            parse_date_time("2026-07-25T09:30:00".as_bytes()),
-            Ok(second)
-        );
-        assert_eq!(
-            parse_date_time("2026-07-25T09:30:00.1".as_bytes()),
+            parse_date_time("2026-07-25T09:30:00.1"),
             Err(Refusal::Fraction)
         );
         assert_eq!(
-            parse_date_time("2026-07-25T09:30:00.000".as_bytes()),
+            parse_date_time("2026-07-25T09:30:00.000"),
             Err(Refusal::Fraction)
         );
-        assert_eq!(
-            parse_date_time("2026-07-25".as_bytes()),
-            Err(Refusal::Format)
-        );
-        assert_eq!(
-            parse_date_time("2026-07-25t09:30".as_bytes()),
-            Err(Refusal::Format)
-        );
+        assert_eq!(parse_date_time("2026-07-25"), Err(Refusal::Format));
+        assert_eq!(parse_date_time("2026-07-25t09:30"), Err(Refusal::Format));
         let before = days_from_civil(1969, 12, 31) * SECONDS_PER_DAY + 86_399;
         assert_eq!(date_time_text(before), "1969-12-31T23:59:59");
         assert_eq!(date_time_text(MIN_LOCAL), "-999999999-01-01T00:00");
@@ -1545,7 +1345,7 @@ mod tests {
             ),
             ("1969-12-31T23:59:59.999999999Z", -1, 999_999_999),
         ] {
-            let read = parse_instant(written.as_bytes()).expect(written);
+            let read = parse_instant(written).expect(written);
             assert_eq!(read, (second, nano), "{written}");
         }
         assert_eq!(instant_text(0, 0), "1970-01-01T00:00:00Z");
@@ -1563,22 +1363,19 @@ mod tests {
     #[test]
     fn an_offset_names_the_moment_the_z_form_of_it_names() {
         assert_eq!(
-            parse_instant("2026-07-25T09:30:00+09:00".as_bytes()),
-            parse_instant("2026-07-25T00:30:00Z".as_bytes())
+            parse_instant("2026-07-25T09:30:00+09:00"),
+            parse_instant("2026-07-25T00:30:00Z")
         );
         assert_eq!(
-            parse_instant("2026-07-25T00:30:00-01:30:15".as_bytes()),
-            parse_instant("2026-07-25T02:00:15Z".as_bytes())
+            parse_instant("2026-07-25T00:30:00-01:30:15"),
+            parse_instant("2026-07-25T02:00:15Z")
         );
         assert_eq!(
-            parse_instant("2026-07-25T24:00:00Z".as_bytes()),
-            parse_instant("2026-07-26T00:00:00Z".as_bytes())
+            parse_instant("2026-07-25T24:00:00Z"),
+            parse_instant("2026-07-26T00:00:00Z")
         );
-        assert!(parse_instant("2026-07-25T00:00:00+18:00".as_bytes()).is_some());
-        assert_eq!(
-            parse_instant("2026-07-25T00:00:00+18:00:01".as_bytes()),
-            None
-        );
+        assert!(parse_instant("2026-07-25T00:00:00+18:00").is_some());
+        assert_eq!(parse_instant("2026-07-25T00:00:00+18:00:01"), None);
     }
 
     #[test]
@@ -1607,12 +1404,10 @@ mod tests {
             "-1000000001-12-31T23:59:59Z",
             "2026-02-30T00:00:00Z",
         ] {
-            assert_eq!(parse_instant(refused.as_bytes()), None, "{refused:?}");
+            assert_eq!(parse_instant(refused), None, "{refused:?}");
         }
-        assert!(parse_instant("+1000000000-12-31T23:59:59.999999999Z".as_bytes()).is_some());
-        assert!(parse_instant("-1000000000-01-01T00:00:00Z".as_bytes()).is_some());
-        assert!(
-            parse_instant("+1000000000-12-31T23:59:59.999999999-00:00:01".as_bytes()).is_none()
-        );
+        assert!(parse_instant("+1000000000-12-31T23:59:59.999999999Z").is_some());
+        assert!(parse_instant("-1000000000-01-01T00:00:00Z").is_some());
+        assert!(parse_instant("+1000000000-12-31T23:59:59.999999999-00:00:01").is_none());
     }
 }

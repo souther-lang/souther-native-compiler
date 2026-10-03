@@ -53,7 +53,7 @@ public final class GoBindings {
      * The protocol of the runtime module this writes for: what its public surface is, as recorded
      * under {@code bindings/go/runtime/protocol}. A test holds it to the runtime's own.
      */
-    static final int RUNTIME_PROTOCOL = 3;
+    static final int RUNTIME_PROTOCOL = 4;
 
     /**
      * The version of Raoh the runtime module asks for, which a package that imports it asks for as

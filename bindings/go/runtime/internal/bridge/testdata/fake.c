@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 #ifndef ABI
-#define ABI 9
+#define ABI 10
 #endif
 
 /* A library with a thread-local variable is one macOS does not unload, as the real one is; a test of
@@ -131,6 +131,18 @@ void fake_bind(souther_capability *into, const souther_capability *const *requir
 /* A behavior bound to what it requires: it asks the first requirement. */
 souther_status fake_run(const souther_capability *const *requirements, int64_t x, int64_t *out) {
     return fake_call(requirements[0], x, out);
+}
+
+/* Says that the library was released, before the file is unloaded, for the same test. */
+void souther_release(void) {
+    const char *where = getenv("SOUTHER_FAKE_UNLOADED");
+    if (where != NULL) {
+        FILE *file = fopen(where, "a");
+        if (file != NULL) {
+            fputs("r", file);
+            fclose(file);
+        }
+    }
 }
 
 /* Says that the file was unloaded, for a test that asks whether a load that failed unloaded it. */

@@ -43,6 +43,10 @@
         <assertj.version>3.27.6</assertj.version>
         <jackson.version>3.2.2</jackson.version>
         <raoh.version>0.8.0</raoh.version>
+        <!-- What writes a pattern's machine as an image the runtime reads with the Rust crate of the same
+             repository: the formats are 199x-notation's, so the two read an image alike whichever release
+             wrote it. Java's is released; the Rust crate is a commit of develop (native/Cargo.toml). -->
+        <notation199x.version>0.1.0</notation199x.version>
         <!-- What every file a jar holds is dated, so that building the same sources twice writes the same
              jar. The release embeds the checksum of each generator's jar in the compiler, and what it
              publishes has to be what it checksummed. -->
@@ -56,7 +60,7 @@
              is for. Held to BindingApi.MAJOR and ManifestReader.ABI by the launcher's tests, which load
              the jars as the command does and are refused otherwise. -->
         <souther.bindings.api>1</souther.bindings.api>
-        <souther.abi.generations>9</souther.abi.generations>
+        <souther.abi.generations>10</souther.abi.generations>
     </properties>
 
     <modules>
@@ -95,6 +99,11 @@
                 <groupId>tools.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
                 <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.unit8.199x</groupId>
+                <artifactId>199x-notation</artifactId>
+                <version>${notation199x.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

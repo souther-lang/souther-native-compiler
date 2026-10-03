@@ -7,7 +7,7 @@ use std::ffi::c_void;
 use std::marker::PhantomData;
 use std::ptr::{self, NonNull};
 
-/// Room a host lays out and owns and never reads, as ABI generation 9 ([`crate::ABI_GENERATION`])
+/// Room a host lays out and owns and never reads, as the ABI generation ([`crate::ABI_GENERATION`])
 /// states it: as many slots as each takes, a slot a `u64`, and no field. What stands in it is the
 /// generated code's alone.
 const CAPABILITY_SLOTS: usize = 2;

@@ -142,8 +142,8 @@ spelt apart: `souther<n>`, `<n>` being the ABI generation, then the module as `_
 segment of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape
 a list's element crosses in, or `_fn_` and the shape of a function value, and then what is done with
 it. A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther9_m_shop_b_quote` at generation
-9, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther10_m_shop_b_quote` at generation
+10, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
 `_` or `u`, which keeps every spelling readable back to the names it was made from. The functions
 that spell each name are in [`native/crates/abi/src/lib.rs`](../native/crates/abi/src/lib.rs), each
 with what the function it names takes and answers.
@@ -282,3 +282,13 @@ whatever works on one arena shares, so two loads of one file are one runtime.
 
 A library is loaded, asked `souther_abi_generation`, and only then looked up further. Everything
 else a runtime does with it follows the words, the input contract and the scope contract above.
+
+A library keeps one thing beyond any scope: a pattern it read from the image the object carries,
+so that the image is read once however often the pattern is matched. That is kept on the runtime's
+heap and not in the object, so unloading the library does not drop it. A host that unloads a library
+calls `souther_release` first, with no call into the library in flight on any thread; it drops what
+the library kept and leaves it usable, and calling it again drops nothing. A host that keeps a
+library loaded for as long as the process runs never has to call it. The release contract is the
+record's `release` lines. The Rust runtime calls it when a `NativeLibrary` is dropped, which unloads
+the library; the Go runtime unloads a library only where loading it failed and nothing was called,
+and the PHP runtime keeps a library for as long as the process runs.

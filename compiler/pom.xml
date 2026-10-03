@@ -38,6 +38,11 @@
             <groupId>org.souther-lang</groupId>
             <artifactId>souther-runtime</artifactId>
         </dependency>
+        <!-- What writes the machine of a pattern the checker read as the image the runtime reads. -->
+        <dependency>
+            <groupId>net.unit8.199x</groupId>
+            <artifactId>199x-notation</artifactId>
+        </dependency>
         <!-- What reads the manifest the driver writes, which is this command's and no generator's. -->
         <dependency>
             <groupId>net.unit8.raoh</groupId>

@@ -1,79 +1,57 @@
-//! What a `String.matches` pattern is lowered to, and where an object keeps it.
+//! What a `String.matches` pattern or a clause's pattern is lowered to, and where an object keeps
+//! it.
 //!
-//! The checker read the pattern and what crossed is what it means ([`PatternPart`]); nothing here
-//! reads pattern text. That meaning is compiled to a machine by `souther_text::pattern`, which is
-//! also what runs it, so what a word of the machine means is written in one place for both the
-//! object that carries it and the runtime that reads it. A pattern says the same thing every run,
-//! so its machine is written into the object as data, once however many calls match against it,
-//! the way a string literal is.
+//! The checker read the pattern, and what crossed is the machine of what it read, written as an
+//! image by 199x-notation, whose formats every implementation that reads them reads alike. Nothing
+//! here reads pattern text, and nothing here builds a machine: the image is held to the format it
+//! says it is written in ([`check`]) and written into the object as it is, and the runtime reads it
+//! with the same crate, once however many calls match against it. A pattern says the same thing
+//! every run, so its image is written into the object as data, once however many calls match
+//! against it, the way a string literal is.
 //!
-//! Every named item here says why a machine is held the way it is, so this module denies an item
+//! Every named item here says why a pattern is held the way it is, so this module denies an item
 //! without documentation.
 
 #![deny(clippy::missing_docs_in_private_items)]
 
-use crate::transport::PatternPart;
 use crate::{POINTER, accepted, index};
 use cranelift::codegen::ir::{self, InstBuilder};
 use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{DataDescription, DataId, Module};
 use cranelift::object::ObjectModule;
-use souther_text::pattern::{self, NotAReading, Part};
+use notation199x::{NotAnImage, Pattern};
+use souther_native_abi::{PATTERN_IMAGE, PATTERN_LENGTH, SLOT};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-/// The machine what a pattern means compiles to: every reading of a pattern compiles, whatever
-/// it counts, so what it refuses is no reading.
-pub(crate) fn machine(meaning: &[PatternPart]) -> Result<Vec<u32>, NotAReading> {
-    pattern::compile(&parts(meaning))
+/// Whether what crossed as a pattern's image is one, read as the runtime will read it: an image
+/// the runtime could not read would end the run the first time the pattern is matched.
+pub(crate) fn check(image: &str) -> Result<(), NotAnImage> {
+    Pattern::from_image(image).map(|_| ())
 }
 
-/// Whether what a pattern is said to mean is a reading of one, found without building anything.
-pub(crate) fn check(meaning: &[PatternPart]) -> Result<(), NotAReading> {
-    pattern::check(&parts(meaning))
-}
-
-/// The parts of what a pattern means, as `souther_text` reads them.
-fn parts(meaning: &[PatternPart]) -> Vec<Part> {
-    meaning
-        .iter()
-        .map(|part| match part {
-            PatternPart::Nothing => Part::Nothing,
-            PatternPart::Never => Part::Never,
-            PatternPart::Symbols { ranges } => Part::Symbols(ranges.clone()),
-            PatternPart::InTurn { parts } => Part::InTurn(parts.clone()),
-            PatternPart::EitherOf { arms } => Part::EitherOf(arms.clone()),
-            PatternPart::Repeated { what, least, most } => Part::Repeated {
-                what: *what,
-                least: *least,
-                most: *most,
-            },
-        })
-        .collect()
-}
-
-/// Every machine this object holds, one per machine however many calls match against it.
+/// Every pattern this object holds, one per image however many calls match against it.
 #[derive(Default)]
-pub(crate) struct Machines {
-    /// The data object each machine already written in this object was written to.
-    held: RefCell<HashMap<Vec<u32>, DataId>>,
+pub(crate) struct Patterns {
+    /// The data object each image already written in this object was written to.
+    held: RefCell<HashMap<String, DataId>>,
 }
 
-impl Machines {
-    /// The address of the first word of `machine` in the object, for code `builder` is emitting.
+impl Patterns {
+    /// The address of the room holding `image` in the object, for code `builder` is emitting.
     pub(crate) fn address(
         &self,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
-        machine: &[u32],
+        image: &str,
     ) -> ir::Value {
-        let already = self.held.borrow().get(machine).copied();
+        let already = self.held.borrow().get(image).copied();
         let id = match already {
             Some(id) => id,
             None => {
-                let id = accepted(module.declare_anonymous_data(false, false));
-                accepted(module.define_data(id, &laid_out(machine)));
-                index::unique(&mut *self.held.borrow_mut(), machine.to_vec(), id);
+                let id = accepted(module.declare_anonymous_data(true, false));
+                accepted(module.define_data(id, &laid_out(image)));
+                index::unique(&mut *self.held.borrow_mut(), image.to_owned(), id);
                 id
             }
         };
@@ -82,12 +60,19 @@ impl Machines {
     }
 }
 
-/// The words, each in the order this machine holds its bytes, as the runtime reads them.
-fn laid_out(machine: &[u32]) -> DataDescription {
-    let written: Vec<u8> = machine.iter().flat_map(|word| word.to_ne_bytes()).collect();
+/// The room the runtime reads a pattern from, laid out as `souther_native_abi` states it: an empty
+/// slot for what the runtime reads of the image (`PATTERN_READ`, which the zeros are), the image's
+/// length, and the image.
+///
+/// Writable, since the runtime keeps there what it read, so that the image is read once.
+fn laid_out(image: &str) -> DataDescription {
+    let mut written = vec![0u8; PATTERN_IMAGE as usize + image.len()];
+    written[PATTERN_LENGTH as usize..PATTERN_IMAGE as usize]
+        .copy_from_slice(&(image.len() as u64).to_ne_bytes());
+    written[PATTERN_IMAGE as usize..].copy_from_slice(image.as_bytes());
     let mut held = DataDescription::new();
     held.define(written.into_boxed_slice());
-    // Read as words, and an access that says its address is aligned is not checked.
-    held.set_align(u64::from(u32::BITS / 8));
+    // The room is read as slots, and an access that says its address is aligned is not checked.
+    held.set_align(SLOT as u64);
     held
 }

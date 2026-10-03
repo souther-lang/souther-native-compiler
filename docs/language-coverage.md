@@ -41,14 +41,16 @@ crate is what the language says text means, over bytes alone, and where the wasm
 it from as well (#17). A string is a sequence of Unicode scalar values kept as UTF-8, so two are
 ordered by comparing their bytes, which are in scalar-value order; its length and every index count
 code points. What builds a string — `++`, `append`, `join`, `replace`, `reverse`, `repeat`, the pads
-and the case mappings — puts it in NFC, and NFC and case are Unicode 18.0.0's, generated from the
-Unicode Character Database by
-[`scripts/GenerateUnicodeTables.java`](../scripts/GenerateUnicodeTables.java) rather than taken from
-a crate's own version. `String.matches` runs what the checker read the pattern as, compiled to a
-machine the object carries; nothing here reads pattern text. A kernel that can end a run for some of
-what it is handed — a slice the string has no room for, a zero divisor to `floorMod`, a count
-`repeat` cannot make — ends it with the reason the call names, and the runtime says only whether it
-answered.
+and the case mappings — puts it in NFC. What Unicode says of text — NFC, case, `White_Space` — and
+which text is a date, a time, a date-time or an instant are
+[199x-notation](https://github.com/raoh-project/199x-notation)'s, the rules Souther and Raoh share,
+implemented once per language: the runtime reads them from its Rust crate. `String.matches` and a
+clause's pattern run what the checker read the pattern as: the compiler writes its machine as an
+image with 199x-notation's Java library, the object carries the image, and the runtime reads it with
+the Rust crate the first time the pattern is matched. Nothing here reads pattern text. A kernel
+that can end a run for some of what it is handed — a slice the string has no room for, a zero
+divisor to `floorMod`, a count `repeat` cannot make — ends it with the reason the call names, and
+the runtime says only whether it answered.
 
 ## Decimals
 

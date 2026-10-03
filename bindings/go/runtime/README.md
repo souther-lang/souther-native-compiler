@@ -259,7 +259,7 @@ not an edit of one.
 That is separate from the library's ABI generation. This module calls a library of one generation
 (`souther.ABIGeneration`) and asks each library for its generation before anything else, as above.
 A function generated for a behavior or a type also carries the generation in its name
-(`souther9_m_shop_b_quote`), so a binding generated against another generation finds none of its
+(`souther10_m_shop_b_quote`), so a binding generated against another generation finds none of its
 functions.
 
 ## Platforms and versions

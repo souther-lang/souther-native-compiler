@@ -2080,15 +2080,14 @@ impl<'a> Walk<'_, 'a> {
                             contract.fact
                         );
                     }
-                    // What a pattern is said to mean is a reading of some pattern: parts naming
-                    // parts before them, runs of scalar values in order. Every such reading is one
-                    // this backend runs, however large its counts.
-                    if let KernelFact::StringMatches { written, meaning } = fact
-                        && crate::patterns::check(meaning).is_err()
+                    // What a pattern crosses as is an image the runtime reads, and one it could
+                    // not read would end the run the first time the pattern is matched.
+                    if let KernelFact::StringMatches { written, image } = fact
+                        && let Err(refused) = crate::patterns::check(image)
                     {
                         bail!(
-                            "{}: an application of {kernel} says the pattern {written:?} means \
-                             what no reading of a pattern is: the two halves disagree",
+                            "{}: an application of {kernel} carries the pattern {written:?} as an \
+                             image that is not one ({refused}): the two halves disagree",
                             self.owner
                         );
                     }
