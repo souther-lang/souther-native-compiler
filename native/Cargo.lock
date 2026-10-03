@@ -515,6 +515,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 
 [[package]]
+name = "souther-exact"
+version = "0.1.0"
+source = "git+https://github.com/souther-lang/souther-runtime-rs?rev=448ba361fc2787bbf386f7f75e087c0d5bc0ace8#448ba361fc2787bbf386f7f75e087c0d5bc0ace8"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "souther-json-syntax"
 version = "0.1.0"
 
@@ -542,9 +552,7 @@ name = "souther-native-runtime"
 version = "0.1.0"
 dependencies = [
  "notation199x",
- "num-bigint",
- "num-integer",
- "num-traits",
+ "souther-exact",
  "souther-json-syntax",
  "souther-native-abi",
  "souther-text",

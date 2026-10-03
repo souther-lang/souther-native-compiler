@@ -1639,10 +1639,8 @@ fn every_function_the_runtime_defines_is_in_one_table() {
         ("decimal", include_str!("decimal.rs")),
         ("decoding", include_str!("decoding.rs")),
         ("document", include_str!("document.rs")),
-        ("enclosure", include_str!("enclosure.rs")),
         ("external", include_str!("external.rs")),
         ("kernels", include_str!("kernels.rs")),
-        ("magnitude", include_str!("magnitude.rs")),
         ("rational", include_str!("rational.rs")),
         ("temporal", include_str!("temporal.rs")),
     ];

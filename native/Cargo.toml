@@ -35,13 +35,13 @@ anyhow = "1"
 # other, and reading one back is the same crate reading what it wrote.
 object = { version = "0.39", default-features = false, features = ["read_core", "elf", "macho", "std"] }
 target-lexicon = "0.13"
-num-bigint = { version = "0.5", default-features = false, features = ["std"] }
-num-integer = { version = "0.1", default-features = false, features = ["std"] }
-num-traits = { version = "0.2", default-features = false, features = ["std"] }
+# Exact arithmetic, which the WebAssembly runtime answers with too: the same answers from one
+# source, and neither backend depending on the other. A commit, for the reason 199x-notation is one.
+souther-exact = { git = "https://github.com/souther-lang/souther-runtime-rs", rev = "448ba361fc2787bbf386f7f75e087c0d5bc0ace8" }
 
 # What the workspace depends on is built optimized even where the workspace is not: Cranelift is
-# what the driver spends its time in and num-bigint what the runtime's numbers do, neither is edited
-# here, and CI's cache keeps what they build. The workspace's own crates stay a debug build, which
+# what the driver spends its time in and souther-exact what the runtime's numbers do, neither is
+# edited here, and CI's cache keeps what they build. The workspace's own crates stay a debug build, which
 # is what their edits are rebuilt as. The test profile inherits this.
 [profile.dev.package."*"]
 opt-level = 2
