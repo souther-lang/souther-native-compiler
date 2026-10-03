@@ -37,7 +37,7 @@ object = { version = "0.39", default-features = false, features = ["read_core", 
 target-lexicon = "0.13"
 # Exact arithmetic, which the WebAssembly runtime answers with too: the same answers from one
 # source, and neither backend depending on the other. A commit, for the reason 199x-notation is one.
-souther-exact = { git = "https://github.com/souther-lang/souther-runtime-rs", rev = "448ba361fc2787bbf386f7f75e087c0d5bc0ace8" }
+souther-exact = { git = "https://github.com/souther-lang/souther-runtime-rs", rev = "db380bf027073f486fb6e2152b22f1ad06521e12" }
 
 # What the workspace depends on is built optimized even where the workspace is not: Cranelift is
 # what the driver spends its time in and souther-exact what the runtime's numbers do, neither is

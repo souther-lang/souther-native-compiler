@@ -122,7 +122,8 @@ unsafe fn ratio(at: *const Rational) -> Ratio {
         let numerator = std::slice::from_raw_parts(at.add(BYTES), numerator_length);
         let denominator =
             std::slice::from_raw_parts(at.add(BYTES + numerator_length), denominator_length);
-        Ratio::from_stored(
+        // Trusted because every cell of one was written from the parts of a value.
+        Ratio::from_trusted_parts(
             signed < 0,
             Magnitude::of_le_bytes(numerator),
             Magnitude::of_le_bytes(denominator),
