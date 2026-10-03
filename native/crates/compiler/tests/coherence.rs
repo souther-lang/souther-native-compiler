@@ -1812,7 +1812,7 @@ fn what_a_clause_is_as_constraints_is_about_its_datas_one_field() {
         &text,
         &stated(
             &truth,
-            r#"{"is":"pattern","written":"a","meaning":[{"is":"nothing"}]}"#,
+            r#"{"is":"pattern","written":"a+","image":"P1,0,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0"}"#,
             false,
         ),
         &[],
@@ -1822,12 +1822,12 @@ fn what_a_clause_is_as_constraints_is_about_its_datas_one_field() {
             &text,
             &stated(
                 &truth,
-                r#"{"is":"pattern","written":"a","meaning":[]}"#,
+                r#"{"is":"pattern","written":"a+","image":"P1"}"#,
                 false,
             ),
             &[],
         ),
-        "means what no reading of a pattern is",
+        "as an image that is not one",
     );
     let same = node(
         "binary",
@@ -2317,7 +2317,9 @@ fn a_kernel_settles_what_this_backend_knows_it_settles() {
 
     reads_whole(&document(r#"{"is":"none"}"#));
     is_the_halves_disagreeing(
-        &document(r#"{"is":"stringmatches","written":"foo","meaning":[{"is":"nothing"}]}"#),
+        &document(
+            r#"{"is":"stringmatches","written":"a+","image":"P1,0,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0"}"#,
+        ),
         "settles",
     );
     is_the_halves_disagreeing(
@@ -2574,18 +2576,16 @@ fn a_sort_by_a_variable_with_no_order_said_is_the_halves_disagreeing() {
     );
 }
 
-/// What a pattern is said to mean is what some pattern reads as: parts naming only parts written
-/// before them, and runs of scalar values in order and apart. Anything else is not a reading the
-/// checker makes, and is refused as the two halves disagreeing. Every reading is one this backend
-/// runs, whatever it counts: a count is a number the machine holds, so counts inside counts are no
-/// larger a machine than the reading they are written in.
+/// What a pattern crosses as is an image the runtime reads, of a format 199x-notation defines, and
+/// one it could not read would end the run the first time the pattern is matched. So a text that
+/// is no image of any format is refused as the two halves disagreeing, before anything is written.
 #[test]
-fn a_pattern_is_said_to_mean_what_a_pattern_reads_as() {
-    let document = |meaning: &str| {
+fn a_pattern_crosses_as_an_image_the_runtime_reads() {
+    let document = |image: &str| {
         let matching = node(
             "call",
             &format!(
-                r#""reaches":{{"is":"kernel","kernel":"string.matches","takes":[{STRING},{STRING}],"fact":{{"is":"stringmatches","written":"p","meaning":{meaning}}}}},"arguments":[{},{}]"#,
+                r#""reaches":{{"is":"kernel","kernel":"string.matches","takes":[{STRING},{STRING}],"fact":{{"is":"stringmatches","written":"p","image":"{image}"}}}},"arguments":[{},{}]"#,
                 read(0, STRING),
                 read(1, STRING)
             ),
@@ -2594,34 +2594,26 @@ fn a_pattern_is_said_to_mean_what_a_pattern_reads_as() {
         helpers(&[h(&[STRING, STRING], &matching)])
     };
 
-    reads_whole(&document(r#"[{"is":"symbols","ranges":[[48,57]]}]"#));
-    reads_whole(&document(
-        r#"[{"is":"symbols","ranges":[[97,97]]},{"is":"repeated","what":0,"least":0,"most":null}]"#,
-    ));
+    // `a+`, as P1 writes it, the machine not deterministic and then deterministic.
+    reads_whole(&document("P1,0,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0"));
+    reads_whole(&document("P1,1,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0"));
     for unread in [
-        r#"[]"#,
-        r#"[{"is":"inturn","parts":[0]}]"#,
-        r#"[{"is":"symbols","ranges":[[55296,57343]]}]"#,
-        r#"[{"is":"symbols","ranges":[[5,9],[10,12]]}]"#,
-        r#"[{"is":"nothing"},{"is":"eitherof","arms":[0]}]"#,
-        r#"[{"is":"nothing"},{"is":"repeated","what":0,"least":3,"most":2}]"#,
+        "",
+        "P1",
+        "P9,0,0,1,1,0,0",
+        // A run whose first is past its last.
+        "P1,0,1,1,98,97,2,0,1,0,1,0,1,1,0,1,0",
+        // A run of surrogates.
+        "P1,0,1,1,55296,57343,1,1,1,0,0,0",
+        // No state to start in.
+        "P1,0,0,0",
+        // A step to a state there is not.
+        "P1,0,1,1,97,97,1,1,1,0,5,0",
+        // Something after the machine.
+        "P1,0,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0,0",
     ] {
-        is_the_halves_disagreeing(&document(unread), "no reading of a pattern");
+        is_the_halves_disagreeing(&document(unread), "as an image that is not one");
     }
-
-    let counted = |what: usize, times: u32| {
-        format!(r#"{{"is":"repeated","what":{what},"least":{times},"most":{times}}}"#)
-    };
-    reads_whole(&document(&format!(
-        r#"[{{"is":"symbols","ranges":[[97,97]]}},{}]"#,
-        counted(0, 1 << 20)
-    )));
-    reads_whole(&document(&format!(
-        r#"[{{"is":"symbols","ranges":[[97,97]]}},{},{},{}]"#,
-        counted(0, 1000),
-        counted(1, 1000),
-        counted(2, 1000)
-    )));
 }
 
 /// A node names a reason to end a run without a value only where its kind has one. A literal, a

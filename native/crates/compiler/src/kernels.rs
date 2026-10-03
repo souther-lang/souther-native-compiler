@@ -260,7 +260,7 @@ impl FactContract {
             KernelFact::None => *self == FactContract::None,
             KernelFact::StringMatches {
                 written: _,
-                meaning: _,
+                image: _,
             } => *self == FactContract::StringMatches,
             KernelFact::OrderingSubject { ty: _, ordering: _ } => {
                 matches!(self, FactContract::OrderingSubject(_))
@@ -1084,12 +1084,11 @@ fn int_or_not_a_number() -> Shape {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::PatternPart;
 
     fn pattern(text: &str) -> KernelFact {
         KernelFact::StringMatches {
             written: text.to_string(),
-            meaning: vec![PatternPart::Nothing],
+            image: "P1,0,0,1,1,0,0".to_string(),
         }
     }
 

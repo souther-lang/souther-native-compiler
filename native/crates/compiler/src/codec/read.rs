@@ -23,7 +23,7 @@
 use super::write::Writing;
 use super::{Codecs, Runtime};
 use crate::literals::Literals;
-use crate::patterns::{self, Machines};
+use crate::patterns::Patterns;
 use crate::transport::{
     AlternativesForm, BoundaryConstraint, Case, CodecShape, Declaration, Field, LeafScalar, Prim,
 };
@@ -55,7 +55,7 @@ pub(super) fn define(
     let constructors = emitting.constructors;
     let allocate = emitting.allocate;
     let value_ops = emitting.value_ops;
-    let machines = emitting.machines;
+    let patterns = emitting.patterns;
     emitting.function(id, signature, |builder, module, given| {
         let [node, path, decoding, out] = given else {
             unreachable!("a reader takes a node, a path, a reading and room for the value")
@@ -74,7 +74,7 @@ pub(super) fn define(
             constructors,
             allocate,
             value_ops,
-            machines,
+            patterns,
             codecs,
             decoding: *decoding,
             out: *out,
@@ -107,8 +107,8 @@ struct Reading<'w, 'f> {
     allocate: FuncId,
     /// The hasher and the equality of what a set or a map read here is kept over.
     value_ops: &'w crate::hashing::ValueOps,
-    /// The pattern machines the object holds, for a value held to a pattern.
-    machines: &'w Machines,
+    /// The patterns the object holds, for a value held to a pattern.
+    patterns: &'w Patterns,
     codecs: &'w mut Codecs,
     /// The reading every issue is recorded in.
     decoding: ir::Value,
@@ -809,14 +809,12 @@ impl Reading<'_, '_> {
                 let bound = n(self, bound);
                 self.asked(Runtime::ReadFixedLength, &[path, reading, value, bound])
             }
-            BoundaryConstraint::Pattern { written, meaning } => {
-                let machine = patterns::machine(meaning)
-                    .expect("`Declared::of` held what every pattern is said to mean to a reading");
-                let machine = self.machines.address(self.builder, self.module, &machine);
+            BoundaryConstraint::Pattern { written, image } => {
+                let pattern = self.patterns.address(self.builder, self.module, image);
                 let written = self.literal(written);
                 self.asked(
                     Runtime::ReadPattern,
-                    &[path, reading, value, machine, written],
+                    &[path, reading, value, pattern, written],
                 )
             }
             BoundaryConstraint::Min { n: bound } => {

@@ -181,6 +181,13 @@ pub const GENERATIONS: &[(u32, &str)] = &[
          position `souther_mark` answered and `souther_reset` took back unchecked \
          (souther-native-compiler#137)",
     ),
+    (
+        10,
+        "a pattern crosses to the runtime as the image 199x-notation wrote its machine in, behind \
+         room the runtime keeps the pattern it read in (`PATTERN_READ`, `PATTERN_LENGTH`, \
+         `PATTERN_IMAGE`), in place of the words `souther_text::pattern` compiled it to: \
+         `souther_string_matches` and `souther_read_pattern` take that (souther-native-compiler#144)",
+    ),
 ];
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
@@ -1093,6 +1100,23 @@ pub const HELD: i64 = 0;
 /// declared type and nothing matches on one, so it carries no tag; what stands first is the only
 /// thing standing before the text.
 pub const TEXT_LENGTH: i64 = 0;
+
+/// Where a pattern's room holds the pattern the runtime read from its image: null in the object,
+/// and written once by the first match that reads the image, so that a pattern is read once
+/// however many times it is matched. The object keeps the room writable for that and nothing else
+/// writes it.
+///
+/// A pattern says the same thing every run, so what it is run as is worked out from the image and
+/// not carried in a layout of the runtime's own: the image is 199x-notation's format, which every
+/// implementation reading it reads alike (`image/P1.md`, `image/P2.md` in that repository), so what
+/// an object holds does not depend on how the runtime keeps a pattern.
+pub const PATTERN_READ: i64 = 0;
+
+/// Where a pattern's room says how many bytes its image is.
+pub const PATTERN_LENGTH: i64 = SLOT;
+
+/// Where a pattern's image begins: ASCII text, as 199x-notation's formats are written.
+pub const PATTERN_IMAGE: i64 = 2 * SLOT;
 
 /// Where a string's text begins, as UTF-8 and in no other encoding.
 ///
@@ -2531,9 +2555,9 @@ pub enum Word {
     Memory,
     /// Which of two strings comes first: below, at or above nought.
     Comparison,
-    /// A pattern's machine: the words `souther_text::pattern` compiled it to, which the object
-    /// carries and the runtime runs, the first of them saying how many there are.
-    Machine,
+    /// A pattern, as the object carries it: the image its machine is written in, behind room the
+    /// runtime keeps what it read of the image in ([`PATTERN_READ`]).
+    Pattern,
     /// A piece of the external form being built, owned by whoever [`EXTERNAL_NULL`] and the rest
     /// say.
     Form,
@@ -2601,7 +2625,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
     };
     use Parameter::{Given, Room};
     use Word::{
-        Comparison, Equality, Form, Hash, Hasher, Held, Host, Machine, Map, Memory, Node, Path,
+        Comparison, Equality, Form, Hash, Hasher, Held, Host, Map, Memory, Node, Path, Pattern,
         Rational, Set,
     };
     &[
@@ -2657,7 +2681,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_MATCHES,
-            takes: &[Given(Machine), Given(Host(String))],
+            takes: &[Given(Pattern), Given(Host(String))],
             answers: Some(Host(Bool)),
         },
         GeneratedCall {
@@ -3407,7 +3431,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
                 Given(Path),
                 Given(Host(Decoded)),
                 Given(Host(String)),
-                Given(Machine),
+                Given(Pattern),
                 Given(Host(String)),
             ],
             answers: Some(Host(Bool)),
@@ -3861,13 +3885,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther9.calculation.add"
+            "souther10.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther9.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther10.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -3907,7 +3931,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther9.calculation.add$example$0"
+            "souther10.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -3922,7 +3946,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther9.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther10.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -3993,7 +4017,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther9.pricing$value$standard"
+            "souther10.pricing$value$standard"
         );
     }
 
@@ -4031,7 +4055,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther9.pricing$construct$Amount"
+            "souther10.pricing$construct$Amount"
         );
     }
 
@@ -4051,7 +4075,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther9.pricing$checked$Amount"
+            "souther10.pricing$checked$Amount"
         );
     }
 
@@ -4081,23 +4105,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther9_m_pricing_t_Amount_construct"
+            "souther10_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther9_m_pricing_t_Amount_f_value"
+            "souther10_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther9_m_pricing_t_Result_case"
+            "souther10_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther9_m_pricing_t_Amount_decode"
+            "souther10_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther9_m_pricing_t_Amount_encode"
+            "souther10_m_pricing_t_Amount_encode"
         );
     }
 
@@ -4105,15 +4129,15 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther9_m_lib_m_shop_b_quote"
+            "souther10_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther9_m_lib_m_shop_v_standard"
+            "souther10_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther9_m_lib_m_shop_b_find_answer_case"
+            "souther10_m_lib_m_shop_b_find_answer_case"
         );
     }
 
@@ -4126,7 +4150,7 @@ mod tests {
                 &HostShape::Leaf(Value),
                 HostListOperation::Construct
             ),
-            "souther9_m_shop_l_value_construct"
+            "souther10_m_shop_l_value_construct"
         );
         assert_eq!(
             host_list_symbol(
@@ -4134,7 +4158,7 @@ mod tests {
                 &HostShape::Option(Box::new(HostShape::Leaf(Int))),
                 HostListOperation::At
             ),
-            "souther9_m_lib_m_shop_l_o_int_at"
+            "souther10_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
             host_list_symbol(
@@ -4145,7 +4169,7 @@ mod tests {
                 ]))),
                 HostListOperation::Length
             ),
-            "souther9_m_shop_l_l_t2_int_o_bool_length"
+            "souther10_m_shop_l_l_t2_int_o_bool_length"
         );
     }
 
@@ -4158,11 +4182,11 @@ mod tests {
         };
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Call),
-            "souther9_m_shop_fn_f2_int_string_o_int_call"
+            "souther10_m_shop_fn_f2_int_string_o_int_call"
         );
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Implement),
-            "souther9_m_shop_fn_f2_int_string_o_int_implement"
+            "souther10_m_shop_fn_f2_int_string_o_int_implement"
         );
     }
 
@@ -4246,11 +4270,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther9_m_shop_b_foo__bar"
+            "souther10_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther9_m_shop_b__u6570__u91cf_"
+            "souther10_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -4260,7 +4284,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther9.pricing$read$Amount"
+            "souther10.pricing$read$Amount"
         );
     }
 

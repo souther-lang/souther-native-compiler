@@ -695,7 +695,7 @@ pub unsafe extern "C" fn souther_read_date(
     out: *mut *mut Date,
 ) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let day = parse_date(written.as_bytes());
+        let day = parse_date(&written);
         if day.is_none() {
             unsafe { refused(decoding, path) };
         }
@@ -717,7 +717,7 @@ pub unsafe extern "C" fn souther_read_time(
     out: *mut *mut Time,
 ) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let second = parse_time(written.as_bytes());
+        let second = parse_time(&written);
         if second.is_err() {
             unsafe { refused(decoding, path) };
         }
@@ -738,7 +738,7 @@ pub unsafe extern "C" fn souther_read_datetime(
     out: *mut *mut DateTime,
 ) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let second = parse_date_time(written.as_bytes());
+        let second = parse_date_time(&written);
         if second.is_err() {
             unsafe { refused(decoding, path) };
         }
@@ -761,7 +761,7 @@ pub unsafe extern "C" fn souther_read_instant(
     out: *mut *mut Instant,
 ) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let moment = parse_instant(written.as_bytes());
+        let moment = parse_instant(&written);
         if moment.is_none() {
             unsafe { refused(decoding, path) };
         }
@@ -1006,17 +1006,17 @@ pub unsafe extern "C" fn souther_read_fixed_length(
 /// to, which is the text the author's call was given and not the machine that ran it.
 ///
 /// # Safety
-/// As [`souther_read_min_length`]; `machine` is the first of the words `souther_text::pattern`
-/// compiled, and `written` a string of the runtime's layout.
+/// As [`souther_read_min_length`]; `held` is a pattern the object carries, as
+/// [`crate::souther_string_matches`] takes it, and `written` a string of the runtime's layout.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_pattern(
     path: *const Path,
     decoding: *mut Decoding,
     value: *const Text,
-    machine: *const u32,
+    held: *const crate::kernels::HeldPattern,
     written: *const Text,
 ) -> Bool {
-    let holds = unsafe { crate::souther_string_matches(machine, value) } != Bool::FALSE;
+    let holds = unsafe { crate::souther_string_matches(held, value) } != Bool::FALSE;
     unsafe {
         meets(holds, decoding, path, "invalid_format", None, || {
             vec![("pattern", words(text(&written).as_str()))]

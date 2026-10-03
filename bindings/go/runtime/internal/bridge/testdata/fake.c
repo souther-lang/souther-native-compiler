@@ -6,7 +6,7 @@
 #include <stdlib.h>
 
 #ifndef ABI
-#define ABI 9
+#define ABI 10
 #endif
 
 /* A library with a thread-local variable is one macOS does not unload, as the real one is; a test of

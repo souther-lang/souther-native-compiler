@@ -142,8 +142,8 @@ spelt apart: `souther<n>`, `<n>` being the ABI generation, then the module as `_
 segment of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape
 a list's element crosses in, or `_fn_` and the shape of a function value, and then what is done with
 it. A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther9_m_shop_b_quote` at generation
-9, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther10_m_shop_b_quote` at generation
+10, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
 `_` or `u`, which keeps every spelling readable back to the names it was made from. The functions
 that spell each name are in [`native/crates/abi/src/lib.rs`](../native/crates/abi/src/lib.rs), each
 with what the function it names takes and answers.

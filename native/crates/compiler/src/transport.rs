@@ -105,6 +105,12 @@ pub const MOVES: &[(u32, &str)] = &[
         "what each clause of a declaration this build runs is as standard constraints on its one \
          field (`projection`: `constraints`, `complete`)",
     ),
+    (
+        31,
+        "a pattern, of `String.matches` or of a clause, as the image 199x-notation wrote the \
+         machine of what the checker read it as (`image`), in place of what it means part by part \
+         (`meaning`)",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1523,12 +1529,10 @@ pub enum BoundaryConstraint {
     MaxLength { n: i64 },
     /// A `String` of exactly `n` characters.
     FixedLength { n: i64 },
-    /// A `String` the whole of which a pattern matches: what it matches as the checker read it,
-    /// and the text it was written as, which is what a failure says the value was held to.
-    Pattern {
-        written: String,
-        meaning: Vec<PatternPart>,
-    },
+    /// A `String` the whole of which a pattern matches: the image of the machine of what the
+    /// checker read it as, and the text it was written as, which is what a failure says the value
+    /// was held to.
+    Pattern { written: String, image: String },
     /// An `Int` of at least `n`.
     Min { n: i64 },
     /// An `Int` of at most `n`.
@@ -2623,9 +2627,9 @@ pub enum KernelFact {
     StringMatches {
         /// The pattern as its author wrote it: said in a message, and never read as a pattern.
         written: String,
-        /// Which strings it accepts, as the checker read the text: each part after the parts it
-        /// is made of, the whole last.
-        meaning: Vec<PatternPart>,
+        /// Which strings it accepts, as the checker read the text: the machine they make, written
+        /// as an image of a format 199x-notation defines.
+        image: String,
     },
     /// The type an ordering was checked against, and the type whose order its values are placed
     /// on (`Core.OrderingBasis`), which is none exactly where there is no value to place.
@@ -2633,32 +2637,6 @@ pub enum KernelFact {
         #[serde(rename = "type")]
         ty: Ty,
         ordering: Option<Ty>,
-    },
-}
-
-/// One part of what a pattern means (`PatternMeaning`), naming the parts it is made of by where
-/// they stand in the list it is written in, which is always before it.
-///
-/// A list and not a tree because a pattern nests as deep as the checker reads one, and a document
-/// nesting as deep would be refused by the reader for its depth.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
-#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
-pub enum PatternPart {
-    /// The one string of no characters.
-    Nothing,
-    /// No string at all.
-    Never,
-    /// One character out of these runs, both ends in each, sorted and apart.
-    Symbols { ranges: Vec<(u32, u32)> },
-    /// One after another.
-    InTurn { parts: Vec<usize> },
-    /// Any one of them.
-    EitherOf { arms: Vec<usize> },
-    /// The same thing between `least` and `most` times, with no ceiling where `most` is absent.
-    Repeated {
-        what: usize,
-        least: u32,
-        most: Option<u32>,
     },
 }
 
@@ -2795,7 +2773,7 @@ impl KernelFact {
             KernelFact::None
             | KernelFact::StringMatches {
                 written: _,
-                meaning: _,
+                image: _,
             } => Vec::new(),
             KernelFact::OrderingSubject { ty, ordering } => {
                 std::iter::once(ty).chain(ordering.as_ref()).collect()
@@ -2809,7 +2787,7 @@ impl KernelFact {
             KernelFact::None
             | KernelFact::StringMatches {
                 written: _,
-                meaning: _,
+                image: _,
             } => Vec::new(),
             KernelFact::OrderingSubject { ty, ordering } => {
                 std::iter::once(ty).chain(ordering.as_mut()).collect()

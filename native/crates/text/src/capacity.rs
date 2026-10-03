@@ -35,10 +35,7 @@ pub const LONGEST_TEXT: i64 = (1 << 28) - 1;
 
 /// How many Unicode code points the text is written in.
 pub(crate) fn code_points(text: &str) -> i64 {
-    if text.is_ascii() {
-        return text.len() as i64;
-    }
-    text.chars().count() as i64
+    notation199x::scalar_count(text) as i64
 }
 
 #[cfg(test)]

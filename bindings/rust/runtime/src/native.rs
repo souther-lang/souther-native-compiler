@@ -11,7 +11,7 @@ use std::ptr::NonNull;
 /// The ABI generation this crate calls a library as, which [`NativeLibrary::load`] asks a library
 /// for before anything else and refuses any other of. The rooms `bound.rs` lays out are this
 /// generation's.
-pub const ABI_GENERATION: u32 = 9;
+pub const ABI_GENERATION: u32 = 10;
 
 /// The one function every generation has and none changes, asked before any other.
 const GENERATION_QUERY: &str = "souther_abi_generation";

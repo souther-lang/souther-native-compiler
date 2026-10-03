@@ -14,8 +14,9 @@
 //! can leave it not, so it is one too. Nothing here reads bytes that may be anything, and nothing
 //! here puts text in NFC that already is.
 //!
-//! Where the language names a Unicode version — for NFC, for case — it is the one [`tables`] was
-//! generated from, and not whichever a dependency was last released at.
+//! Where the language names a Unicode version — for NFC, for case, for white space — what it says
+//! is 199x-notation's, which states the rules for text once for every Souther and Raoh runtime and
+//! answers at the version the specification names whatever Rust release it is built with.
 
 #![no_std]
 
@@ -27,8 +28,6 @@ mod case;
 mod decimal;
 mod integer;
 mod operations;
-pub mod pattern;
-mod tables;
 
 pub use capacity::{Capacity, LONGEST_TEXT};
 pub use case::{lowercase, uppercase};
@@ -38,7 +37,6 @@ pub use operations::{
     append, characters, code_points_of, contains, ends_with, is_whitespace, join, lines, pad_left,
     pad_right, repeat, replace, reverse, slice, split, starts_with, trim, words,
 };
-pub use tables::UNICODE_VERSION;
 
 use alloc::borrow::Cow;
 use core::cmp::Ordering;
@@ -112,20 +110,16 @@ pub fn admitted(bytes: &[u8], capacity: Capacity) -> Result<Cow<'_, str>, Admiss
 /// Not the bytes it is kept in, and not the characters a reader sees: `𠮷` is one code point and
 /// four bytes, and `🇯🇵` is two code points and one flag.
 pub fn code_points(text: Text) -> usize {
-    text.0.chars().count()
+    notation199x::scalar_count(text.0)
 }
 
 /// Two texts, in the order the language gives text.
 ///
 /// A string is a sequence of Unicode scalar values and is ordered lexicographically over them: the
 /// first value where the two differ decides, and a run that begins the other comes before it (spec
-/// §equality). UTF-8 writes scalar values in an order its bytes keep — a greater value is written
-/// with a greater first byte, or the same first byte and a greater byte after it — so the order of
-/// the bytes is that order, and nothing is decoded to answer it. A carrier holding UTF-16 would
-/// have to correct its units where a surrogate meets a unit from E000 up; this one has nothing to
-/// correct.
+/// §equality), which is 199x-notation's order of text.
 pub fn compare(left: Text, right: Text) -> Ordering {
-    left.as_bytes().cmp(right.as_bytes())
+    notation199x::compare(left.0, right.0)
 }
 
 #[cfg(test)]

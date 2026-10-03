@@ -15,6 +15,7 @@ use crate::decimal::*;
 use crate::decoding::*;
 use crate::document::Node;
 use crate::external::*;
+use crate::kernels::HeldPattern;
 use crate::rational::*;
 use crate::temporal::*;
 use crate::*;
@@ -150,7 +151,7 @@ words! {
     *const Value => Word::Host(HostWord::Value),
     *const List => Word::Host(HostWord::List),
     *mut List => Word::Host(HostWord::List),
-    *const u32 => Word::Machine,
+    *const HeldPattern => Word::Pattern,
     *const Decoding => Word::Host(HostWord::Decoded),
     *mut Decoding => Word::Host(HostWord::Decoded),
     *const Issue => Word::Host(HostWord::Issue),
@@ -294,7 +295,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_matches",
-            shape_of(souther_string_matches as unsafe extern "C" fn(*const u32, T) -> Bool),
+            shape_of(souther_string_matches as unsafe extern "C" fn(*const HeldPattern, T) -> Bool),
         ),
         (
             "souther_string_slice",
@@ -544,7 +545,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_read_pattern",
             shape_of(
                 souther_read_pattern
-                    as unsafe extern "C" fn(*const Path, D, T, *const u32, T) -> Bool,
+                    as unsafe extern "C" fn(*const Path, D, T, *const HeldPattern, T) -> Bool,
             ),
         ),
         (

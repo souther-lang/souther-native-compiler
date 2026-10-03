@@ -2,8 +2,7 @@
 //!
 //! An operation that takes a string apart answers pieces of the text it was handed, borrowed from
 //! it: a piece of NFC text is NFC, so nothing is built. One that builds a string out of others
-//! answers the text it built, joined through [`Joined`], which puts in NFC again only where two
-//! texts meet. Every length, index and count is in code points.
+//! answers the text it built, joined through [`Joined`], which puts what it joined in NFC again. Every length, index and count is in code points.
 //!
 //! A search for one text inside another is `str`'s, which does not slow down on text that nearly
 //! matches over and over. UTF-8 never writes the bytes of one code point in the middle of
@@ -15,24 +14,10 @@ use crate::{Text, code_points};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// Whether a code point is String whitespace (spec §string-whitespace): the 25 code points of
-/// Unicode 18.0's `White_Space`, written out rather than read off a table, as the specification
-/// writes them.
+/// Whether a code point is String whitespace (spec §string-whitespace): Unicode 18.0's
+/// `White_Space`, as 199x-notation holds it.
 pub fn is_whitespace(character: char) -> bool {
-    matches!(
-        u32::from(character),
-        0x09..=0x0d
-            | 0x20
-            | 0x85
-            | 0xa0
-            | 0x1680
-            | 0x2000..=0x200a
-            | 0x2028
-            | 0x2029
-            | 0x202f
-            | 0x205f
-            | 0x3000
-    )
+    notation199x::is_white_space(character)
 }
 
 /// Whether `needle` is in the text (`String.contains`). The empty text is in every text.

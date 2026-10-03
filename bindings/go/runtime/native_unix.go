@@ -114,7 +114,7 @@ var runtimeFunctions = []string{
 
 // ABIGeneration is the ABI generation this package calls a library as, which [Load] refuses any
 // other of.
-const ABIGeneration uint32 = 9
+const ABIGeneration uint32 = 10
 
 // UnsupportedGeneration is a library file of another ABI generation than [ABIGeneration]: Found is
 // the one it answers to, and nought where it has no query for one, which a library of generation 8

@@ -53,7 +53,7 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use literals::Literals;
-use patterns::Machines;
+use patterns::Patterns;
 use restating::restate;
 use souther_native_abi::{
     ALLOCATE, ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, CARRIED, DATE_ADD_DAYS,
@@ -505,7 +505,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         .collect();
 
     let literals = Literals::default();
-    let machines = Machines::default();
+    let patterns = Patterns::default();
 
     // The token every declaration at home in this object is tagged by, defined whether anything
     // here builds a value of one or not. A declaration has one home and it is the object of the
@@ -820,7 +820,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         lifted: &lifted,
         targets: &targets,
         literals: &literals,
-        machines: &machines,
+        patterns: &patterns,
         constructors: &constructors,
     };
 
@@ -1190,7 +1190,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         constructors: &constructors,
         allocate,
         value_ops: &value_ops,
-        machines: &machines,
+        patterns: &patterns,
     };
     let mut codecs = codec::Codecs::new(call_conv);
     // What a host builds, reads, decodes and encodes a value of a published type through, each
@@ -1373,8 +1373,8 @@ pub(crate) struct Emitting<'a> {
     /// The hasher and the equality of each type a set or a map is kept over, declared here where a
     /// reading builds one and written with the rest ([`define_owed`]).
     pub value_ops: &'a hashing::ValueOps,
-    /// What pattern machines this object already holds, for a reading that holds a value to one.
-    pub machines: &'a patterns::Machines,
+    /// What patterns this object already holds, for a reading that holds a value to one.
+    pub patterns: &'a patterns::Patterns,
 }
 
 impl Emitting<'_> {
@@ -2273,8 +2273,8 @@ struct Lowerings<'a> {
     lifted: &'a BTreeMap<ClosureId, FuncId>,
     /// What string literals this object already holds.
     literals: &'a Literals,
-    /// What pattern machines this object already holds.
-    machines: &'a Machines,
+    /// What patterns this object already holds.
+    patterns: &'a Patterns,
     /// The constructor of every declaration a body here builds a value of.
     constructors: &'a Constructors,
     /// Every behavior the document names, which is where what a composition's stage answers is
@@ -2445,7 +2445,7 @@ fn word_on_the_machine(word: Word) -> types::Type {
         | Word::Form
         | Word::Node
         | Word::Path
-        | Word::Machine
+        | Word::Pattern
         | Word::Set
         | Word::Map
         | Word::Held
@@ -5594,16 +5594,14 @@ fn lower_kernel(
     // lowered: it is a string the checker folded at compile time, and nothing it would compute at
     // run time is read.
     if kernel == LoweredKernel::StringMatches {
-        let KernelFact::StringMatches { meaning, .. } = fact else {
+        let KernelFact::StringMatches { image, .. } = fact else {
             unreachable!("`Coherent` held string.matches to the fact it settles");
         };
         let [_, text] = arguments else {
             unreachable!("`Coherent` held string.matches to the two arguments it takes");
         };
-        let machine = patterns::machine(meaning)
-            .expect("`Coherent` held what every pattern is said to mean to a reading of one");
         let text = lower(builder, lowering, module, bindings, abort, text)?;
-        let at = lowering.machines.address(builder, module, &machine);
+        let at = lowering.patterns.address(builder, module, image);
         return Ok(runtime_call(
             builder,
             lowering,
@@ -7674,12 +7672,12 @@ fn projected(
                     ty.spelt()
                 );
             }
-            if let transport::BoundaryConstraint::Pattern { written, meaning } = constraint
-                && patterns::check(meaning).is_err()
+            if let transport::BoundaryConstraint::Pattern { written, image } = constraint
+                && let Err(refused) = patterns::check(image)
             {
                 bail!(
-                    "clause {at} of {key} says the pattern {written:?} means what no reading of a \
-                     pattern is: the two halves disagree"
+                    "clause {at} of {key} carries the pattern {written:?} as an image that is not \
+                     one ({refused}): the two halves disagree"
                 );
             }
         }
