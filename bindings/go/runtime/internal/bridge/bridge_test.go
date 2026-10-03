@@ -95,13 +95,19 @@ func TestALibraryWithoutAFunctionTheBindingCallsIsRefused(t *testing.T) {
 }
 
 // A library is asked its generation before anything else, and one of another is refused as that,
-// as is one from before the query existed.
+// as is one from before the query existed. Nothing else of it is called, its souther_release
+// neither, since what that is belongs to a generation: the file is unloaded without a call.
 func TestALibraryOfAnotherGenerationIsRefusedAsThat(t *testing.T) {
 	for name, found := range map[string]uint32{"othergeneration": 8, "nogeneration": 0} {
+		unloaded := filepath.Join(t.TempDir(), "unloaded")
+		t.Setenv("SOUTHER_FAKE_UNLOADED", unloaded)
 		_, err := bridge.Load(path(name))
 		var other *souther.UnsupportedGeneration
 		if !errors.As(err, &other) || other.Found != found {
 			t.Errorf("%s: got %v", name, err)
+		}
+		if said, err := os.ReadFile(unloaded); err != nil || string(said) != "x" {
+			t.Errorf("%s: unloaded as %q, %v, where only unloading was written", name, said, err)
 		}
 	}
 }

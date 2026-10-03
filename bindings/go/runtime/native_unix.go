@@ -36,7 +36,14 @@ var (
 // Every Souther library exports the same runtime functions, so a symbol is only looked up through
 // the handle of the file it is wanted from, which is opened RTLD_LOCAL and never linked: two
 // libraries in one program each keep their own arena.
-type nativeFile struct{ handle unsafe.Pointer }
+//
+// release is the library's souther_release, which is set only once the file has answered that it
+// is of [ABIGeneration]: a runtime function carries no generation in its name, so nothing but the
+// generation query is called before the generation is known.
+type nativeFile struct {
+	handle  unsafe.Pointer
+	release unsafe.Pointer
+}
 
 // open loads the library file at path.
 func open(path string) (*nativeFile, error) {
@@ -46,15 +53,16 @@ func open(path string) (*nativeFile, error) {
 	if handle == nil {
 		return nil, fmt.Errorf("souther: cannot load %s: %s", path, C.GoString(C.dlerror()))
 	}
-	return &nativeFile{handle}, nil
+	return &nativeFile{handle: handle}, nil
 }
 
-// close unloads the file, releasing the library first where it has souther_release: a host that
-// unloads a library drops what the library keeps beyond any scope before it does. It is called only
-// where nothing was taken from the file, so no call into it is in flight.
+// close unloads the file, releasing the library first where its release was found: a host that
+// unloads a library drops what the library keeps beyond any scope before it does. A file not known
+// to be of [ABIGeneration] is unloaded without a call. It is called only where nothing was taken
+// from the file, so no call into it is in flight.
 func (n *nativeFile) close() {
-	if release, ok := n.symbol("souther_release"); ok {
-		C.call_release(release)
+	if n.release != nil {
+		C.call_release(n.release)
 	}
 	C.dlclose(n.handle)
 }
@@ -183,6 +191,9 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 	if found := uint32(C.call_abi_generation(query)); found != ABIGeneration {
 		return nil, &UnsupportedGeneration{Path: path, Found: found}
 	}
+	// Of this generation, so its souther_release is the one this generation states, and the file is
+	// released where it is unloaded from here on.
+	native.release, _ = native.symbol("souther_release")
 	symbols := make(map[string]unsafe.Pointer, len(spec.Symbols)+2)
 	var missing []string
 	for _, name := range append(slices.Clone(runtimeFunctions), spec.Symbols...) {
