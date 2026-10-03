@@ -30,7 +30,7 @@ use crate::temporal::{
     parse_instant, parse_time, time_of,
 };
 use crate::{Bool, Count, STRING_HOLDS, Text, Value, souther_alloc, string_of, text};
-use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE};
+use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, case_names_read};
 use std::ptr;
 
 /// One reading of one document, from when its bytes are handed over to what a host is answered.
@@ -780,7 +780,12 @@ unsafe fn read_case(
     decoding: *mut Decoding,
 ) -> Bool {
     let Node::String(written) = node else {
-        unsafe { mismatched(decoding, path, node, "a case") };
+        // A case is named by text, so what is not text is refused as Raoh's string decoder refuses
+        // it, which is what its `discriminate` and its `oneOf` over strings read a name with.
+        match node {
+            Node::Null => unsafe { found(decoding, "required", None, path, Vec::new()) },
+            other => unsafe { mismatched(decoding, path, other, "string") },
+        }
         return Bool::FALSE;
     };
     Bool::from(unsafe { admitted_text(written, capacity, path, decoding) }.is_some())
@@ -817,15 +822,9 @@ pub unsafe extern "C" fn souther_read_tag(
     decoding: *mut Decoding,
 ) -> *const Node {
     let Some(tag) = (unsafe { (*node).member(text(&key).as_bytes()) }) else {
-        unsafe {
-            found(
-                decoding,
-                "missing_field",
-                None,
-                path,
-                vec![("actual", words("nothing")), ("expected", words("a case"))],
-            )
-        };
+        // A tag not there is what Raoh's `discriminate` reads it as: what its string decoder gives
+        // for a value that is absent.
+        unsafe { found(decoding, "required", None, path, Vec::new()) };
         return ptr::null();
     };
     if unsafe { souther_read_case(tag, path, decoding) } == Bool::FALSE {
@@ -851,7 +850,9 @@ pub unsafe extern "C" fn souther_read_is(node: *const Node, name: *const Text) -
     Bool::from(admitted.as_bytes() == unsafe { text(&name) }.as_bytes())
 }
 
-/// Records that the text `node` writes names none of the cases there are, at `path`.
+/// Records that the text `node` writes names no case there is, at `path`: Raoh's `not_allowed` with
+/// the name written. What an object of this generation built before [`souther_read_not_one_of`]
+/// calls, which hands over no names to say were allowed.
 ///
 /// # Safety
 /// As [`souther_read_object`], and `node` is one [`souther_read_case`] has already answered 1 for.
@@ -861,22 +862,89 @@ pub unsafe extern "C" fn souther_read_not_a_case(
     path: *const Path,
     decoding: *mut Decoding,
 ) {
-    // What was written, as the text it is admitted as: every string holds text in NFC and within
-    // what a String holds, which `souther_read_case` already established for this node.
-    let Node::String(written) = (unsafe { &*node }) else {
-        panic!("souther_read_case admitted this node, which holds a string and no other form");
-    };
-    let written = souther_text::admitted(written, STRING_HOLDS)
-        .expect("souther_read_case admitted this text");
+    let written = unsafe { name_written(node) };
     unsafe {
         found(
             decoding,
             "not_allowed",
             None,
             path,
-            vec![("actual", words(&written)), ("expected", words("a case"))],
+            vec![("actual", words(&written))],
         )
     };
+}
+
+/// Records that the text `node` writes is the name of none of an enumeration's cases, at `path`:
+/// Raoh's `not_allowed`, with the names allowed and the name written, as its `oneOf` over strings
+/// reports it, since that constraint states the same rule (spec §sum-discrimination).
+///
+/// # Safety
+/// As [`souther_read_not_a_case`], and `names` is a string of the runtime's layout holding what
+/// `case_names_written` wrote.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_not_one_of(
+    node: *const Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+    names: *const Text,
+) {
+    let written = unsafe { name_written(node) };
+    unsafe {
+        found(
+            decoding,
+            "not_allowed",
+            None,
+            path,
+            vec![("allowed", allowed(names)), ("actual", words(&written))],
+        )
+    };
+}
+
+/// What was written where a case's name is, as the text it is admitted as: every string holds text
+/// in NFC and within what a String holds, which `souther_read_case` already established for it.
+///
+/// # Safety
+/// `node` is one [`souther_read_case`] has already answered 1 for.
+unsafe fn name_written<'a>(node: *const Node) -> std::borrow::Cow<'a, str> {
+    let Node::String(written) = (unsafe { &*node }) else {
+        panic!("souther_read_case admitted this node, which holds a string and no other form");
+    };
+    souther_text::admitted(written, STRING_HOLDS).expect("souther_read_case admitted this text")
+}
+
+/// Records that the tag an object names its case with, at `path`, names none of a sum's cases:
+/// Raoh's `not_allowed`, with the names allowed and nothing else, as its `discriminate` reports it.
+///
+/// # Safety
+/// As [`souther_read_not_one_of`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_no_such_tag(
+    _node: *const Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+    names: *const Text,
+) {
+    unsafe {
+        found(
+            decoding,
+            "not_allowed",
+            None,
+            path,
+            vec![("allowed", allowed(names))],
+        )
+    };
+}
+
+/// The names a value was allowed to be, as an issue lists them.
+///
+/// # Safety
+/// `names` is a string of the runtime's layout holding what `case_names_written` wrote.
+unsafe fn allowed(names: *const Text) -> Said {
+    Said::Array(
+        case_names_read(unsafe { text(&names) }.as_str())
+            .map(words)
+            .collect(),
+    )
 }
 
 /// Records that a value read at `path` breaks a clause its type holds its values to: the type as

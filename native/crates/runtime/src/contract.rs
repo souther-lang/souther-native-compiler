@@ -524,6 +524,18 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_read_not_a_case as unsafe extern "C" fn(*const Node, *const Path, D)),
         ),
         (
+            "souther_read_not_one_of",
+            shape_of(
+                souther_read_not_one_of as unsafe extern "C" fn(*const Node, *const Path, D, T),
+            ),
+        ),
+        (
+            "souther_read_no_such_tag",
+            shape_of(
+                souther_read_no_such_tag as unsafe extern "C" fn(*const Node, *const Path, D, T),
+            ),
+        ),
+        (
             "souther_read_invariant",
             shape_of(souther_read_invariant as unsafe extern "C" fn(*const Path, D, T, T, T)),
         ),
