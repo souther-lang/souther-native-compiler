@@ -360,7 +360,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "notation199x"
 version = "0.2.0-dev"
-source = "git+https://github.com/raoh-project/199x-notation?branch=develop#46b73e9bc219acbb7f6f89f710d53dc122cb4f1a"
+source = "git+https://github.com/raoh-project/199x-notation?branch=develop#078c231e0a087b2dd7feb52f066e93ac5a3700c9"
 
 [[package]]
 name = "num-bigint"

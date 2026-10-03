@@ -31,10 +31,10 @@ fn within(capacity: Capacity) -> usize {
 
 /// Text in NFC made by joining runs of text each in NFC already, within what a carrier holds.
 ///
-/// NFC is not closed under joining, so what the runs come to is put in NFC once they are all
-/// joined. That is one pass over what was joined, however many runs there were, and the text before
-/// the first code point NFC can change is kept as it is (`notation199x::normalize_within`), which
-/// is the whole of most text.
+/// NFC is not closed under joining, but what joining two runs can change is only where they meet,
+/// so each run added puts that much in NFC again and copies the rest
+/// (`notation199x::append_normalized`), and joining many runs costs what copying them does rather
+/// than normalizing all that came before once more for each.
 ///
 /// The one way text is built here, so the one place a carrier's bound is held, and it is held as a
 /// budget spent before each run is written: the runs as they were handed over are what the language
@@ -66,15 +66,16 @@ impl Joined {
             return None;
         }
         self.handed = handed;
-        self.text.push_str(next);
+        notation199x::append_normalized(Form::Nfc, &mut self.text, next);
         Some(())
     }
 
     pub(crate) fn finished(self) -> String {
-        let joined = notation199x::normalize_within(Form::Nfc, &self.text, within(self.capacity))
-            .expect("runs in NFC only compose where they meet, so what they come to is not longer than what was handed over");
-        debug_assert!(code_points(&joined) <= self.handed);
-        joined
+        debug_assert!(
+            code_points(&self.text) <= self.handed,
+            "runs in NFC only compose where they meet, so what they come to is not longer than what was handed over"
+        );
+        self.text
     }
 }
 
@@ -131,9 +132,10 @@ mod tests {
     /// Hangul jamo and syllables, and starters that are the second of a pair.
     #[test]
     fn joining_at_the_seam_answers_what_nfc_of_the_whole_does() {
-        let pool: [u32; 24] = [
+        let pool: [u32; 28] = [
             0x61, 0x65, 0x41, 0x3c9, 0x1100, 0x1161, 0x11a8, 0xac00, 0xac01, 0x301, 0x302, 0x323,
             0x308, 0x345, 0x304b, 0x3099, 0x915, 0x93c, 0xb47, 0xb3e, 0xf71, 0xf72, 0x212b, 0x344,
+            0x1611e, 0x1611f, 0x16121, 0x16123,
         ];
         let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
         let mut next = |bound: usize| {
@@ -159,6 +161,18 @@ mod tests {
             }
             assert_eq!(joined.finished(), nfc(&whole), "{runs:?}");
         }
+    }
+
+    /// A run that begins with a composite whose first member composes with what is before it is
+    /// within reach of the seam: `U+16123` is `U+1611E U+1611F`, and `U+1611E` composes with the
+    /// `U+1611E` before it, so the two join to `U+16126`. Asking the code point alone, as this
+    /// crate once did, answered `U+1611E U+16123`, which is not NFC.
+    #[test]
+    fn a_composite_that_begins_with_what_composes_backwards_is_joined_at_the_seam() {
+        let mut joined = Joined::new(Capacity::of_code_points(LONGEST_TEXT));
+        joined.push(Text::held("\u{1611e}")).unwrap();
+        joined.push(Text::held("\u{16123}")).unwrap();
+        assert_eq!(joined.finished(), "\u{16126}");
     }
 
     /// NFC of NFC is itself.
