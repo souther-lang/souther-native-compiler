@@ -31,7 +31,9 @@ jars="$(mktemp -d)"
 trap 'rm -rf "$jars"' EXIT
 mvn --batch-mode --quiet --non-recursive dependency:copy \
     -Dartifact="org.souther-lang:souther-compiler:$version" -DoutputDirectory="$jars" >&2
-pin="$(unzip -p "$jars/souther-compiler-$version.jar" META-INF/MANIFEST.MF \
+# The one jar copied, under whatever name it has: a snapshot is named by the build it resolved to.
+jar=("$jars"/souther-compiler-*.jar)
+pin="$(unzip -p "${jar[0]}" META-INF/MANIFEST.MF \
     | sed -n 's/^Implementation-Revision: *\([0-9a-f]*\).*$/\1/p')"
 if ! [[ "$pin" =~ ^[0-9a-f]{40}$ ]]; then
     echo "souther-compiler $version says no commit it was built from (Implementation-Revision)" >&2

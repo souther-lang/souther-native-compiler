@@ -59,6 +59,22 @@
         <souther.abi.generations>10</souther.abi.generations>
     </properties>
 
+    <!-- Where a souther snapshot is published, for a build that takes one before its release: Central
+         holds releases only. Snapshots alone are read from here, so a release resolves from Central
+         as before. -->
+    <repositories>
+        <repository>
+            <id>central-snapshots</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
     <modules>
         <module>bindings/api</module>
         <module>compiler</module>
