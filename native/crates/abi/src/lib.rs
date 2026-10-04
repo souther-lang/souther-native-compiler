@@ -1803,8 +1803,42 @@ pub const READ_CASE: &str = "souther_read_case";
 pub const READ_TAG: &str = "souther_read_tag";
 /// `(node, name string) -> bool`: whether the text is that name.
 pub const READ_IS: &str = "souther_read_is";
-/// `(node, path, reading)`: the text names no case there is.
+/// `(node, path, reading)`: the text names no case there is. What an object of this generation
+/// built before [`READ_NOT_ONE_OF`] and [`READ_NO_SUCH_TAG`] calls, which knows no names to say
+/// were allowed; generated code calls those two.
 pub const READ_NOT_A_CASE: &str = "souther_read_not_a_case";
+/// `(node, path, reading, names string)`: the text is the name of no case of an enumeration, which
+/// is Raoh's `not_allowed` with the names allowed and the text written, as its `oneOf` over strings
+/// reports it. The names are as [`case_names_written`] writes them.
+pub const READ_NOT_ONE_OF: &str = "souther_read_not_one_of";
+/// `(node, path, reading, names string)`: the tag an object names its case with names none, which
+/// is Raoh's `not_allowed` with the names allowed, as its `discriminate` reports it. The names are
+/// as [`case_names_written`] writes them.
+pub const READ_NO_SUCH_TAG: &str = "souther_read_no_such_tag";
+
+/// The names of the cases a value could have been read as, as one string a call carries: in code
+/// point order, which is the order Raoh lists what was allowed in, with a space between each. No
+/// name holds a space, since a case is named by an identifier.
+///
+/// The one place the string is written, and [`case_names_read`] the one place it is read, so the
+/// compiler and the runtime cannot spell it two ways.
+pub fn case_names_written<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
+    let mut sorted: Vec<&str> = names.into_iter().collect();
+    // A `str` orders by its UTF-8 bytes, which is the order of the code points they encode.
+    sorted.sort_unstable();
+    assert!(
+        sorted
+            .iter()
+            .all(|name| !name.is_empty() && !name.contains(' ')),
+        "a case is named by an identifier, which holds no space: {sorted:?}"
+    );
+    sorted.join(" ")
+}
+
+/// The names [`case_names_written`] wrote, in the order it wrote them.
+pub fn case_names_read(written: &str) -> impl Iterator<Item = &str> {
+    written.split(' ')
+}
 /// `(path, reading, module string, name string, clause string)`: a value read there breaks a
 /// clause, the clause's name null where it has none.
 pub const READ_INVARIANT: &str = "souther_read_invariant";
@@ -3417,6 +3451,26 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         GeneratedCall {
             name: READ_NOT_A_CASE,
             takes: &[Given(Node), Given(Path), Given(Host(Decoded))],
+            answers: None,
+        },
+        GeneratedCall {
+            name: READ_NOT_ONE_OF,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(String)),
+            ],
+            answers: None,
+        },
+        GeneratedCall {
+            name: READ_NO_SUCH_TAG,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(String)),
+            ],
             answers: None,
         },
         GeneratedCall {

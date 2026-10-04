@@ -115,17 +115,17 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
                 chain: value {"n":1,"next":{"n":2}}
                 chain deep: issues [@/next/next/n type_mismatch {"actual":"string","expected":"Int"}]
                 stage: value "Won"
-                stage unknown: issues [@ not_allowed {"actual":"Draw","expected":"a case"}]
-                stage number: issues [@ type_mismatch {"actual":"number","expected":"a case"}]
+                stage unknown: issues [@ not_allowed {"actual":"Draw","allowed":["Lost","Won"]}]
+                stage number: issues [@ type_mismatch {"actual":"number","expected":"string"}]
                 rank manager: value {"type":"Manager","value":3}
                 rank staff: value {"type":"Staff"}
                 rank empty: issues [@/value missing_field {"actual":"nothing","expected":"a field"}]
-                rank untagged: issues [@/type missing_field {"actual":"nothing","expected":"a case"}]
-                rank unknown: issues [@/type not_allowed {"actual":"Boss","expected":"a case"}]
-                rank numbered: issues [@/type type_mismatch {"actual":"number","expected":"a case"}]
+                rank untagged: issues [@/type required]
+                rank unknown: issues [@/type not_allowed {"allowed":["Manager","Staff"]}]
+                rank numbered: issues [@/type type_mismatch {"actual":"number","expected":"string"}]
                 settled free: value {"type":"Free"}
                 settled paid: value {"type":"Paid","amount":6,"stage":"Won"}
-                settled wrong: issues [@/amount out_of_range key=out_of_range.non_negative {"actual":-2,"min":0}] [@/stage not_allowed {"actual":"Tie","expected":"a case"}]
+                settled wrong: issues [@/amount out_of_range key=out_of_range.non_negative {"actual":-2,"min":0}] [@/stage not_allowed {"actual":"Tie","allowed":["Lost","Won"]}]
                 free: value {}
                 free null: issues [@ type_mismatch {"actual":"null","expected":"an object"}]
                 money: value 5
@@ -239,7 +239,7 @@ class AValueIsReadFromTheFormItIsWrittenInTest {
         assertThat(said).isEqualTo("""
                 manager: value {"kind":"Manager","body":3}
                 staff: value {"kind":"Staff"}
-                spelt as today: issues [@/kind missing_field {"actual":"nothing","expected":"a case"}]
+                spelt as today: issues [@/kind required]
                 empty: issues [@/body missing_field {"actual":"nothing","expected":"a field"}]
                 """);
     }

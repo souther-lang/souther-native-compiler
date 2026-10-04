@@ -175,7 +175,9 @@ generated souther_read_member_value [Given(Node), Given(Host(Count))] -> Some(No
 generated souther_read_members [Given(Node)] -> Some(Host(Count))
 generated souther_read_min_length [Given(Path), Given(Host(Decoded)), Given(Host(String)), Given(Host(Int))] -> Some(Host(Bool))
 generated souther_read_missing [Given(Path), Given(Host(Decoded))] -> None
+generated souther_read_no_such_tag [Given(Node), Given(Path), Given(Host(Decoded)), Given(Host(String))] -> None
 generated souther_read_not_a_case [Given(Node), Given(Path), Given(Host(Decoded))] -> None
+generated souther_read_not_one_of [Given(Node), Given(Path), Given(Host(Decoded)), Given(Host(String))] -> None
 generated souther_read_null [Given(Node)] -> Some(Host(Bool))
 generated souther_read_object [Given(Node), Given(Path), Given(Host(Decoded))] -> Some(Host(Bool))
 generated souther_read_pattern [Given(Path), Given(Host(Decoded)), Given(Host(String)), Given(Pattern), Given(Host(String))] -> Some(Host(Bool))

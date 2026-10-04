@@ -39,7 +39,8 @@ use cranelift::frontend::{FunctionBuilder, Variable};
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    ANSWERED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, room_for_held, room_for_list,
+    ANSWERED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, case_names_written, room_for_held,
+    room_for_list,
 };
 
 /// Defines the reader of `key`.
@@ -943,6 +944,8 @@ impl Reading<'_, '_> {
             .iter()
             .map(|case| self.declared.body_of(case))
             .collect();
+        // What a refusal lists as allowed: every case's name, which is what each is read as.
+        let names = case_names_written(bodies.iter().map(|body| body.name()));
         match form {
             // The value is the case's name, and the case is a unit.
             AlternativesForm::Enumeration => {
@@ -966,7 +969,8 @@ impl Reading<'_, '_> {
                         Ok(())
                     })?;
                 }
-                self.call(Runtime::ReadNotACase, &[node, path, self.decoding]);
+                let names = self.literal(&names);
+                self.call(Runtime::ReadNotOneOf, &[node, path, self.decoding, names]);
                 self.builder.ins().jump(self.nothing, &[]);
             }
             AlternativesForm::Discriminated { tag, contents } => {
@@ -982,7 +986,11 @@ impl Reading<'_, '_> {
                         reading.case(case, body, contents, node, path)
                     })?;
                 }
-                self.call(Runtime::ReadNotACase, &[named, at_tag, self.decoding]);
+                let names = self.literal(&names);
+                self.call(
+                    Runtime::ReadNoSuchTag,
+                    &[named, at_tag, self.decoding, names],
+                );
                 self.builder.ins().jump(self.nothing, &[]);
             }
         }
