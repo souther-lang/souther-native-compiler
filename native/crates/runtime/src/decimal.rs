@@ -71,7 +71,7 @@ pub(crate) unsafe fn amount(at: *const Decimal) -> Amount {
         let magnitude =
             std::slice::from_raw_parts(at.add(MAGNITUDE), signed.unsigned_abs() as usize);
         let scale = i32::try_from(scale).expect("a Decimal carries a scale a Decimal has");
-        Amount::of_parts(signed < 0, magnitude, scale)
+        Amount::from_trusted_parts(signed < 0, magnitude, scale)
     }
 }
 
@@ -388,7 +388,7 @@ pub unsafe extern "C" fn souther_decimal_divide(
 /// As [`crate::souther_string_compare`], and `out` is room for the address of a `Decimal`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_string_to_decimal(s: *const Text, out: *mut *mut Decimal) -> Bool {
-    let read = souther_text::decimal_text(unsafe { text(&s) }).map(of_decimal_text);
+    let read = souther_text::decimal_text(unsafe { text(&s) }).and_then(of_decimal_text);
     unsafe { answered(read.as_ref().map(decimal_of), out) }
 }
 

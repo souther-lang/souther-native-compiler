@@ -1201,7 +1201,11 @@ mod tests {
         use crate::rational::{Rational, souther_rational_divide, souther_rational_from_int};
         let scope = souther_scope_open();
         let decimal = |unscaled: u8, scale| unsafe {
-            souther_decimal_hash(decimal_of(&Amount::of_parts(false, &[unscaled], scale)))
+            souther_decimal_hash(decimal_of(&Amount::from_trusted_parts(
+                false,
+                &[unscaled],
+                scale,
+            )))
         };
         assert_eq!(decimal(10, 1), decimal(100, 2));
         assert_ne!(decimal(10, 1), decimal(11, 1));

@@ -38,7 +38,7 @@ target-lexicon = "0.13"
 # Exact arithmetic and what a `Decimal` is, which the WebAssembly runtime answers with too: the same
 # answers from one source, and neither backend depending on the other. A commit, for the reason
 # 199x-notation is one.
-souther-exact = { git = "https://github.com/souther-lang/souther-runtime-rs", rev = "cdd000b446a23a80812a47f34c9f3e44f01b97aa" }
+souther-exact = { git = "https://github.com/souther-lang/souther-runtime-rs", rev = "2d779816a0bb7d7d6bb7b40de09f275a40113d16" }
 
 # What the workspace depends on is built optimized even where the workspace is not: Cranelift is
 # what the driver spends its time in and souther-exact what the runtime's numbers do, neither is

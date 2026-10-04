@@ -10,9 +10,10 @@ use souther_text::DecimalText;
 /// The value decimal text writes, at the scale its fractional digits give it
 /// (`String.toDecimal`).
 ///
-/// Always one: a scale is as many digits as the text has after its point, and a string is shorter
-/// than the largest scale.
-pub(crate) fn of_decimal_text(text: DecimalText) -> Amount {
+/// One wherever a string holds the text: a scale is as many digits as the text has after its
+/// point, and a string is shorter than the largest scale and narrower than the widest whole number.
+/// Nothing is asked of `souther_exact` to be known here, so what it answers is what is answered.
+pub(crate) fn of_decimal_text(text: DecimalText) -> Option<Amount> {
     let scale = i32::try_from(text.fraction.len())
         .expect("a string holds fewer digits than the largest scale");
     let mut digits = Vec::with_capacity(text.whole.len() + text.fraction.len());
@@ -22,11 +23,13 @@ pub(crate) fn of_decimal_text(text: DecimalText) -> Amount {
 }
 
 /// The whole number integer text writes, at `scale`: what a host hands over as a value's integer
-/// and its scale. Nothing where the text writes no integer.
+/// and its scale. Nothing where the text writes no integer, or one wider than a `Decimal` holds,
+/// which a host's text can be: it is held to no string's bound.
 pub(crate) fn of_integer_text(text: DecimalText, scale: i32) -> Option<Amount> {
-    text.fraction
-        .is_empty()
-        .then(|| Amount::of_digits(text.negative, text.whole, scale))
+    if !text.fraction.is_empty() {
+        return None;
+    }
+    Amount::of_digits(text.negative, text.whole, scale)
 }
 
 /// `String.fromDecimal`: the value in plain notation at the scale it carries, where that text is
@@ -53,7 +56,8 @@ mod tests {
             ("-0.00", "0", 2),
             ("+7.25", "725", 2),
         ] {
-            let read = of_decimal_text(decimal_text(Text::held(text)).unwrap());
+            let read = of_decimal_text(decimal_text(Text::held(text)).unwrap())
+                .expect("a string's digits are held");
             assert_eq!(shown(&read), (unscaled.to_string(), scale), "{text}");
         }
     }
@@ -64,9 +68,9 @@ mod tests {
     #[test]
     fn plain_text_stops_where_a_string_does() {
         let holds = crate::STRING_HOLDS.code_points();
-        let past = Amount::of_parts(false, &[1], (holds - 1) as i32);
+        let past = Amount::from_trusted_parts(false, &[1], (holds - 1) as i32);
         assert_eq!(plain_text(&past), None);
-        let short = Amount::of_parts(false, &[1], 3);
+        let short = Amount::from_trusted_parts(false, &[1], 3);
         assert_eq!(plain_text(&short).as_deref(), Some("0.001"));
     }
 }
