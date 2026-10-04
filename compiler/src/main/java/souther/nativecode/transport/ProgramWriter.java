@@ -95,7 +95,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 31;
+    public static final int TRANSPORT_VERSION = 32;
 
     private final CheckedProgram program;
 
@@ -1441,15 +1441,17 @@ public final class ProgramWriter {
             case Core.Decimal it -> decimalNode(it.value(), it.type(), program.abortsAt(it));
             case Core.Temporal it -> temporalNode(it, program.abortsAt(it));
             // What the checker builds for an analysis to read, and not for a backend to run: a
-            // value's build standing as its template, and a call kept standing for what it says.
-            // The tree a checked program hands a backend keeps neither — the checker's own emitter
-            // refuses both as a tree it was not meant to be handed — so one here is that premise
-            // not holding, and not a node this writer is behind on.
+            // value's build standing as its template, a call kept standing for what it says, and a
+            // run of field names read off one value as one node. The tree a checked program hands
+            // a backend keeps none of them — the checker's own emitter refuses each as a tree it
+            // was not meant to be handed — so one here is that premise not holding, and not a node
+            // this writer is behind on.
             case Core.MaterialisedValue it -> throw new IllegalStateException(
                     "the tree a checked program runs holds no build of a value, and this holds one"
                             + " of " + it.value() + " at " + it.pos());
             case Core.Call it -> call(it, bindings);
             case Core.PreservedCall it -> throw it.unexpectedIn("a backend's writer");
+            case Core.FieldProjection it -> throw it.unexpectedIn("a backend's writer");
             case Core.Apply it -> apply(it, bindings);
             case Core.IfConstructed it -> attempt(it, bindings);
             case Core.Block it -> block(it, bindings);
@@ -1642,12 +1644,15 @@ public final class ProgramWriter {
 
     /**
      * What an operator reads its operands as, which the checker settled and the operands' types do
-     * not say: as they stand, in one type for this operator only, or at their exact values.
+     * not say: as they stand, in one type for this operator only, a newtype opened to what it wraps
+     * beside a literal of that, or at their exact values.
      */
     private String reading(Core.BinaryReading reading) {
         return switch (reading) {
             case Core.BinaryReading.AsTheyStand it -> "{\"is\":\"astheystand\"}";
             case Core.BinaryReading.In it -> "{\"is\":\"in\",\"type\":" + type(it.type()) + "}";
+            case Core.BinaryReading.Opened it -> "{\"is\":\"opened\",\"newtype\":"
+                    + type(it.newtype()) + ",\"base\":" + type(it.base()) + "}";
             case Core.BinaryReading.ExactNumbers it -> "{\"is\":\"exactnumbers\"}";
         };
     }

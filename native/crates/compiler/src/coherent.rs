@@ -59,7 +59,7 @@ use crate::transport::{
     Ensures, Guard, Held, KernelFact, Node, Op, Owner, Prim, Program, Reaches, Reaching, Reading,
     Reference, Routing, Selects, Target, Ty, Value,
 };
-use crate::{Declared, PairIn, Runs, Targets, departures_taken, says_its_case};
+use crate::{Declared, Runs, Targets, departures_taken, says_its_case};
 use anyhow::{Result, anyhow, bail};
 use souther_native_abi::{
     DATE_DAYS, DATE_TIME_SECONDS, INSTANT_SECONDS, SECONDS_PER_DAY, spells_a_module, spells_a_name,
@@ -1407,7 +1407,7 @@ impl<'a> Walk<'_, 'a> {
                 self.node(left)?;
                 self.node(right)?;
                 self.reading(*op, reading, left.ty(), right.ty())?;
-                self.ordered_by(*op, reading, ordering.as_ref(), left.ty(), right.ty())?;
+                self.ordered_by(*op, reading, ordering.as_ref(), left.ty())?;
                 self.operator(*op, reading, (left.ty(), right.ty()), ty, aborts)
             }
             Node::Neg {
@@ -1626,8 +1626,11 @@ impl<'a> Walk<'_, 'a> {
             (op, reading),
             (
                 Op::And | Op::Or | Op::Concat,
-                Reading::In { .. } | Reading::ExactNumbers
-            ) | (Op::Add | Op::Sub | Op::Mul | Op::Div, Reading::In { .. })
+                Reading::In { .. } | Reading::Opened { .. } | Reading::ExactNumbers
+            ) | (
+                Op::Add | Op::Sub | Op::Mul | Op::Div,
+                Reading::In { .. } | Reading::Opened { .. }
+            )
         );
         if refused {
             bail!(
@@ -1655,18 +1658,39 @@ impl<'a> Walk<'_, 'a> {
                 )
             }
             // The type it is read in is one the document declares, which `Node::types` holds of
-            // every type a node writes. What it says of the two sides is how the lowering takes
-            // them apart, which `pair_in` answers for both: a newtype beside what it wraps all the
-            // way down is opened, and needs nothing more; any other pair is held as the reading,
-            // so each side has to be a value of it.
+            // every type a node writes. Neither side is opened, so each has to be a value of it.
             Reading::In { ty } => {
-                match self.declared.pair_in(ty, left, right)? {
-                    PairIn::Opened(_) => {}
-                    PairIn::Held => {
-                        let what = format!("a side of {} read as {}", op.spelt(), ty.spelt());
-                        self.fits(&what, left, ty);
-                        self.fits(&what, right, ty);
-                    }
+                let what = format!("a side of {} read as {}", op.spelt(), ty.spelt());
+                self.fits(&what, left, ty);
+                self.fits(&what, right, ty);
+                Ok(())
+            }
+            // One side is the newtype and the other what it wraps under every name it wears, which
+            // is what the lowering opens the one to and compares the other as.
+            Reading::Opened { newtype, base } => {
+                let spine = self.declared.newtype_spine(newtype)?;
+                if spine.opens.last() != Some(base) {
+                    bail!(
+                        "{}: {} is read {}, and {} is not what {} wraps under every name: the two \
+                         halves disagree",
+                        self.owner,
+                        op.spelt(),
+                        reading.spelt(),
+                        base.spelt(),
+                        newtype.spelt()
+                    );
+                }
+                let paired =
+                    (left == newtype && right == base) || (left == base && right == newtype);
+                if !paired {
+                    bail!(
+                        "{}: {} is read {}, over {} and {}: the two halves disagree",
+                        self.owner,
+                        op.spelt(),
+                        reading.spelt(),
+                        left.spelt(),
+                        right.spelt()
+                    );
                 }
                 Ok(())
             }
@@ -1684,7 +1708,6 @@ impl<'a> Walk<'_, 'a> {
         reading: &Reading,
         ordering: Option<&Ty>,
         left: &Ty,
-        right: &Ty,
     ) -> Result<()> {
         let orders = matches!(op, Op::Lt | Op::Le | Op::Gt | Op::Ge);
         let basis = match (orders, ordering) {
@@ -1714,10 +1737,8 @@ impl<'a> Walk<'_, 'a> {
                 );
             }
             Reading::AsTheyStand => left.clone(),
-            Reading::In { ty } => match self.declared.pair_in(ty, left, right)? {
-                PairIn::Opened(inner) => inner,
-                PairIn::Held => ty.clone(),
-            },
+            Reading::In { ty } => ty.clone(),
+            Reading::Opened { base, .. } => base.clone(),
         };
         self.declared
             .orders(basis, &compared)
@@ -1780,7 +1801,7 @@ impl<'a> Walk<'_, 'a> {
                     Reading::ExactNumbers => {
                         self.same(&what, ty, &rational, "what exact values come to")?;
                     }
-                    Reading::In { .. } => self.number(&what, ty)?,
+                    Reading::In { .. } | Reading::Opened { .. } => self.number(&what, ty)?,
                 }
                 // A sum, a difference or a product of numbers leaves the range its answer holds,
                 // whichever reading its operands have, and names the one reason for it.

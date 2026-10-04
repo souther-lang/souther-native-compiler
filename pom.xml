@@ -33,7 +33,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
-        <souther.version>0.3.0</souther.version>
+        <souther.version>0.3.1-SNAPSHOT</souther.version>
         <!-- The commit that release was built from. The jar carries no revision of its own, and a tag
              can be moved, so scripts/upstream-premises.sh compares against this value and asks the
              tag only whether it still points here. Raised with souther.version. -->

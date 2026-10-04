@@ -2129,12 +2129,13 @@ fn an_operator_is_read_only_as_the_checker_reads_it() {
         )
     };
     let in_amount = r#"{"is":"in","type":{"ref":{"is":"declared","declared":"m.A"}}}"#;
+    let opened = r#"{"is":"opened","newtype":{"ref":{"is":"declared","declared":"m.N"}},"base":{"prim":"INT"}}"#;
     let exact = r#"{"is":"exactnumbers"}"#;
     let stands = r#"{"is":"astheystand"}"#;
     let documents = |body: String, ty: &str| helpers(&[h(&[ty, ty], &body)]);
 
     reads_whole(&documents(over("AND", stands, BOOL), BOOL));
-    for reading in [in_amount, exact] {
+    for reading in [in_amount, opened, exact] {
         is_the_halves_disagreeing(
             &documents(over("AND", reading, BOOL), BOOL),
             "never reads it as",
@@ -2144,17 +2145,19 @@ fn an_operator_is_read_only_as_the_checker_reads_it() {
             "never reads it as",
         );
     }
-    is_the_halves_disagreeing(
-        &documents(over("ADD", in_amount, INT), INT),
-        "never reads it as",
-    );
+    for reading in [in_amount, opened] {
+        is_the_halves_disagreeing(
+            &documents(over("ADD", reading, INT), INT),
+            "never reads it as",
+        );
+    }
 }
 
-/// A pair read in a type is one the lowering can take apart as that type. A newtype beside what it
-/// wraps is read by opening the side that is one; any other pair, a newtype beside a value that
-/// states nothing about its own type included, is read by holding both sides as a value of the
-/// reading, so each is one. A pair that is neither would have the
-/// lowering read a field out of an `Int`, or a token out of a value that carries none.
+/// A pair read in a type is held as that type, neither side opened, so each side is a value of it:
+/// a newtype beside a value that states nothing about its own type included. A pair that is not
+/// would have the lowering read a field out of an `Int`, or a token out of a value that carries
+/// none. A newtype beside what it wraps is read opened ([`a_newtype_opened_beside_what_it_wraps_is_that_pair`]),
+/// and read in the newtype it is refused, so a backend never tells the two apart by the operands.
 #[test]
 fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
     let n = r#"{"ref":{"is":"declared","declared":"m.N"}}"#;
@@ -2173,8 +2176,7 @@ fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
         )])
     };
 
-    reads_whole(&compared(n, n, INT));
-    reads_whole(&compared(n, INT, n));
+    reads_whole(&compared(n, n, n));
     reads_whole(&compared(S, S, A));
     reads_whole(&compared(S, A, S));
 
@@ -2194,10 +2196,43 @@ fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
         }
     }
 
+    is_the_halves_disagreeing(&compared(n, n, INT), "is not a value of");
+    is_the_halves_disagreeing(&compared(n, INT, n), "is not a value of");
     is_the_halves_disagreeing(&compared(n, INT, INT), "is not a value of");
     is_the_halves_disagreeing(&compared(n, n, STRING), "is not a value of");
     is_the_halves_disagreeing(&compared(S, INT, S), "is not a value of");
     is_the_halves_disagreeing(&compared(A, S, A), "is not a value of");
+}
+
+/// A newtype opened beside a literal is one side the newtype and the other what it wraps under
+/// every name, which is what the lowering opens the one to and compares the other as. A pair that
+/// is anything else, or a base that is not what the newtype wraps, would be compared as a type
+/// neither side is.
+#[test]
+fn a_newtype_opened_beside_what_it_wraps_is_that_pair() {
+    let n = r#"{"ref":{"is":"declared","declared":"m.N"}}"#;
+    let compared = |newtype: &str, base: &str, left: &str, right: &str| {
+        helpers(&[h(
+            &[left, right],
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"EQ","reading":{{"is":"opened","newtype":{newtype},"base":{base}}},"left":{},"right":{}"#,
+                    read(0, left),
+                    read(1, right)
+                ),
+                BOOL,
+            ),
+        )])
+    };
+
+    reads_whole(&compared(n, INT, n, INT));
+    reads_whole(&compared(n, INT, INT, n));
+
+    is_the_halves_disagreeing(&compared(n, INT, n, n), "the two halves disagree");
+    is_the_halves_disagreeing(&compared(n, INT, INT, INT), "the two halves disagree");
+    is_the_halves_disagreeing(&compared(n, STRING, n, STRING), "is not what");
+    is_the_halves_disagreeing(&compared(S, INT, S, INT), "is not what");
 }
 
 /// A newtype that wraps itself, directly or through another, has no value, and the checker refuses
@@ -2224,12 +2259,13 @@ fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
         )
     };
     let in_n = r#"{"is":"in","type":{"ref":{"is":"declared","declared":"m.N"}}}"#;
+    let opened = r#"{"is":"opened","newtype":{"ref":{"is":"declared","declared":"m.N"}},"base":{"prim":"INT"}}"#;
     let stands = r#"{"is":"astheystand"}"#;
     for declarations in [
         vec![newtype("N", "N")],
         vec![newtype("N", "M"), newtype("M", "N")],
     ] {
-        for reading in [in_n, stands] {
+        for reading in [in_n, opened, stands] {
             is_the_halves_disagreeing(&compared(&declarations, reading), "wraps itself");
         }
     }
@@ -2260,19 +2296,24 @@ fn every_type_a_node_writes_is_one_the_document_declares() {
     );
     refuses(call(&taking, &[int(1)], INT), &[]);
 
-    // What an operator reads its operands in.
-    refuses(
-        node(
-            "binary",
-            &format!(
-                r#""op":"EQ","reading":{{"is":"in","type":{missing}}},"left":{},"right":{}"#,
-                int(1),
-                int(2)
+    // What an operator reads its operands in, and what it opens one of them from.
+    for reading in [
+        format!(r#"{{"is":"in","type":{missing}}}"#),
+        format!(r#"{{"is":"opened","newtype":{missing},"base":{INT}}}"#),
+    ] {
+        refuses(
+            node(
+                "binary",
+                &format!(
+                    r#""op":"EQ","reading":{reading},"left":{},"right":{}"#,
+                    int(1),
+                    int(2)
+                ),
+                BOOL,
             ),
-            BOOL,
-        ),
-        &[],
-    );
+            &[],
+        );
+    }
 
     // What a let binds.
     refuses(let_(0, missing, &int(1), &int(2), INT), &[]);
