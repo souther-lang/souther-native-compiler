@@ -3928,6 +3928,18 @@ pub const IMPLEMENTATION_ANSWERS: &[Status] = &[ANSWERED, HOST_EXCEPTION];
 
 #[cfg(test)]
 mod tests {
+    /// The names a refusal allows are written in code point order, which is Raoh's, and read back
+    /// in it. U+FF21 is before U+1D400 in code point order and after it in UTF-16's, where U+1D400
+    /// is the surrogate U+D835 first, so these names tell the two orders apart as ASCII ones cannot.
+    #[test]
+    fn case_names_are_written_in_code_point_order() {
+        let written = super::case_names_written(["𝐀lpha", "Won", "Ａlpha", "Lost"]);
+        assert_eq!(
+            super::case_names_read(&written).collect::<Vec<_>>(),
+            ["Lost", "Won", "Ａlpha", "𝐀lpha"]
+        );
+    }
+
     /// Every unit the language declares, as the Java half holds it to what upstream's library
     /// declares, and this table names each of them and nothing else.
     #[test]
