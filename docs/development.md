@@ -15,7 +15,9 @@ it finds the boundary does not answer is the most useful thing it produces.
 Where the code works around something Souther does not answer yet, it names the Souther issue that
 asks for it. [`scripts/upstream-premises.sh`](../scripts/upstream-premises.sh), run in CI, fails
 once the Souther this build pins has the fix, so a workaround does not outlive what it worked
-around. The pin is the `souther.version` and `souther.commit` of the top-level `pom.xml`.
+around. The pin is the `souther.version` of the top-level `pom.xml`, and the commit it is held at
+is the one the souther-compiler jar of that version says it was built from
+(`Implementation-Revision`).
 
 ## The two halves
 

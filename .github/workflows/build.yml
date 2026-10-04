@@ -125,6 +125,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # Maven, because what a premise is held against is the commit the souther-compiler jar the
+      # build resolves says it was built from.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
       - run: scripts/upstream-premises.sh
         env:
           GH_TOKEN: ${{ github.token }}

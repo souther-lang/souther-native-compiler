@@ -111,6 +111,12 @@ pub const MOVES: &[(u32, &str)] = &[
          machine of what the checker read it as (`image`), in place of what it means part by part \
          (`meaning`)",
     ),
+    (
+        32,
+        "a newtype beside a literal of what it wraps, compared as that (`opened`: `newtype`, \
+         `base`), in place of a reading in the newtype that a backend told apart by the operands' \
+         types; read in a type (`in`), neither side is opened",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -2641,18 +2647,23 @@ pub enum KernelFact {
 }
 
 /// What an operator reads its two operands as, as the checker settled it. Not a place either
-/// operand stands: a literal beside a newtype is read as the newtype by this operator and by
-/// nothing else.
+/// operand stands: a value beside one that states nothing about its own type is read as the first
+/// by this operator and by nothing else.
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Reading {
     /// Each operand as the type it has, which is one type for both.
     AsTheyStand,
-    /// The pair as values of this type, for this operator only.
+    /// The pair as values of this type, for this operator only. Neither side is opened: a newtype
+    /// one of them is stands as the value of this type it is.
     In {
         #[serde(rename = "type")]
         ty: Ty,
     },
+    /// A newtype beside a literal of what it wraps under every name it wears: the side that is
+    /// `newtype` is opened through each of those names, and the pair is compared as `base`, which
+    /// the literal already is.
+    Opened { newtype: Ty, base: Ty },
     /// Each operand at its exact mathematical value, which one of them already being a `Rational`
     /// makes of the pair. No type of the language stands for it.
     ExactNumbers,
@@ -2802,6 +2813,7 @@ impl Reading {
         match self {
             Reading::AsTheyStand | Reading::ExactNumbers => Vec::new(),
             Reading::In { ty } => vec![ty],
+            Reading::Opened { newtype, base } => vec![newtype, base],
         }
     }
 
@@ -2810,6 +2822,7 @@ impl Reading {
         match self {
             Reading::AsTheyStand | Reading::ExactNumbers => Vec::new(),
             Reading::In { ty } => vec![ty],
+            Reading::Opened { newtype, base } => vec![newtype, base],
         }
     }
 
@@ -2819,6 +2832,9 @@ impl Reading {
             Reading::AsTheyStand => "as they stand".to_string(),
             Reading::ExactNumbers => "at their exact values".to_string(),
             Reading::In { ty } => format!("in {}", ty.spelt()),
+            Reading::Opened { newtype, base } => {
+                format!("as {} opened to {}", newtype.spelt(), base.spelt())
+            }
         }
     }
 }

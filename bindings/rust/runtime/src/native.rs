@@ -4,9 +4,11 @@ use crate::decimal::Decimal;
 use crate::failure::{Failure, Statuses, UnnamedStatus};
 use crate::run::{Loaded, Run, Runtime, ScopeCloseFn, ScopeOpenFn};
 use crate::temporal::{Date, DateTime, Instant, Time};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
+use std::sync::{Mutex, PoisonError};
 
 /// The ABI generation this crate calls a library as, which [`NativeLibrary::load`] asks a library
 /// for before anything else and refuses any other of. The rooms `bound.rs` lays out are this
@@ -21,6 +23,16 @@ type GenerationQuery = unsafe extern "C" fn() -> u32;
 /// library is unloaded.
 pub(crate) type ReleaseFn = unsafe extern "C" fn();
 
+/// How many [`NativeLibrary`]s hold each library this process has loaded, by the address of its
+/// `souther_release`.
+///
+/// A loader hands the same library back for every load of one file and unloads it when the last of
+/// them is closed, so two loads of it share what it keeps beyond any scope: what one release drops
+/// is what a call through the other may be reading on another thread. The library is released only
+/// where the last that holds it lets it go, which is where it is unloaded. The lock is held across
+/// that release, so a load counted after it finds nothing dropped under it.
+static HOLDING: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
+
 /// One word the library hands over or is handed that is an address: a value, a string, a list and
 /// the rest, which only the library reads behind.
 pub type Word = *const u8;
@@ -33,8 +45,8 @@ pub type Word = *const u8;
 /// say. Each is reached through its own handle here instead, as the PHP runtime reaches each
 /// through its own FFI handle.
 ///
-/// It owns the library: what the library keeps beyond any scope is dropped when this is
-/// (`souther_release`), and then the library is unloaded.
+/// It owns its load of the library: what the library keeps beyond any scope is dropped when the
+/// last load of it in the process is (`souther_release`), and then the library is unloaded.
 pub struct NativeLibrary {
     library: libloading::Library,
     path: PathBuf,
@@ -89,6 +101,12 @@ impl NativeLibrary {
                 });
             }
         };
+        *HOLDING
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(HashMap::new)
+            .entry(release as usize)
+            .or_insert(0) += 1;
         Ok(NativeLibrary {
             library,
             path,
@@ -149,12 +167,25 @@ impl NativeLibrary {
 }
 
 impl Drop for NativeLibrary {
-    /// Drops what the library keeps beyond any scope, and then the library is unloaded. Nothing
-    /// that calls into the library outlives this, which is what `souther_release` asks: no call in
-    /// flight.
+    /// Drops what the library keeps beyond any scope where this is the last that holds it
+    /// ([`HOLDING`]), and then lets the library go, which unloads it where this was the last.
+    /// Nothing that calls into the library outlives the last that holds it, which is what
+    /// `souther_release` asks: no call in flight.
     fn drop(&mut self) {
-        // SAFETY: the library is loaded until this returns, and nothing borrowed from it is left.
-        unsafe { (self.release)() };
+        let mut holding = HOLDING.lock().unwrap_or_else(PoisonError::into_inner);
+        let counts = holding
+            .as_mut()
+            .expect("a library is counted where it is loaded");
+        let held = counts
+            .get_mut(&(self.release as usize))
+            .expect("a library is counted where it is loaded");
+        *held -= 1;
+        if *held == 0 {
+            counts.remove(&(self.release as usize));
+            // SAFETY: the library is loaded until this returns, and nothing borrowed from it is
+            // left in any that held it.
+            unsafe { (self.release)() };
+        }
     }
 }
 

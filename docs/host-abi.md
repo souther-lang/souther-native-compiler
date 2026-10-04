@@ -289,6 +289,13 @@ heap and not in the object, so unloading the library does not drop it. A host th
 calls `souther_release` first, with no call into the library in flight on any thread; it drops what
 the library kept and leaves it usable, and calling it again drops nothing. A host that keeps a
 library loaded for as long as the process runs never has to call it. The release contract is the
-record's `release` lines. The Rust runtime calls it when a `NativeLibrary` is dropped, which unloads
-the library; the Go runtime unloads a library only where loading it failed and nothing was called,
-and the PHP runtime keeps a library for as long as the process runs.
+record's `release` lines.
+
+A loader hands the same library back for every load of one file, and unloads it only when the last
+of them is closed, so "unloads" is the last close and not each. Two loads of one file share what it
+keeps: released when one of them is closed, it drops a pattern a call through the other may be
+matching on another thread. A host that loads one file more than once counts its loads and releases
+the library only when it closes the last. The Rust runtime counts each `NativeLibrary` of a library
+and calls it when the last is dropped, which unloads the library; the Go runtime unloads a library
+only where loading it failed and nothing was called, and releases it then only where no other load
+holds it; and the PHP runtime keeps a library for as long as the process runs.

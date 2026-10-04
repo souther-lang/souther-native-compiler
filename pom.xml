@@ -33,11 +33,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
-        <souther.version>0.3.0</souther.version>
-        <!-- The commit that release was built from. The jar carries no revision of its own, and a tag
-             can be moved, so scripts/upstream-premises.sh compares against this value and asks the
-             tag only whether it still points here. Raised with souther.version. -->
-        <souther.commit>30f27153df2addf8e643c84e04c5b606adcbfe1f</souther.commit>
+        <souther.version>0.3.1-SNAPSHOT</souther.version>
         <jspecify.version>1.0.0</jspecify.version>
         <junit.version>5.14.0</junit.version>
         <assertj.version>3.27.6</assertj.version>
@@ -62,6 +58,22 @@
         <souther.bindings.api>1</souther.bindings.api>
         <souther.abi.generations>10</souther.abi.generations>
     </properties>
+
+    <!-- Where a souther snapshot is published, for a build that takes one before its release: Central
+         holds releases only. Snapshots alone are read from here, so a release resolves from Central
+         as before. -->
+    <repositories>
+        <repository>
+            <id>central-snapshots</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
 
     <modules>
         <module>bindings/api</module>

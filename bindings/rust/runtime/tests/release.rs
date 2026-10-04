@@ -1,5 +1,5 @@
-//! A library is released before it is unloaded: dropping a `NativeLibrary` calls its
-//! `souther_release`, which drops what the library keeps beyond any scope, and then unloads it.
+//! A library is released before it is unloaded: dropping the last `NativeLibrary` holding it calls
+//! its `souther_release`, which drops what the library keeps beyond any scope, and then unloads it.
 
 use souther_binding_runtime::{ABI_GENERATION, LoadError, NativeLibrary};
 use std::path::{Path, PathBuf};
@@ -46,6 +46,22 @@ fn dropping_a_library_releases_it_once() {
     let library = unsafe { NativeLibrary::load(&path) }.expect("the stand-in loads");
     assert!(!released.exists(), "released before it was dropped");
     drop(library);
+    assert_eq!(std::fs::read_to_string(&released).unwrap(), "released\n");
+
+    // Two loads of one file are one library, which the loader unloads when the last is dropped:
+    // released then and not before, since what one release drops a call through the other may be
+    // reading.
+    std::fs::remove_file(&released).unwrap();
+    // SAFETY: as above.
+    let one = unsafe { NativeLibrary::load(&path) }.expect("the stand-in loads");
+    // SAFETY: as above.
+    let other = unsafe { NativeLibrary::load(&path) }.expect("the stand-in loads again");
+    drop(one);
+    assert!(
+        !released.exists(),
+        "released while another load of it held it"
+    );
+    drop(other);
     assert_eq!(std::fs::read_to_string(&released).unwrap(), "released\n");
 }
 
