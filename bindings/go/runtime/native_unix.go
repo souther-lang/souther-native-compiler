@@ -21,6 +21,7 @@ import (
 	"runtime/cgo"
 	"slices"
 	"strings"
+	"sync"
 	"unsafe"
 )
 
@@ -56,13 +57,42 @@ func open(path string) (*nativeFile, error) {
 	return &nativeFile{handle: handle}, nil
 }
 
-// close unloads the file, releasing the library first where its release was found: a host that
-// unloads a library drops what the library keeps beyond any scope before it does. A file not known
-// to be of [ABIGeneration] is unloaded without a call. It is called only where nothing was taken
-// from the file, so no call into it is in flight.
+// holding counts the loads of each library this program has, by the address of its
+// souther_release.
+//
+// The loader hands the same library back for every open of one file and unloads it when the last
+// of them is closed, so two loads of it share what it keeps beyond any scope: what a release drops
+// for one load that failed is what a call through another may be reading on another goroutine. A
+// library is released only where the last load holding it lets it go, which is where it is
+// unloaded. A library that loaded is kept for as long as the program is, so its count never falls.
+// The lock is held across the release, so a load counted after it finds nothing dropped under it.
+var holding = struct {
+	sync.Mutex
+	loads map[unsafe.Pointer]int
+}{loads: map[unsafe.Pointer]int{}}
+
+// hold sets release, the file's souther_release, and counts this load as holding the library.
+func (n *nativeFile) hold(release unsafe.Pointer) {
+	holding.Lock()
+	defer holding.Unlock()
+	n.release = release
+	holding.loads[release]++
+}
+
+// close unloads the file, releasing the library first where this was the last load holding it: a
+// host that unloads a library drops what the library keeps beyond any scope before it does. A file
+// not known to be of [ABIGeneration] is unloaded without a call. It is called only where nothing
+// was taken from the file, so no call into it through this load is in flight, and none through
+// another load once this was the last.
 func (n *nativeFile) close() {
 	if n.release != nil {
-		C.call_release(n.release)
+		holding.Lock()
+		holding.loads[n.release]--
+		if holding.loads[n.release] == 0 {
+			delete(holding.loads, n.release)
+			C.call_release(n.release)
+		}
+		holding.Unlock()
 	}
 	C.dlclose(n.handle)
 }
@@ -193,7 +223,9 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 	}
 	// Of this generation, so its souther_release is the one this generation states, and the file is
 	// released where it is unloaded from here on.
-	native.release, _ = native.symbol("souther_release")
+	if release, ok := native.symbol("souther_release"); ok {
+		native.hold(release)
+	}
 	symbols := make(map[string]unsafe.Pointer, len(spec.Symbols)+2)
 	var missing []string
 	for _, name := range append(slices.Clone(runtimeFunctions), spec.Symbols...) {

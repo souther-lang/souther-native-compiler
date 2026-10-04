@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"testing"
 	"unsafe"
 	"weak"
@@ -377,6 +378,29 @@ func TestAFileThatFailedToLoadIsReleasedAndUnloaded(t *testing.T) {
 	if err != nil || string(said) != "rx" {
 		t.Fatalf("the file was not released and then unloaded: %q, %v", said, err)
 	}
+}
+
+// Two loads of one file are one library, which the loader unloads when the last is closed. A load
+// that fails beside one that holds the library neither releases it nor unloads it: what the release
+// would drop is what a call through the other may be reading.
+func TestALoadThatFailsBesideOneHoldingTheLibraryLeavesItAsItIs(t *testing.T) {
+	unloaded := filepath.Join(t.TempDir(), "unloaded")
+	t.Setenv("SOUTHER_FAKE_UNLOADED", unloaded)
+	held := load(t, "fake")
+	spec := bridge.Spec
+	spec.Symbols = append(slices.Clone(spec.Symbols), "fake_nothing_by_this_name")
+	if _, err := souther.Load[bridge.Tag](path("fake"), spec); err == nil {
+		t.Fatal("loaded a file that lacks what the binding calls")
+	}
+	if said, err := os.ReadFile(unloaded); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the library another load holds was released or unloaded: %q, %v", said, err)
+	}
+	_ = held.Run(func(r *bridge.Run) error {
+		if got, err := bridge.Double(r, 21); err != nil || got != 42 {
+			t.Errorf("the library another load holds does not answer as before: %d, %v", got, err)
+		}
+		return nil
+	})
 }
 
 func TestWhatARunKeptForTheHostIsLetGoOfWhenItEnds(t *testing.T) {
