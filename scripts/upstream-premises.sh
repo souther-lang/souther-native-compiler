@@ -18,29 +18,26 @@ property() {
     sed -n "s#^ *<$1>\\(.*\\)</$1> *\$#\\1#p" pom.xml
 }
 version="$(property souther.version)"
-pin="$(property souther.commit)"
-if [ -z "$version" ] || ! [[ "$pin" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "pom.xml needs souther.version and souther.commit, the 40-digit commit that release was built from" >&2
+if [ -z "$version" ]; then
+    echo "pom.xml needs souther.version" >&2
     exit 2
 fi
-# What a premise is held against is the souther this build reads, which is the artifact Maven
-# fetched for that version. The artifact is fixed, and carries no revision to read the commit from,
-# so the commit is recorded beside the version. A tag is a name that can be moved, and asked alone
-# it would decide "fixed in the pinned souther" of a souther the build does not read. It is asked
-# only whether it still points at the recorded commit, which also catches a version raised
-# without its commit. Souther now refuses to move or delete a `v*` tag (souther-lang/souther#2047),
-# and writes the commit into each jar's manifest as `Implementation-Revision` from the first release
-# after 0.3.0, whose jar has none. Raising souther.version to such a release replaces this record
-# with a read of that entry from the jar, and souther.commit goes.
-if ! tagged="$(gh api "repos/souther-lang/souther/commits/v$version" --jq .sha)"; then
-    echo "souther has no release tagged v$version, which pom.xml's souther.version names" >&2
+# What a premise is held against is the souther this build reads, which is the jar Maven resolves
+# for that version, and the commit it was built from is what the jar's manifest says it was
+# (`Implementation-Revision`). A tag is not asked: it names a release and not the jar a build
+# resolves, and a snapshot has none. Maven resolves it as the build does, so MAVEN_ARGS that point
+# the build at another local repository point this there too.
+jars="$(mktemp -d)"
+trap 'rm -rf "$jars"' EXIT
+mvn --batch-mode --quiet --non-recursive dependency:copy \
+    -Dartifact="org.souther-lang:souther-compiler:$version" -DoutputDirectory="$jars" >&2
+pin="$(unzip -p "$jars/souther-compiler-$version.jar" META-INF/MANIFEST.MF \
+    | sed -n 's/^Implementation-Revision: *\([0-9a-f]*\).*$/\1/p')"
+if ! [[ "$pin" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "souther-compiler $version says no commit it was built from (Implementation-Revision)" >&2
     exit 2
 fi
-if [ "$tagged" != "$pin" ]; then
-    echo "v$version points at $tagged, and pom.xml's souther.commit says $pin: the tag was moved," >&2
-    echo "or souther.version was raised without souther.commit" >&2
-    exit 2
-fi
+echo "souther $version is $pin"
 
 # What is searched, and the one way of searching it. Every file the repository tracks, so that a
 # reference is found wherever it is put and a directory added or moved cannot leave one outside a

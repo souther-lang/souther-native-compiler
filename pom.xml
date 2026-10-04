@@ -34,10 +34,6 @@
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
         <souther.version>0.3.1-SNAPSHOT</souther.version>
-        <!-- The commit that release was built from. The jar carries no revision of its own, and a tag
-             can be moved, so scripts/upstream-premises.sh compares against this value and asks the
-             tag only whether it still points here. Raised with souther.version. -->
-        <souther.commit>30f27153df2addf8e643c84e04c5b606adcbfe1f</souther.commit>
         <jspecify.version>1.0.0</jspecify.version>
         <junit.version>5.14.0</junit.version>
         <assertj.version>3.27.6</assertj.version>
