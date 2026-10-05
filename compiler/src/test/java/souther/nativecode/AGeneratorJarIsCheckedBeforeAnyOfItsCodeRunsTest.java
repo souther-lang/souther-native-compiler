@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.Isolated;
 import souther.bindings.BindingApi;
 import souther.bindings.BindingGenerator;
 
@@ -31,7 +32,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * its loader's graph, the API is always the compiler's own copy, and the thread it is called on
  * resolves against its loader. And the bytes loaded are a copy only this command wrote, which it
  * deletes once it is done.
+ *
+ * <p>Alone, since that the copy is gone is read from the temporary directory, where any other class
+ * loading a generator's jar puts copies of its own.
  */
+@Isolated
 class AGeneratorJarIsCheckedBeforeAnyOfItsCodeRunsTest {
 
     @BeforeEach

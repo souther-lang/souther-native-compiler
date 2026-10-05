@@ -12,7 +12,14 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
-mvn --batch-mode --quiet -f "$root/pom.xml" -pl launcher -am package -DskipTests >&2
+# One build at a time in a clone: CI runs the hosts at once, each through this, and two Maven builds
+# of the same modules write the same files. A build that finds nothing changed leaves what the
+# command reads as it was, so a command started after one is not disturbed by the next. The lock is
+# Perl's flock, which macOS and Linux both have, and it goes when the build does.
+mkdir -p "$root/launcher/target"
+perl -MFcntl=:flock -e 'open(my $lock, ">", shift) or die "$!\n"; flock($lock, LOCK_EX) or die "$!\n";
+    exit(system(@ARGV) == 0 ? 0 : 1)' "$root/launcher/target/souther-native.lock" \
+    mvn --batch-mode --quiet -f "$root/pom.xml" -pl launcher -am package -DskipTests >&2
 
 # Each generator's jar, which the launcher's build wrote down, named for the command by its id.
 generators=()

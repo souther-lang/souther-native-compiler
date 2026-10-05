@@ -133,6 +133,7 @@
                             <goal>exec</goal>
                         </goals>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <executable>go</executable>
                             <workingDirectory>${maven.multiModuleProjectDirectory}/bindings/go/runtime</workingDirectory>
                             <arguments>

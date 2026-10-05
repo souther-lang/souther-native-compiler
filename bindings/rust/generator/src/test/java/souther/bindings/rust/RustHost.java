@@ -36,8 +36,17 @@ final class RustHost {
      * of the runtime's tests and the hosts gets to it first. Between runs, CI's cache of that
      * target keeps the dependencies and not the runtime: rust-cache drops a workspace's own crates
      * and whatever else is not one of its dependencies, the hosts among them.
+     *
+     * <p>One host at a time, from writing its workspace to the end of its run, since test classes
+     * run at once. Cargo tells crates apart by their path from the workspace's root, and every
+     * workspace here is laid out alike: two hosts built at once are one crate {@code host} and one
+     * generated crate to Cargo, with one fingerprint and one {@code target/debug/host}, and a test
+     * ran or refused what another wrote. Cargo's own lock on the target is held only while it
+     * builds, and not over the run that follows.
      */
     private static final Path TARGET = RUNTIME.resolve("target");
+
+    private static final Object ONE_AT_A_TIME = new Object();
 
     private RustHost() {
     }
@@ -76,14 +85,16 @@ final class RustHost {
         handsOverOnlyWhatItChecks(binding);
         exposesNoNativeWord(binding);
         reservesEveryRootName(binding);
-        workspace(into, binding, crate, main);
-        String manifest = into.resolve("Cargo.toml").toString();
-        cargo(List.of("clippy", "--quiet", "--manifest-path", manifest, "-p", crate, "--",
-                "-D", "warnings"));
-        List<String> run = new ArrayList<>(List.of("run", "--quiet", "--manifest-path", manifest,
-                "-p", "host", "--"));
-        run.addAll(arguments);
-        return cargo(run);
+        synchronized (ONE_AT_A_TIME) {
+            workspace(into, binding, crate, main);
+            String manifest = into.resolve("Cargo.toml").toString();
+            cargo(List.of("clippy", "--quiet", "--manifest-path", manifest, "-p", crate, "--",
+                    "-D", "warnings"));
+            List<String> run = new ArrayList<>(List.of("run", "--quiet", "--manifest-path",
+                    manifest, "-p", "host", "--"));
+            run.addAll(arguments);
+            return cargo(run);
+        }
     }
 
     /** Writes the workspace of the generated crate and a host whose {@code main.rs} is {@code main}. */
@@ -229,6 +240,13 @@ final class RustHost {
      * @return what Cargo said, for the test to hold to the reason
      */
     static String refused(Path into, Generated binding, String crate, String main)
+            throws IOException, InterruptedException {
+        synchronized (ONE_AT_A_TIME) {
+            return refusedAlone(into, binding, crate, main);
+        }
+    }
+
+    private static String refusedAlone(Path into, Generated binding, String crate, String main)
             throws IOException, InterruptedException {
         workspace(into, binding, crate, main);
         String manifest = into.resolve("Cargo.toml").toString();

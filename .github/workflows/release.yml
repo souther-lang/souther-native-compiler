@@ -37,10 +37,12 @@ jobs:
       - uses: actions/checkout@v5
 
       # The toolchain comes from rust-toolchain.toml, and the key from what rust-cache does not read
-      # itself, as they do in the build (whose workflow says why).
+      # itself, as they do in the build (whose workflow says why). Saved by develop and main only, as
+      # in the build: what a tag saves no other ref reads.
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ hashFiles('native/Cargo.toml', '**/.cargo/config.toml', '**/.cargo/config') }}
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
           workspaces: native
 
       - run: scripts/package-native-bundle.sh "${GITHUB_REF_NAME#v}" "${{ matrix.platform }}" dist

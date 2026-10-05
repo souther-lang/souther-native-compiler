@@ -62,9 +62,15 @@ jobs:
       # to as well, so a file rust-cache already hashes put here would turn a change it restores
       # most of into a build from nothing. EveryRustCacheIsKeptUnderWhatDecidesTheBuildTest holds
       # every virtual root in the repository to this list.
+      #
+      # Saved by develop and main only. A pull request reads what they saved and keeps nothing of its
+      # own: each push of one saved some 800MB under a key no other branch reads, the repository's
+      # 10GB of caches filled, and GitHub let go of develop's first, so the next pull request found
+      # no cache at all and built every crate from nothing.
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ hashFiles('native/Cargo.toml', '**/.cargo/config.toml', '**/.cargo/config') }}
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
           workspaces: |
             native
             bindings/rust/runtime
@@ -75,48 +81,48 @@ jobs:
       # packs before it, as the command runs any generator's jar.
       - run: mvn --batch-mode verify
 
-      # What an application does, with no Java calling the API: the command line builds a library
-      # and its binding, Composer installs the runtime from its path, and PHP calls the library.
-      - run: scripts/php-from-the-command-line.sh
-
-      # The same for Rust: the command line builds a library and its crate, Cargo builds a host
-      # depending on the crate with the runtime patched in from the clone, and it calls the library.
-      - run: scripts/rust-from-the-command-line.sh
-
-      # The same for Go: the command line builds a library and its module, and a Go host depending
-      # on it with the runtime put in place from the clone calls the library.
-      - run: scripts/go-from-the-command-line.sh
-
-      # What a release does for the Go runtime, without one: the module is resolved by its path and its
-      # version, from a tag made as the release makes it, with no `replace` (which the tests use, and
-      # nobody outside this clone has); and what would be refused is refused before anything is pushed.
-      - run: scripts/verify-go-runtime-release.sh
-
-      # The runtime as this commit has it against the version it says it is: where that version is
-      # published, it has to be the runtime that was published, so a change to the runtime that leaves
-      # its version alone is found here and not by the release that would have failed on it.
-      - run: scripts/publish-go-runtime.sh --check origin HEAD
-
-      # The Rust runtime says it builds with the rust-version Raoh asks for, which is older than the
-      # toolchain this repository pins, and a dependency moving past it is found here and not by a
-      # host. The runtime's library only: its tests run on the pinned toolchain above.
-      - run: |
-          rustup toolchain install 1.87 --profile minimal
-          cargo +1.87 build --locked --lib --manifest-path bindings/rust/runtime/Cargo.toml
-
-      # Every Composer project installs what its lock fixes, and the lock still matches it.
-      - run: scripts/composer-locks.sh
-
-      # The cart example, built and tested the way its README says: an application's whole path
-      # from HTTP JSON through raoh-php into the model and out to a database over PDO.
-      - run: scripts/php-cart-example.sh
-
-      # The same cart from Rust, over raoh and SQLite, and what rustc refuses a host of the model.
-      - run: scripts/rust-cart-example.sh
-
-      # The same cart from Go, over raoh-go and SQLite, and what the Go runtime refuses where Rust's
-      # types do.
-      - run: scripts/go-cart-example.sh
+      # What follows is a host of each language at a time, all three at once: each waits on a
+      # compiler of its own (Composer and PHP, Cargo, Go) and shares nothing with the others but the
+      # clone's build, which scripts/souther-native makes one at a time. One after another they took
+      # three minutes, most of it with the runner's other cores idle.
+      #
+      # PHP. What an application does, with no Java calling the API: the command line builds a
+      # library and its binding, Composer installs the runtime from its path, and PHP calls the
+      # library. Then every Composer project installs what its lock fixes, and the lock still
+      # matches it. Then the cart example, built and tested the way its README says: an
+      # application's whole path from HTTP JSON through raoh-php into the model and out to a
+      # database over PDO.
+      #
+      # Rust. The same from Rust: the command line builds a library and its crate, Cargo builds a
+      # host depending on the crate with the runtime patched in from the clone, and it calls the
+      # library. Then the runtime's library with the rust-version Raoh asks for, which is older than
+      # the toolchain this repository pins, so a dependency moving past it is found here and not by
+      # a host; its tests run on the pinned toolchain above. Then the same cart over raoh and SQLite,
+      # and what rustc refuses a host of the model.
+      #
+      # Go. The same from Go: the command line builds a library and its module, and a Go host
+      # depending on it with the runtime put in place from the clone calls the library. Then what a
+      # release does for the Go runtime, without one: the module is resolved by its path and its
+      # version, from a tag made as the release makes it, with no `replace` (which the tests use,
+      # and nobody outside this clone has); and what would be refused is refused before anything is
+      # pushed. Then the runtime as this commit has it against the version it says it is: where that
+      # version is published, it has to be the runtime that was published, so a change to the
+      # runtime that leaves its version alone is found here and not by the release that would have
+      # failed on it. Then the same cart over raoh-go and SQLite, and what the Go runtime refuses
+      # where Rust's types do.
+      - run: >-
+          scripts/in-parallel.sh
+          'scripts/php-from-the-command-line.sh
+          && scripts/composer-locks.sh
+          && scripts/php-cart-example.sh'
+          'scripts/rust-from-the-command-line.sh
+          && rustup toolchain install 1.87 --profile minimal
+          && cargo +1.87 build --locked --lib --manifest-path bindings/rust/runtime/Cargo.toml
+          && scripts/rust-cart-example.sh'
+          'scripts/go-from-the-command-line.sh
+          && scripts/verify-go-runtime-release.sh
+          && scripts/publish-go-runtime.sh --check origin HEAD
+          && scripts/go-cart-example.sh'
 
   # Every souther issue this repository names is a premise that the pinned souther does not yet
   # answer it, and the code around the reference works around the gap. A premise the pin has
