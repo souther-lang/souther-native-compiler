@@ -71,17 +71,19 @@ as they are.
 
 ## Building and running it
 
-What it needs is what the repository's own build needs: Maven, Cargo, Composer, and PHP 8.2 or later
-with the `ffi` and `pdo_sqlite` extensions.
+What it needs is `souther` with the native backend installed beside it, Composer, and PHP 8.2 or
+later with the `ffi` and `pdo_sqlite` extensions. In a clone of this repository,
+`SOUTHER=../../scripts/souther bin/build` builds the backend from the clone, which needs Maven and
+Cargo, and runs it in place of an installed one.
 
     bin/build
     composer install
     vendor/bin/phpunit
 
-`bin/build` runs the command line from #57:
+`bin/build` runs the command line:
 
-    scripts/souther-native --library <here>/build/native --php <here>/build/php --namespace Model \
-        examples/cart-model
+    souther compile --target native --library <here>/build/native --php <here>/build/php \
+        --namespace Model <here>/../cart-model
 
 It writes the library into `build/native` and its binding into `build/php`, under the namespace
 `Model`, which `composer.json` maps as it maps the application's own classes. The module is

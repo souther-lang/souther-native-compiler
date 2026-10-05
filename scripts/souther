@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# `souther compile --target native` as a clone runs it, for what is written the way a user runs the
+# command (each example's bin/build) and is run here from a clone. The CLI that runs an installed
+# backend is not published for the Souther snapshot this builds against, and a backend built from a
+# clone is not a release, so it would have to be handed the driver and the generators by properties
+# the CLI does not pass. This takes that one command, refuses any other, and runs
+# scripts/souther-native with what follows the target.
+#
+# The examples' scripts run bin/build with this as $SOUTHER, unless $SOUTHER names a CLI already
+# (scripts/with-the-souther-cli).
+set -euo pipefail
+
+if [ "$#" -lt 3 ] || [ "$1" != compile ] || [ "$2" != --target ] || [ "$3" != native ]; then
+    echo "$0 stands in for \`souther compile --target native\` in a clone, and runs nothing else" >&2
+    exit 2
+fi
+shift 3
+exec "$(dirname "$0")/souther-native" "$@"

@@ -8,7 +8,7 @@ set -euo pipefail
 
 example="$(cd "$(dirname "$0")/../examples/php-cart" && pwd)"
 
-"$example/bin/build"
+SOUTHER="${SOUTHER:-$(cd "$(dirname "$0")" && pwd)/souther}" "$example/bin/build"
 composer install --working-dir="$example" --no-interaction --no-progress --quiet
 cd "$example"
 vendor/bin/phpunit

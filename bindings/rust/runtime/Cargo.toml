@@ -7,7 +7,9 @@ edition = "2024"
 # the two, and this one asks nothing newer.
 rust-version = "1.87"
 license = "Apache-2.0"
-publish = false
+repository = "https://github.com/souther-lang/souther-native-compiler"
+readme = "README.md"
+keywords = ["souther", "ffi", "bindings"]
 
 [dependencies]
 # Loads a library by path, and looks its functions up through that handle and no other.

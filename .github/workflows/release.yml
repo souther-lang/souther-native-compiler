@@ -3,7 +3,10 @@ name: release
 # What a release publishes, from a `v<version>` tag: the driver for each platform, as a bundle on
 # the GitHub release; and the compiler, built with the SHA-256 of each bundle written into it, so
 # that what a released compiler fetches from the release is held to what this built. An asset of a
-# release can be replaced. The compiler on Maven Central cannot, so the trust rests there.
+# release can be replaced. The compiler on Maven Central cannot, so the trust rests there. The
+# publication it keeps holds the backend jar `souther compile --target native` runs beside the
+# compiler's. It publishes to no registry: Maven Central, crates.io, Packagist and the Go module proxy
+# are published by hand, from a clean clone (docs/development.md).
 on:
   push:
     tags: ['v*']
@@ -75,14 +78,6 @@ jobs:
           java-version: '25'
           cache: maven
 
-      # Go, for what publishes the Go runtime: it asks the module to be fetched, and this job is another
-      # runner than the build's, so what the build installed is not here. The version is the runtime
-      # module's own, from its go.mod, as it is in the build.
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: bindings/go/runtime/go.mod
-          cache-dependency-path: bindings/go/runtime/go.sum
-
       - name: The version the tag names
         run: |
           echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
@@ -126,14 +121,6 @@ jobs:
         with:
           name: maven-repository
           path: maven-repo
-
-      # The Go runtime is a module of its own in a directory of this repository, and its version is its
-      # own (bindings/go/runtime/VERSION), published as the tag bindings/go/runtime/v<version>, which the
-      # packages the generator writes require. Where that tag is published already, the runtime has to be
-      # what it was then, or this fails: a compiler release that leaves the runtime alone publishes
-      # nothing. It is the last thing before the release, and asks all of it before it pushes, because a
-      # tag the Go proxy has fetched is not taken back.
-      - run: scripts/publish-go-runtime.sh origin "$GITHUB_SHA"
 
       - run: >-
           gh release create "$GITHUB_REF_NAME" dist/*.zip "$CHECKSUMS" --verify-tag --generate-notes

@@ -14,24 +14,19 @@ answers in. How the library itself is called, function by function, is in
 A binding is written by the same command that builds the library, and the namespace it is written
 under is the caller's to name:
 
-    souther-native --library build/native --php build/php --namespace Acme\Shop model
+    souther compile --target native --library build/native --php build/php --namespace Acme\Shop model
 
 `--library` writes the shared library, its C declarations and its manifest into `build/native`, and
 `--php` writes the binding into `build/php`, with a copy of those declarations as `souther.ffi.h`
-beside it. The [top-level README](../../../README.md) says how to run the command, through jbang or
-from a clone. A namespace PHP will not take is refused before the library is built.
+beside it. The [top-level README](../../../README.md) says how the command is installed, and how a
+clone runs it. A namespace PHP will not take is refused before the library is built.
 
-Until the runtime is published, an application reaches it as a Composer path repository, which is
-the supported way for now. The runtime asks for a development version of raoh-php, which Composer
-takes only where the application asks for it too:
+The runtime is the Composer package `souther-lang/php-runtime` on Packagist, which an application
+requires beside the binding it maps:
 
     {
-        "repositories": [
-            { "type": "path", "url": "<clone>/bindings/php/runtime" }
-        ],
         "require": {
-            "raoh/raoh": "0.8.x-dev",
-            "souther-lang/php-runtime": "@dev"
+            "souther-lang/php-runtime": "^0.1"
         },
         "autoload": { "psr-4": { "Acme\\Shop\\": "build/php/" } }
     }

@@ -36,7 +36,9 @@ let total (line) = line.price.value * line.quantity
 LINES
 
 # The line the README gives.
-scripts/souther-native --library "$app/native" --go "$app/go" --package example.com/shop "$app/model"
+# $SOUTHER is a CLI where scripts/with-the-souther-cli runs this, and scripts/souther otherwise.
+"${SOUTHER:-scripts/souther}" compile --target native --library "$app/native" \
+    --go "$app/go" --package example.com/shop "$app/model"
 
 runtime="github.com/souther-lang/souther-native-compiler/bindings/go/runtime"
 raoh="$(sed -nE 's#^require (github.com/raoh-project/raoh-go) (.+)$#\1 \2#p' bindings/go/runtime/go.mod)"

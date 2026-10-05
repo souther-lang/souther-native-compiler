@@ -34,7 +34,9 @@ let total (line) = line.price.value * line.quantity
 EOF
 
 # The line the README gives.
-scripts/souther-native --library "$app/native" --rust "$app/rust" --crate shop "$app/model"
+# $SOUTHER is a CLI where scripts/with-the-souther-cli runs this, and scripts/souther otherwise.
+"${SOUTHER:-scripts/souther}" compile --target native --library "$app/native" \
+    --rust "$app/rust" --crate shop "$app/model"
 
 cat > "$app/host/Cargo.toml" <<EOF
 [package]

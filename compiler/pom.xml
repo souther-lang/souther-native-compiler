@@ -64,10 +64,10 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
                 <executions>
-                    <!-- What starts the command from the artifact (jbang runs the jar's main class),
-                         and what says which release this is: the version a released compiler
-                         fetches its generators and its driver at. A build from a clone has no such
-                         entry, which is how it knows it has no release to fetch from. -->
+                    <!-- What starts the command from a jar, and what says which release this is: the
+                         version a released compiler fetches its generators and its driver at. The
+                         backend jar below carries this manifest. A build from a clone is a
+                         snapshot's version, which is how it knows it has no release to fetch from. -->
                     <execution>
                         <id>default-jar</id>
                         <configuration>
@@ -87,6 +87,117 @@
                     </execution>
                 </executions>
             </plugin>
+            <!-- The descriptor `souther compile` chooses a backend by, with the Souther this is
+                 built against written in: the target it answers to and that version, and nothing
+                 else, since the CLI refuses any other key. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>backend-descriptor</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/backend</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>src/backend</directory>
+                                    <filtering>true</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- What the backend is shaded from, written down for what gives each of its packages the
+                 identity of its own jar (src/build/BackendManifest.java): what the shade plugin
+                 puts in, which is the runtime class path. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>backend-classpath</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>build-classpath</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <outputFile>${project.build.directory}/backend/classpath.txt</outputFile>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- The backend: this jar and everything it runs with, as one executable jar carrying the
+                 descriptor, which `souther compile` runs for the native target as a process of its own.
+                 Attached beside the jar and not in its place, so that what depends on the compiler
+                 as a library (the testkit) is handed its dependencies as dependencies, and the
+                 descriptor is only in the jar that can run alone. Its manifest is this jar's, with
+                 each package's identity moved into a section of its own after shading
+                 (backend-manifest, below). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.2</version>
+                <executions>
+                    <execution>
+                        <id>backend</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>backend</shadedClassifierName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <!-- Run on the class path, where a module descriptor says
+                                             nothing, and several would be one path. -->
+                                        <exclude>module-info.class</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>souther.nativecode.Main</mainClass>
+                                    <manifestEntries>
+                                        <Multi-Release>true</Multi-Release>
+                                    </manifestEntries>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/souther-docs/sets</resource>
+                                </transformer>
+                                <!-- Jackson's jars each carry their license and notice at one path,
+                                     and the jar keeps every one of them rather than whichever came
+                                     first. -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/LICENSE</resource>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/NOTICE</resource>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                                    <resource>META-INF/souther/backend.properties</resource>
+                                    <file>${project.build.directory}/backend/backend.properties</file>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>exec-maven-plugin</artifactId>
@@ -96,6 +207,28 @@
                          release would otherwise make a compiler that fetches nothing it can check, and
                          publish it. Its own skip, set explicitly, so that `-Dexec.skip` (which leaves out
                          Cargo) does not leave this out. -->
+                    <!-- After the shade plugin, which is declared before this: every package of the
+                         backend jar answers with the identity of the jar it came from, and the main
+                         section with none, so Souther's compiler says it is Souther's release and
+                         not the backend's. Its own skip, set explicitly, so that `-Dexec.skip`
+                         (which leaves out Cargo, and which the release sets) does not leave it out. -->
+                    <execution>
+                        <id>backend-manifest</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>exec</goal>
+                        </goals>
+                        <configuration>
+                            <skip>false</skip>
+                            <executable>${java.home}/bin/java</executable>
+                            <arguments>
+                                <argument>${project.basedir}/src/build/BackendManifest.java</argument>
+                                <argument>${project.build.directory}/${project.build.finalName}-backend.jar</argument>
+                                <argument>${project.build.directory}/${project.build.finalName}.jar</argument>
+                                <argument>${project.build.directory}/backend/classpath.txt</argument>
+                            </arguments>
+                        </configuration>
+                    </execution>
                     <execution>
                         <id>release-checksums</id>
                         <phase>prepare-package</phase>

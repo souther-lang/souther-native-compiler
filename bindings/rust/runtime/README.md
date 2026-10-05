@@ -2,7 +2,7 @@
 
 What every Rust binding of a Souther library built by souther-native-compiler runs on: a run's arena,
 the handles a value is held as, and calls into the library and back. An application does not
-depend on this crate by itself. It depends on the crate `souther-native --rust` wrote for its
+depend on this crate by itself. It depends on the crate `souther compile --target native --rust` wrote for its
 model, which depends on this one and re-exports what a host names (`Construction`, `Reading`,
 `Failure`, `Decimal`, the temporal types and `raoh`).
 
@@ -11,7 +11,7 @@ model, which depends on this one and re-exports what a host names (`Construction
 The command writes the library and the Rust binding of it in one build, the binding from the
 manifest the library was written with:
 
-    souther-native --library build/native --rust build/rust --crate acme model
+    souther compile --target native --library build/native --rust build/rust --crate acme model
 
 `--crate` names the crate the binding is, and `--rust` the directory it is written to. That
 directory is the binding of one manifest and nothing else: the command writes a binding beside it
@@ -19,14 +19,15 @@ and puts it in place whole, so a type the model no longer declares is not left f
 before. It replaces only a directory a Rust binding was written to, which the file
 `.souther-binding` in it says, and refuses one holding anything else rather than deleting it.
 
-A Rust host depends on the crate `--rust` wrote by path, and until this crate is published, reaches
-it by patching it in from a clone of souther-native-compiler:
+A Rust host depends on the crate `--rust` wrote by path, and that crate requires this one from
+crates.io, so the host names nothing else:
 
     [dependencies]
     acme = { path = "build/rust" }
 
-    [patch.crates-io]
-    souther-binding-runtime = { path = "<clone>/bindings/rust/runtime" }
+Work on this crate itself is tried against a host by patching it in from a clone of
+souther-native-compiler (`[patch.crates-io]`, naming `<clone>/bindings/rust/runtime`), which the
+repository's own tests of a generated binding do.
 
 The generated crate asks for Rust 1.87 or newer, as this one does, since Raoh, which both depend
 on, asks for that. The library is loaded by path when the host runs, not linked.
