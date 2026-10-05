@@ -35,7 +35,6 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
 directory="bindings/php/runtime"
-publish="$root/scripts/publish-php-runtime.sh"
 version="$(tr -d '[:space:]' < "$directory/VERSION")"
 protocol="$(sed -nE 's#^    public const PROTOCOL = ([0-9]+);$#\1#p' "$directory/src/Binding.php")"
 
@@ -44,11 +43,33 @@ fail() {
     exit 1
 }
 
+# The publisher runs with no Git configuration but the clone's own, and with Git told not to guess an
+# identity from the system (user.useConfigOnly), which it does on one system and not on another: no
+# identity and no signing, as a clean environment has it. What the commits it makes are made of is
+# its own to say, and is not to be found here in a configuration it happened to run under.
+publish() {
+    HOME="$work/home" XDG_CONFIG_HOME="$work/home" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+        GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.useConfigOnly GIT_CONFIG_VALUE_0=true \
+        "$root/scripts/publish-php-runtime.sh" "$@"
+}
+mkdir "$work/home"
+publish="publish"
+
 # Published as a publication publishes it, rehearsed.
 git init --quiet --bare "$work/mirror.git"
 "$publish" --rehearse "$work/mirror.git" HEAD
 [ "$(git -C "$work/mirror.git" rev-parse "refs/tags/v$version^{tree}")" = "$(git rev-parse "HEAD:$directory")" ] \
     || fail "the mirror's v$version is not $directory as HEAD has it"
+
+# The commit is made of the commit it publishes, and of nothing of where it was published from: on
+# another mirror, it is the same commit.
+[ "$(git -C "$work/mirror.git" show -s --format='%an <%ae> %ad %cn <%ce> %cd' --date=raw "v$version")" \
+    = "$(git show -s --format='%an <%ae> %ad %cn <%ce> %cd' --date=raw HEAD)" ] \
+    || fail "the mirror's commit is not authored and committed as HEAD is"
+git init --quiet --bare "$work/again.git"
+"$publish" --rehearse "$work/again.git" HEAD > /dev/null
+[ "$(git -C "$work/again.git" rev-parse "v$version")" = "$(git -C "$work/mirror.git" rev-parse "v$version")" ] \
+    || fail "HEAD published to two mirrors made two commits"
 
 # Publishing what is published is publishing nothing.
 main="$(git -C "$work/mirror.git" rev-parse refs/heads/main)"
@@ -78,7 +99,7 @@ echo "a host that requires souther-lang/php-runtime $version from the mirror loa
 
 # What is refused, of a repository that has only the runtime in it: changed in a commit each.
 git_in() {
-    git -C "$work/synthetic" -c user.name=check -c user.email=check@example.com "$@"
+    git -C "$work/synthetic" -c user.name=check -c user.email=check@example.com -c commit.gpgSign=false "$@"
 }
 mkdir -p "$work/synthetic/$(dirname "$directory")"
 git archive "HEAD:$directory" | (mkdir "$work/synthetic/$directory" && tar -x -C "$work/synthetic/$directory")

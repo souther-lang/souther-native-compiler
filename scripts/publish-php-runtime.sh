@@ -113,9 +113,21 @@ if git -C "$looked" fetch --quiet "$mirror" refs/heads/main 2> /dev/null; then
     parents=(-p "$(git -C "$looked" rev-parse FETCH_HEAD)")
     git fetch --quiet "$mirror" refs/heads/main
 fi
-published_commit="$(git commit-tree "$tree" ${parents[@]+"${parents[@]}"} \
-    -m "souther-lang/php-runtime $version" \
-    -m "bindings/php/runtime of souther-lang/souther-native-compiler at $sha")"
+# The commit is this script's to make, so everything it is made of is said here and nothing is left to
+# whoever runs it: its author and committer, and when, are those of the commit it publishes, and it
+# is not signed. A clean environment with no identity of its own makes it, and the same commit on the
+# same mirror makes the same one wherever it is published from.
+published_commit="$(
+    GIT_AUTHOR_NAME="$(git show -s --format=%an "$sha")" \
+    GIT_AUTHOR_EMAIL="$(git show -s --format=%ae "$sha")" \
+    GIT_AUTHOR_DATE="$(git show -s --format=%ad --date=raw "$sha")" \
+    GIT_COMMITTER_NAME="$(git show -s --format=%cn "$sha")" \
+    GIT_COMMITTER_EMAIL="$(git show -s --format=%ce "$sha")" \
+    GIT_COMMITTER_DATE="$(git show -s --format=%cd --date=raw "$sha")" \
+    git commit-tree --no-gpg-sign "$tree" ${parents[@]+"${parents[@]}"} \
+        -m "souther-lang/php-runtime $version" \
+        -m "bindings/php/runtime of souther-lang/souther-native-compiler at $sha"
+)"
 git push "$mirror" "$published_commit:refs/heads/main" "$published_commit:refs/tags/$tag"
 if [ "$mode" = publish ]; then
     echo "$tag is published on $mirror: Packagist reads it from there"

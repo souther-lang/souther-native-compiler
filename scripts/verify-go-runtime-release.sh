@@ -105,7 +105,7 @@ echo "a host that requires $module v$version by its path is built, with no repla
 
 # What is refused, of a repository that has only the runtime in it: changed in a commit each.
 git_in() {
-    git -C "$work/synthetic" -c user.name=check -c user.email=check@example.com "$@"
+    git -C "$work/synthetic" -c user.name=check -c user.email=check@example.com -c commit.gpgSign=false "$@"
 }
 mkdir -p "$work/synthetic/$(dirname "$directory")"
 cp -R "$directory" "$work/synthetic/$directory"
