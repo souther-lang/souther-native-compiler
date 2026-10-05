@@ -2,9 +2,13 @@ package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import souther.bindings.BindingApi;
 import souther.compiler.Compiler;
+import souther.compiler.meta.ModuleMetadata;
 
 import java.io.InputStream;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -70,18 +74,40 @@ class TheBackendJarIsWhatSoutherCompileRunsForTheNativeTargetTest {
     }
 
     /**
-     * The backend's own version is the manifest's, and is the compiler's: it is the release a
-     * released backend fetches its driver and generators at, which the descriptor plays no part in.
+     * The jar starts the command, and each package in it says what it is as it would unshaded: the
+     * manifest's main section says nothing of what anything is, and each package has a section of its
+     * own. So the backend's own version is the one its packages say, which is the release it fetches
+     * at, and Souther's compiler, shaded into it, still says it is Souther's release.
      */
     @Test
-    void theManifestStartsTheCommandAndSaysTheBackendsOwnVersion() throws Exception {
+    void everyPackageSaysTheReleaseOfTheJarItWasShadedFrom() throws Exception {
+        String souther = Compiler.class.getPackage().getImplementationVersion();
+        String backend = System.getProperty("souther.native.version");
         try (JarFile archive = new JarFile(jar().toFile())) {
             Manifest manifest = archive.getManifest();
+            assertThat(manifest.getMainAttributes().getValue("Main-Class")).isEqualTo(Main.class.getName());
+            assertThat(manifest.getMainAttributes().keySet()).as("the main section, which every package"
+                    + " without a section of its own would answer from")
+                    .noneMatch(name -> name.toString().startsWith("Implementation-")
+                            || name.toString().startsWith("Specification-"));
 
-            assertThat(manifest.getMainAttributes().getValue("Main-Class"))
-                    .isEqualTo(Main.class.getName());
-            assertThat(manifest.getMainAttributes().getValue("Implementation-Version"))
-                    .isEqualTo(System.getProperty("souther.native.version"));
+            List<String> packages = archive.stream().map(ZipEntry::getName)
+                    .filter(name -> name.endsWith(".class") && !name.endsWith("module-info.class"))
+                    .map(name -> name.replaceFirst("^META-INF/versions/[0-9]+/", ""))
+                    .filter(name -> name.contains("/") && !name.startsWith("META-INF/"))
+                    .map(name -> name.substring(0, name.lastIndexOf('/') + 1)).distinct().toList();
+            assertThat(packages).isNotEmpty().allSatisfy(pkg -> assertThat(manifest.getAttributes(pkg))
+                    .as("the section of %s", pkg).isNotNull());
+        }
+
+        try (URLClassLoader loader = new URLClassLoader(new URL[]{jar().toUri().toURL()},
+                ClassLoader.getPlatformClassLoader())) {
+            assertThat(loader.loadClass(Main.class.getName()).getPackage().getImplementationVersion())
+                    .as("the backend").isEqualTo(backend);
+            assertThat(loader.loadClass(BindingApi.class.getName()).getPackage().getImplementationVersion())
+                    .as("the binding API, of the backend's release").isEqualTo(backend);
+            assertThat(loader.loadClass(ModuleMetadata.class.getName()).getMethod("compilerVersion")
+                    .invoke(null)).as("what Souther's compiler says it is").isEqualTo(souther);
         }
     }
 
