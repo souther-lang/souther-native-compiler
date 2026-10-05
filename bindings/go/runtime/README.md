@@ -260,7 +260,7 @@ not an edit of one.
 That is separate from the library's ABI generation. This module calls a library of one generation
 (`souther.ABIGeneration`) and asks each library for its generation before anything else, as above.
 A function generated for a behavior or a type also carries the generation in its name
-(`souther10_m_shop_b_quote`), so a binding generated against another generation finds none of its
+(`souther11_m_shop_b_quote`), so a binding generated against another generation finds none of its
 functions.
 
 ## Platforms and versions
@@ -270,8 +270,8 @@ this repository builds and tests it on Linux and macOS. Windows is not written y
 (souther-native-compiler#96).
 
 The modules a binding writes need the Go this module's `go.mod` names, which Raoh's needs are part
-of. Raoh has no release, so the version this module and a generated `go.mod` require
-([raoh-go](https://github.com/raoh-project/raoh-go)) is a commit, which a test holds to one.
+of. This module and a generated `go.mod` require one release of
+[raoh-go](https://github.com/raoh-project/raoh-go), which a test holds to one.
 
 ## The cart example
 

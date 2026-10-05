@@ -142,7 +142,7 @@ spelt apart: `souther<n>`, `<n>` being the ABI generation, then the module as `_
 segment of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape
 a list's element crosses in, or `_fn_` and the shape of a function value, and then what is done with
 it. A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther10_m_shop_b_quote` at generation
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther11_m_shop_b_quote` at generation
 10, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
 `_` or `u`, which keeps every spelling readable back to the names it was made from. The functions
 that spell each name are in [`native/crates/abi/src/lib.rs`](../native/crates/abi/src/lib.rs), each
@@ -163,8 +163,16 @@ bytes, and `_decode_host` out of a value a host built of ordered maps and wrote 
 as an object. Each answers a status, which is not `ANSWERED` only where a clause the reading runs
 ended without a value, and otherwise writes through room a reading the host asks what it came to
 through the runtime's `souther_decoded_*` functions: a value, bytes that are not JSON and where they
-stopped, or every issue found. A clause that does not hold is one of the issues. `_encode` writes a
-value in its external form. A behavior answering a union no declaration names has
+stopped, or every issue found. A clause that does not hold is one of the issues. An issue says its
+code, its message key, its path and its metadata (`souther_issue_meta`), a JSON object with a
+member for each name Raoh gives the issue. Each value in it is written as the type it is in Raoh's
+value model, an object of one member named for the type: `{"int":5}`, `{"decimal":"1.50"}` (the
+decimal at its scale, as Java's `BigDecimal.toString` writes it), `{"string":"…"}` and
+`{"list":[…]}`, and a value of the model an element `duplicates` lists as a boundary writes it, with
+`{"bool":…}`, `{"record":{…}}` and `{"none":null}` beside those. A host makes each value that type
+in its own Raoh and guesses nothing from the JSON, since plain JSON writes the `Decimal` 5 and the
+`Int` 5 alike and a JSON reader takes `1.50` as the float 1.5. `_encode` writes a value in its
+external form. A behavior answering a union no declaration names has
 `_b_<behavior>_answer_case` beside its call, which says which of the union's cases the value is.
 
 A primitive among the cases of a union is carried by the runtime, and a host makes one and reads it

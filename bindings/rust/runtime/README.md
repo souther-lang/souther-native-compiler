@@ -29,7 +29,7 @@ Work on this crate itself is tried against a host by patching it in from a clone
 souther-native-compiler (`[patch.crates-io]`, naming `<clone>/bindings/rust/runtime`), which the
 repository's own tests of a generated binding do.
 
-The generated crate asks for Rust 1.87 or newer, as this one does, since Raoh, which both depend
+The generated crate asks for Rust 1.88 or newer, as this one does, since Raoh, which both depend
 on, asks for that. The library is loaded by path when the host runs, not linked.
 [`scripts/rust-from-the-command-line.sh`](../../../scripts/rust-from-the-command-line.sh) is the
 whole of it as an application outside the repository's tests does it: a two-file model built into a

@@ -60,7 +60,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -309,7 +308,7 @@ func issueOf[B any](r *Run[B], issue unsafe.Pointer) raoh.Issue {
 		panic(fmt.Sprintf("souther: the library writes metadata as a JSON object: %v", err))
 	}
 	for name, said := range meta {
-		made = made.WithMeta(name, plain(said))
+		made = made.WithMeta(name, metaValue(said))
 	}
 	return made
 }
@@ -331,28 +330,62 @@ func pathOf(pointer string) raoh.Path {
 	return path
 }
 
-// plain is a decoded JSON value with its numbers as Go's: a whole number that fits is an int64,
-// and any other is a float64.
-func plain(value any) any {
-	switch it := value.(type) {
-	case json.Number:
-		if whole, err := it.Int64(); err == nil {
-			return whole
-		}
-		if decimal, err := it.Float64(); err == nil && !math.IsInf(decimal, 0) {
-			return decimal
-		}
-		return it.String()
-	case []any:
-		for at := range it {
-			it[at] = plain(it[at])
-		}
-		return it
-	case map[string]any:
-		for name := range it {
-			it[name] = plain(it[name])
-		}
-		return it
+// metaValue is a value of an issue's metadata as the library writes it, an object of one member
+// named for its type in Raoh's value model, made a value of that type: an int as an int64, a decimal
+// as Raoh's Decimal at the scale it was written at, text as a string and a list as a []any of the
+// same, and a value of the model as a boundary writes it, an object as a map[string]any and an
+// Option's None as nil. So 5 and 1.50 are the decimals they are, as the JVM's issue holds them. The library writes
+// nothing else, and a library of another contract was refused at its generation when it was loaded.
+func metaValue(said any) any {
+	typed, ok := said.(map[string]any)
+	if !ok || len(typed) != 1 {
+		panic(fmt.Sprintf("souther: the library writes a value of metadata as its type, and wrote %v", said))
 	}
-	return value
+	for name, value := range typed {
+		switch it := value.(type) {
+		case json.Number:
+			if name == "int" {
+				whole, err := it.Int64()
+				if err != nil {
+					panic(fmt.Sprintf("souther: the library writes an int of 64 bits, and wrote %s", it))
+				}
+				return whole
+			}
+		case string:
+			switch name {
+			case "decimal":
+				decimal, err := raoh.ParseDecimal(it)
+				if err != nil {
+					panic(fmt.Sprintf("souther: the library writes a decimal as its text, and wrote %q", it))
+				}
+				return decimal
+			case "string":
+				return it
+			}
+		case []any:
+			if name == "list" {
+				for at := range it {
+					it[at] = metaValue(it[at])
+				}
+				return it
+			}
+		case bool:
+			if name == "bool" {
+				return it
+			}
+		case map[string]any:
+			if name == "record" {
+				for member := range it {
+					it[member] = metaValue(it[member])
+				}
+				return it
+			}
+		case nil:
+			if name == "none" {
+				return nil
+			}
+		}
+		panic(fmt.Sprintf("souther: the library writes no %s of %v", name, value))
+	}
+	panic("unreachable")
 }

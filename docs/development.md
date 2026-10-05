@@ -124,8 +124,9 @@ that cannot be fetched by its path and its version out of a repository that has 
 (a rehearsal, in a directory that stands where GitHub does); and, when it publishes, a runtime that
 requires a pseudo-version rather than a release. What it is run for is said rather than read from
 whether it pushes: `--check` pushes nothing, `--rehearse` pushes to a repository that is a directory
-here and asks nothing of a release, and without either it publishes and asks all of it. A check and a
-rehearsal run while the runtime still requires a commit of Raoh, which only a publication refuses. Every build asks the same with `--check`, which pushes nothing, so a change to
+here and asks nothing of a release, and without either it publishes and asks all of it, so a check
+and a rehearsal hold between releases too, while the runtime may require a commit of Raoh, which only
+a publication refuses. Every build asks the same with `--check`, which pushes nothing, so a change to
 the runtime that leaves its version alone is found in the pull request, and
 [`scripts/verify-go-runtime-release.sh`](../scripts/verify-go-runtime-release.sh) holds the whole of
 it, without a release: a host with no `replace` requires the module at a tag rehearsed that way and

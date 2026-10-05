@@ -49,12 +49,12 @@ class AListIsWrittenAsAnArrayOfItsElementsTest {
                 Checked.of(List.of(WIRE)), harness)).isEqualTo("""
                 order: value {"number":1,"lines":[{"sku":"a","quantity":2},{"sku":"b","quantity":1}]}
                 order empty: value {"number":1,"lines":[]}
-                order bad line: issues [@/lines/2/quantity type_mismatch {"actual":"string","expected":"Int"}]
-                order every bad line: issues [@/lines/0/sku missing_field {"actual":"nothing","expected":"a field"}] [@/lines/1 invariant_violation {"clause":"positive","module":"ordering","type":"OrderLine"}] [@/lines/2 type_mismatch {"actual":"number","expected":"an object"}]
-                order lines object: issues [@/lines type_mismatch {"actual":"object","expected":"an array"}]
-                order no lines: issues [@/lines missing_field {"actual":"nothing","expected":"a field"}]
+                order bad line: issues [@/lines/2/quantity type_mismatch {"actual":{"string":"string"},"expected":{"string":"Int"}}]
+                order every bad line: issues [@/lines/0/sku missing_field {"actual":{"string":"nothing"},"expected":{"string":"a field"}}] [@/lines/1 invariant_violation {"clause":{"string":"positive"},"module":{"string":"ordering"},"type":{"string":"OrderLine"}}] [@/lines/2 type_mismatch {"actual":{"string":"number"},"expected":{"string":"an object"}}]
+                order lines object: issues [@/lines type_mismatch {"actual":{"string":"object"},"expected":{"string":"an array"}}]
+                order no lines: issues [@/lines missing_field {"actual":{"string":"nothing"},"expected":{"string":"a field"}}]
                 grid: value {"rows":[[1,2],[],[3]]}
-                grid bad cell: issues [@/rows/1/1 type_mismatch {"actual":"boolean","expected":"Int"}]
+                grid bad cell: issues [@/rows/1/1 type_mismatch {"actual":{"string":"boolean"},"expected":{"string":"Int"}}]
                 """);
     }
 }

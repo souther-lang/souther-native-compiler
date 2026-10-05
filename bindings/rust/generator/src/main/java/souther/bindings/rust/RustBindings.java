@@ -49,8 +49,14 @@ public final class RustBindings {
 
     /** What says a directory is a Rust binding this wrote, and may be replaced whole. */
 
-    /** The version of the runtime crate what this writes calls. */
+    /** The version of the runtime crate what this writes calls; held to the crate's by a test. */
     static final String RUNTIME_VERSION = "0.1";
+
+    /**
+     * The oldest Rust a crate this writes builds with, which is the runtime crate's, since it depends
+     * on that crate and on Raoh, which asks for no newer; held to the crate's by a test.
+     */
+    static final String RUST_VERSION = "1.88";
 
     /**
      * Every name the root of the crate declares, which no top module of the model may be. A test
@@ -864,7 +870,7 @@ public final class RustBindings {
                     /// with theirs, at the path it is reached at.
                     pub fn decoder<'a>(
                         decoding: &'a crate::Decoding<'_, 'run>,
-                    ) -> impl crate::raoh::Decoder<crate::raoh::json::prelude::Value, Output = Self> + 'a {
+                    ) -> impl crate::raoh::Decoder<crate::raoh::json::Json, Output = Self> + 'a {
                         decoding.reading(Self::decode)
                     }
                 """.formatted(it.key(), symbol(decode)));
@@ -1712,12 +1718,12 @@ public final class RustBindings {
                 name = "%s"
                 version = "0.0.0"
                 edition = "2024"
-                rust-version = "1.87"
+                rust-version = "%s"
                 publish = false
 
                 [dependencies]
                 souther-binding-runtime = "%s"
-                """.formatted(crate, RUNTIME_VERSION);
+                """.formatted(crate, RUST_VERSION, RUNTIME_VERSION);
         file(List.of("Cargo.toml"), toml);
     }
 

@@ -53,13 +53,13 @@ public final class GoBindings {
      * The protocol of the runtime module this writes for: what its public surface is, as recorded
      * under {@code bindings/go/runtime/protocol}. A test holds it to the runtime's own.
      */
-    static final int RUNTIME_PROTOCOL = 4;
+    static final int RUNTIME_PROTOCOL = 5;
 
     /**
      * The version of Raoh the runtime module asks for, which a package that imports it asks for as
      * well; held to the runtime's own go.mod by a test.
      */
-    static final String RAOH_VERSION = "v0.0.0-20260929134234-af24f3ce21c6";
+    static final String RAOH_VERSION = "v0.9.0";
 
     /** The runtime module every import of it names, as the module says its own path. */
     private static final String RUNTIME_MODULE = RuntimeModule.THE.path();

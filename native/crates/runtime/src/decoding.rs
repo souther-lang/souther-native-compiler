@@ -30,7 +30,9 @@ use crate::temporal::{
     parse_instant, parse_time, time_of,
 };
 use crate::{Bool, Count, STRING_HOLDS, Text, Value, souther_alloc, string_of, text};
-use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, case_names_read};
+use souther_native_abi::{
+    DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, META_TYPES, case_names_read,
+};
 use std::ptr;
 
 /// One reading of one document, from when its bytes are handed over to what a host is answered.
@@ -115,11 +117,12 @@ fn string(text: &str) -> *const u8 {
 
 /// The metadata of an issue as the JSON object it is written as: its entries in the order of their
 /// names, one entry to a name, so one issue's metadata is written one way wherever it is read, and
-/// each value as the value it is — a `Decimal` at its scale, where a boundary writes its amount.
+/// each value as the type it is (`META_TYPES`), so a host makes a `Decimal` of `5` and `1.50` and an
+/// `Int` of `5`, as the JVM's issue holds them.
 fn metadata(entries: Vec<(&str, Said)>) -> String {
     let mut members: Vec<(Vec<u8>, Said)> = entries
         .into_iter()
-        .map(|(name, said)| (name.as_bytes().to_vec(), said))
+        .map(|(name, said)| (name.as_bytes().to_vec(), typed(&said)))
         .collect();
     members.sort_by(|a, b| a.0.cmp(&b.0));
     assert!(
@@ -127,12 +130,33 @@ fn metadata(entries: Vec<(&str, Said)>) -> String {
         "an issue says one thing under a name"
     );
     let mut written = Vec::new();
-    crate::external::write(
-        &Said::Object(members),
-        &mut written,
-        crate::external::Written::AsMetadata,
-    );
+    crate::external::write(&Said::Object(members), &mut written);
     String::from_utf8(written).expect("JSON written of text is text")
+}
+
+/// A value of an issue's metadata as `META_TYPES` writes it: an object of one member, named for
+/// its type, and a value of the model (an element `duplicates` lists) as a boundary writes it, each
+/// part so.
+fn typed(said: &Said) -> Said {
+    let (name, value) = match said {
+        Said::Number(n) => ("int", Said::Number(*n)),
+        Said::Amount(amount) => ("decimal", Said::String(amount.scaled_text().into_bytes())),
+        Said::String(text) => ("string", Said::String(text.clone())),
+        Said::Array(items) => ("list", Said::Array(items.iter().map(typed).collect())),
+        Said::Bool(truth) => ("bool", Said::Bool(*truth)),
+        Said::Object(members) => (
+            "record",
+            Said::Object(
+                members
+                    .iter()
+                    .map(|(name, value)| (name.clone(), typed(value)))
+                    .collect(),
+            ),
+        ),
+        Said::Null => ("none", Said::Null),
+    };
+    debug_assert!(META_TYPES.iter().any(|(type_name, _)| *type_name == name));
+    Said::Object(vec![(name.as_bytes().to_vec(), value)])
 }
 
 /// Text an issue says under a name.
@@ -1189,6 +1213,12 @@ unsafe fn amount_said(at: *const Decimal) -> Said {
     Said::Amount(unsafe { amount(at) })
 }
 
+/// The `Decimal` nought a bound of a `Decimal` is stated against: a `Decimal` and not the `Int` 0,
+/// as Raoh's `DecimalDecoder` holds `BigDecimal.ZERO`, so a host's issue says the same type.
+fn decimal_zero() -> Said {
+    Said::Amount(Amount::of_int(0))
+}
+
 /// `DecimalDecoder.min(n)`: `out_of_range` under `out_of_range.minimum`, with `min` and `actual`,
 /// compared by amount whatever the scales.
 ///
@@ -1262,7 +1292,7 @@ pub unsafe extern "C" fn souther_read_decimal_positive(
             path,
             "out_of_range",
             Some("out_of_range.positive"),
-            || vec![("min", Said::Number(0)), ("actual", amount_said(value))],
+            || vec![("min", decimal_zero()), ("actual", amount_said(value))],
         )
     }
 }
@@ -1286,7 +1316,7 @@ pub unsafe extern "C" fn souther_read_decimal_non_negative(
             path,
             "out_of_range",
             Some("out_of_range.non_negative"),
-            || vec![("min", Said::Number(0)), ("actual", amount_said(value))],
+            || vec![("min", decimal_zero()), ("actual", amount_said(value))],
         )
     }
 }
@@ -1672,31 +1702,36 @@ mod tests {
         assert_eq!(
             int("9223372036854775808"),
             Err(vec![
-                r#" out_of_range {"actual":"number","expected":"Int"}"#.to_string()
+                r#" out_of_range {"actual":{"string":"number"},"expected":{"string":"Int"}}"#
+                    .to_string()
             ])
         );
         assert_eq!(
             int("-99999999999999999999999"),
             Err(vec![
-                r#" out_of_range {"actual":"number","expected":"Int"}"#.to_string()
+                r#" out_of_range {"actual":{"string":"number"},"expected":{"string":"Int"}}"#
+                    .to_string()
             ])
         );
         assert_eq!(
             int("1.0"),
             Err(vec![
-                r#" type_mismatch {"actual":"number","expected":"Int"}"#.to_string()
+                r#" type_mismatch {"actual":{"string":"number"},"expected":{"string":"Int"}}"#
+                    .to_string()
             ])
         );
         assert_eq!(
             int("1e0"),
             Err(vec![
-                r#" type_mismatch {"actual":"number","expected":"Int"}"#.to_string()
+                r#" type_mismatch {"actual":{"string":"number"},"expected":{"string":"Int"}}"#
+                    .to_string()
             ])
         );
         assert_eq!(
             int("\"1\""),
             Err(vec![
-                r#" type_mismatch {"actual":"string","expected":"Int"}"#.to_string()
+                r#" type_mismatch {"actual":{"string":"string"},"expected":{"string":"Int"}}"#
+                    .to_string()
             ])
         );
         souther_scope_close(scope);
@@ -1715,7 +1750,9 @@ mod tests {
         unsafe { souther_read_missing(path, decoding) };
         assert_eq!(
             issues(decoding),
-            vec![r#"/a~1b/~0c/0 missing_field {"actual":"nothing","expected":"a field"}"#]
+            vec![
+                r#"/a~1b/~0c/0 missing_field {"actual":{"string":"nothing"},"expected":{"string":"a field"}}"#
+            ]
         );
         souther_scope_close(scope);
     }
@@ -1742,8 +1779,8 @@ mod tests {
         assert_eq!(
             issues(decoding),
             vec![
-                r#"/xs/1 type_mismatch {"actual":"boolean","expected":"Int"}"#,
-                r#"/xs/1 type_mismatch {"actual":"boolean","expected":"an array"}"#,
+                r#"/xs/1 type_mismatch {"actual":{"string":"boolean"},"expected":{"string":"Int"}}"#,
+                r#"/xs/1 type_mismatch {"actual":{"string":"boolean"},"expected":{"string":"an array"}}"#,
             ]
         );
         souther_scope_close(scope);
@@ -1861,8 +1898,8 @@ mod tests {
         assert_eq!(
             issues(decoding),
             vec![
-                r#" invariant_violation {"clause":"notNegative","module":"shop","type":"Money"}"#,
-                r#"/x invariant_violation {"module":"shop","type":"Line"}"#,
+                r#" invariant_violation {"clause":{"string":"notNegative"},"module":{"string":"shop"},"type":{"string":"Money"}}"#,
+                r#"/x invariant_violation {"module":{"string":"shop"},"type":{"string":"Line"}}"#,
             ]
         );
         souther_scope_close(scope);
@@ -1926,21 +1963,21 @@ mod tests {
         assert_eq!(
             issues(decoding),
             vec![
-                r#"/a too_short {"actual":2,"min":3}"#,
-                r#"/b too_long {"actual":4,"max":3}"#,
-                r#"/c invalid_length {"actual":2,"expected":3}"#,
-                r#"/d out_of_range key=out_of_range.minimum {"actual":2,"min":3}"#,
-                r#"/e out_of_range key=out_of_range.maximum {"actual":4,"max":3}"#,
-                r#"/f out_of_range key=out_of_range.positive {"actual":0,"min":1}"#,
-                r#"/g out_of_range key=out_of_range.non_negative {"actual":-1,"min":0}"#,
-                r#"/h out_of_range key=out_of_range.minimum {"actual":1.50,"min":2.00}"#,
-                r#"/i out_of_range key=out_of_range.maximum {"actual":2.50,"max":2}"#,
-                r#"/j out_of_range key=out_of_range.positive {"actual":0.00,"min":0}"#,
-                r#"/k out_of_range key=out_of_range.non_negative {"actual":-0.1,"min":0}"#,
-                r#"/l too_small key=too_small.nonempty {"actual":0,"min":1}"#,
-                r#"/m too_small {"actual":1,"min":2}"#,
-                r#"/n too_big {"actual":3,"max":2}"#,
-                r#"/o invalid_size {"actual":1,"expected":2}"#,
+                r#"/a too_short {"actual":{"int":2},"min":{"int":3}}"#,
+                r#"/b too_long {"actual":{"int":4},"max":{"int":3}}"#,
+                r#"/c invalid_length {"actual":{"int":2},"expected":{"int":3}}"#,
+                r#"/d out_of_range key=out_of_range.minimum {"actual":{"int":2},"min":{"int":3}}"#,
+                r#"/e out_of_range key=out_of_range.maximum {"actual":{"int":4},"max":{"int":3}}"#,
+                r#"/f out_of_range key=out_of_range.positive {"actual":{"int":0},"min":{"int":1}}"#,
+                r#"/g out_of_range key=out_of_range.non_negative {"actual":{"int":-1},"min":{"int":0}}"#,
+                r#"/h out_of_range key=out_of_range.minimum {"actual":{"decimal":"1.50"},"min":{"decimal":"2.00"}}"#,
+                r#"/i out_of_range key=out_of_range.maximum {"actual":{"decimal":"2.50"},"max":{"decimal":"2"}}"#,
+                r#"/j out_of_range key=out_of_range.positive {"actual":{"decimal":"0.00"},"min":{"decimal":"0"}}"#,
+                r#"/k out_of_range key=out_of_range.non_negative {"actual":{"decimal":"-0.1"},"min":{"decimal":"0"}}"#,
+                r#"/l too_small key=too_small.nonempty {"actual":{"int":0},"min":{"int":1}}"#,
+                r#"/m too_small {"actual":{"int":1},"min":{"int":2}}"#,
+                r#"/n too_big {"actual":{"int":3},"max":{"int":2}}"#,
+                r#"/o invalid_size {"actual":{"int":1},"expected":{"int":2}}"#,
             ]
         );
         souther_scope_close(scope);
@@ -1968,7 +2005,7 @@ mod tests {
         unsafe { souther_read_duplicates(ptr::null(), decoding, form) };
         assert_eq!(
             issues(decoding),
-            vec![r#" duplicate_element {"duplicates":[3,1]}"#]
+            vec![r#" duplicate_element {"duplicates":{"list":[{"int":3},{"int":1}]}}"#]
         );
         souther_scope_close(scope);
     }

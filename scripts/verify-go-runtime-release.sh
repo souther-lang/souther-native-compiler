@@ -17,9 +17,9 @@
 #     anything is pushed, and publishes one requiring releases only; and a rehearsal pushes to
 #     nothing but a directory.
 #
-# HEAD is rehearsed and not published, so this holds while the runtime still requires a commit of
-# Raoh, which a publication would refuse; what a publication refuses is held with a runtime of its
-# own below, and does not wait on that.
+# HEAD is rehearsed and not published, so this holds whatever the runtime requires between releases,
+# a commit of Raoh too, which a publication would refuse; what a publication refuses is held with a
+# runtime of its own below.
 #
 # Needs Go and a C compiler, and reaches Raoh, which the runtime requires, where it is: at its
 # repository. What is published is HEAD, so what is not committed is not in it.

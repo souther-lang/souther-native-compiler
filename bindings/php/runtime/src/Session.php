@@ -10,6 +10,8 @@ use Raoh\CallableDecoder;
 use Raoh\Decoder;
 use Raoh\Err;
 use Raoh\Issue;
+use Raoh\Input\JsonNumber;
+use Raoh\Input\JsonObject;
 use Raoh\Issues;
 use Raoh\Path;
 use Raoh\Result;
@@ -524,7 +526,7 @@ final class Session
         return CallableDecoder::of(static function (mixed $in, ?Path $path = null) use ($decode): Result {
             $at = $path ?? Path::root();
             try {
-                $json = json_encode($in, JSON_FORCE_OBJECT | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
+                $json = self::written($in, 512);
             } catch (\JsonException $unwritten) {
                 return Result::fail($at, 'type_mismatch', 'a value no JSON writes: ' . $unwritten->getMessage());
             }
@@ -534,9 +536,49 @@ final class Session
     }
 
     /**
+     * `$in` as the JSON the library reads, each array an object keyed as PHP keyed it. raoh-php
+     * reads JSON text into values of its own, an object as a {@see JsonObject} and a number as a
+     * {@see JsonNumber} that keeps the text it was written as, and those are written as what they
+     * are: the object its members, and the number its text, so `1.50` reaches the library as `1.50`
+     * and not as the float nearest it. Nested deeper than `$depth` is refused, as json_encode
+     * refuses it.
+     *
+     * @throws \JsonException where the value holds what JSON does not write
+     */
+    private static function written(mixed $in, int $depth): string
+    {
+        if ($depth < 0) {
+            throw new \JsonException('nested deeper than ' . 512);
+        }
+        if ($in instanceof JsonNumber) {
+            return $in->lexeme;
+        }
+        $members = match (true) {
+            $in instanceof JsonObject => array_map(
+                static fn (string $name): array => [$name, $in->get($name)],
+                $in->names(),
+            ),
+            is_array($in) => array_map(
+                static fn (int|string $key, mixed $value): array => [(string) $key, $value],
+                array_keys($in),
+                array_values($in),
+            ),
+            default => null,
+        };
+        if ($members === null) {
+            return json_encode($in, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR);
+        }
+        return '{' . implode(',', array_map(
+            static fn (array $member): string => json_encode($member[0], JSON_THROW_ON_ERROR) . ':'
+                . self::written($member[1], $depth - 1),
+            $members,
+        )) . '}';
+    }
+
+    /**
      * What a reading found, as Raoh's issues. The codes and the metadata are Raoh's already, so
-     * this changes how they are held and not what they say: the metadata arrives as the JSON
-     * object it is, a number as a number and a list as a list. The library gives no message, so
+     * this changes how they are held and not what they say: each value of the metadata arrives as
+     * the type it is, and is made that type ({@see metaValue}). The library gives no message, so
      * each issue's message is its code until something resolves it, by the message key the library
      * answers (`souther_issue_message_key`): Raoh's own where it gives the issue one
      * (`out_of_range.minimum`), and the code where it gives none.
@@ -548,11 +590,14 @@ final class Session
         $count = $ffi->souther_decoded_issue_count($reading);
         for ($at = 0; $at < $count; $at++) {
             $issue = $ffi->souther_decoded_issue($reading, $at);
-            $meta = json_decode(
-                $this->text($ffi->souther_issue_meta($issue)),
-                true,
-                512,
-                JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING,
+            $meta = array_map(
+                self::metaValue(...),
+                json_decode(
+                    $this->text($ffi->souther_issue_meta($issue)),
+                    true,
+                    512,
+                    JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING,
+                ),
             );
             $code = $this->text($ffi->souther_issue_code($issue));
             $key = $this->text($ffi->souther_issue_message_key($issue));
@@ -560,6 +605,40 @@ final class Session
                 self::path($this->text($ffi->souther_issue_path($issue))), $code, $code, $meta, $key));
         }
         return $issues;
+    }
+
+    /**
+     * A value of an issue's metadata as the library writes it, an array of one member named for its
+     * type in Raoh's value model, made a value of that type: an int, a
+     * {@see \Raoh\Value\Decimal} at the scale it was written at, a string, or a list of the same;
+     * and a value of the model as a boundary writes it, an object as an array keyed by its members.
+     * So `5` and `1.50` are the decimals they are, as the JVM's issue holds them. The library writes
+     * nothing else, and a library of another contract was refused at its generation when it was
+     * loaded.
+     */
+    private static function metaValue(mixed $said): mixed
+    {
+        if (!is_array($said) || count($said) !== 1) {
+            throw new \LogicException('the library writes a value of metadata as its type');
+        }
+        $value = reset($said);
+        return match (key($said)) {
+            'int' => is_int($value) ? $value
+                : throw new \LogicException('the library writes an int of 64 bits'),
+            'decimal' => (is_string($value) ? \Raoh\Value\Decimal::parse($value) : null)
+                ?? throw new \LogicException('the library writes a decimal as its text'),
+            'string' => is_string($value) ? $value
+                : throw new \LogicException('the library writes text as a string'),
+            'list' => is_array($value) && array_is_list($value) ? array_map(self::metaValue(...), $value)
+                : throw new \LogicException('the library writes a list as an array'),
+            'bool' => is_bool($value) ? $value
+                : throw new \LogicException('the library writes a bool as a boolean'),
+            'record' => is_array($value) ? array_map(self::metaValue(...), $value)
+                : throw new \LogicException('the library writes a record as an object'),
+            'none' => $value === null ? null
+                : throw new \LogicException('the library writes none as null'),
+            default => throw new \LogicException('the library writes no ' . key($said)),
+        };
     }
 
     /** A JSON pointer as Raoh holds a path. */

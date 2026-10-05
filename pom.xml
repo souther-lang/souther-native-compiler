@@ -55,7 +55,7 @@
              is for. Held to BindingApi.MAJOR and ManifestReader.ABI by the launcher's tests, which load
              the jars as the command does and are refused otherwise. -->
         <souther.bindings.api>1</souther.bindings.api>
-        <souther.abi.generations>10</souther.abi.generations>
+        <souther.abi.generations>11</souther.abi.generations>
     </properties>
 
     <!-- Where a souther snapshot is published, for a build that takes one before its release: Central

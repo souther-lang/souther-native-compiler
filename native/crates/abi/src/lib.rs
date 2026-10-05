@@ -190,6 +190,13 @@ pub const GENERATIONS: &[(u32, &str)] = &[
          library calls `souther_release` first, which drops what the runtime read \
          (souther-native-compiler#144)",
     ),
+    (
+        11,
+        "an issue's metadata (`souther_issue_meta`) writes each value as the type it is in Raoh's \
+         value model, a JSON object of one member named for it (`META_TYPES`), in place of the \
+         plain JSON value, in which a `Decimal` of scale nought was an `Int` and a host read \
+         `1.50` as the float 1.5 (souther-native-compiler#150)",
+    ),
 ];
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
@@ -1920,8 +1927,42 @@ pub const ISSUE_CODE: &str = "souther_issue_code";
 pub const ISSUE_MESSAGE_KEY: &str = "souther_issue_message_key";
 /// `(issue) -> string`: a JSON Pointer, empty for the document's root.
 pub const ISSUE_PATH: &str = "souther_issue_path";
-/// `(issue) -> string`: what Raoh calls its metadata, as the JSON object it is.
+/// `(issue) -> string`: what Raoh calls its metadata, as a JSON object of a member for each name,
+/// each value written as [`META_TYPES`] says.
 pub const ISSUE_META: &str = "souther_issue_meta";
+
+/// How [`ISSUE_META`] writes a value: a JSON object of one member, named for the value's type in
+/// Raoh's value model, holding the value as that type writes it.
+///
+/// Raoh holds each value of an issue's metadata as the type it is, and a host's Raoh writes and
+/// compares it as that type: a `Decimal` is its text at its scale, so `5` read as a `Decimal` is not
+/// the `Int` 5, and `1.50` is not `1.5`. Plain JSON says neither, so each value says its type, and a
+/// host makes the value of that type and guesses nothing. A value of the model in the metadata (an
+/// element `duplicates` lists) is written as a boundary writes it, each part by its type. Each line
+/// is held by the generation's record, so a type added or written otherwise is a contract that
+/// moved.
+pub const META_TYPES: &[(&str, &str)] = &[
+    ("int", "a JSON integer, of 64 bits"),
+    (
+        "decimal",
+        "a JSON string, the decimal at its scale as Java's BigDecimal.toString writes it",
+    ),
+    ("string", "a JSON string"),
+    ("list", "a JSON array of values each written as this says"),
+    (
+        "bool",
+        "a JSON boolean, of a value of the model a boundary writes as one",
+    ),
+    (
+        "record",
+        "a JSON object of values each written as this says, of a value of the model a boundary \
+         writes as an object",
+    ),
+    (
+        "none",
+        "a JSON null, of a value of the model a boundary writes as null: an Option's None",
+    ),
+];
 
 /// What a host hands over and is handed, one word at a time, as a C declaration says it.
 ///
@@ -3986,13 +4027,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther10.calculation.add"
+            "souther11.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther10.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther11.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -4032,7 +4073,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther10.calculation.add$example$0"
+            "souther11.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -4047,7 +4088,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther10.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther11.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -4118,7 +4159,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther10.pricing$value$standard"
+            "souther11.pricing$value$standard"
         );
     }
 
@@ -4156,7 +4197,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther10.pricing$construct$Amount"
+            "souther11.pricing$construct$Amount"
         );
     }
 
@@ -4176,7 +4217,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther10.pricing$checked$Amount"
+            "souther11.pricing$checked$Amount"
         );
     }
 
@@ -4206,23 +4247,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther10_m_pricing_t_Amount_construct"
+            "souther11_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther10_m_pricing_t_Amount_f_value"
+            "souther11_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther10_m_pricing_t_Result_case"
+            "souther11_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther10_m_pricing_t_Amount_decode"
+            "souther11_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther10_m_pricing_t_Amount_encode"
+            "souther11_m_pricing_t_Amount_encode"
         );
     }
 
@@ -4230,15 +4271,15 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther10_m_lib_m_shop_b_quote"
+            "souther11_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther10_m_lib_m_shop_v_standard"
+            "souther11_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther10_m_lib_m_shop_b_find_answer_case"
+            "souther11_m_lib_m_shop_b_find_answer_case"
         );
     }
 
@@ -4251,7 +4292,7 @@ mod tests {
                 &HostShape::Leaf(Value),
                 HostListOperation::Construct
             ),
-            "souther10_m_shop_l_value_construct"
+            "souther11_m_shop_l_value_construct"
         );
         assert_eq!(
             host_list_symbol(
@@ -4259,7 +4300,7 @@ mod tests {
                 &HostShape::Option(Box::new(HostShape::Leaf(Int))),
                 HostListOperation::At
             ),
-            "souther10_m_lib_m_shop_l_o_int_at"
+            "souther11_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
             host_list_symbol(
@@ -4270,7 +4311,7 @@ mod tests {
                 ]))),
                 HostListOperation::Length
             ),
-            "souther10_m_shop_l_l_t2_int_o_bool_length"
+            "souther11_m_shop_l_l_t2_int_o_bool_length"
         );
     }
 
@@ -4283,11 +4324,11 @@ mod tests {
         };
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Call),
-            "souther10_m_shop_fn_f2_int_string_o_int_call"
+            "souther11_m_shop_fn_f2_int_string_o_int_call"
         );
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Implement),
-            "souther10_m_shop_fn_f2_int_string_o_int_implement"
+            "souther11_m_shop_fn_f2_int_string_o_int_implement"
         );
     }
 
@@ -4371,11 +4412,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther10_m_shop_b_foo__bar"
+            "souther11_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther10_m_shop_b__u6570__u91cf_"
+            "souther11_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -4385,7 +4426,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther10.pricing$read$Amount"
+            "souther11.pricing$read$Amount"
         );
     }
 

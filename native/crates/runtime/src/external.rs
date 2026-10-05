@@ -18,8 +18,8 @@ pub enum Form {
     Null,
     Bool(bool),
     Number(i64),
-    /// A `Decimal`, as the value it is, scale and all: how it is written is the writer's to say,
-    /// its amount at a boundary and its scale kept in an issue's metadata ([`Written`]).
+    /// A `Decimal`, as the value it is, scale and all: written as its amount at a boundary, and at
+    /// its scale in an issue's metadata, which writes it as text of its own type.
     Amount(Amount),
     String(Vec<u8>),
     Array(Vec<Form>),
@@ -308,7 +308,7 @@ fn order(one: &Form, other: &Form, prepared: &Prepared) -> Ordering {
 pub unsafe extern "C" fn souther_external_json(root: *mut Form) -> *mut Text {
     let root = unsafe { taken(root) };
     let mut written = Vec::new();
-    write(&root, &mut written, Written::AtABoundary);
+    write(&root, &mut written);
     string_of(std::str::from_utf8(&written).expect("JSON written of text is text"))
 }
 
@@ -319,20 +319,9 @@ enum Step<'a> {
     Punctuation(&'static [u8]),
 }
 
-/// What a tree is written as JSON for, which decides how a `Decimal` in it is written.
-#[derive(Clone, Copy)]
-pub(crate) enum Written {
-    /// A value crossing a boundary: a `Decimal` as its amount, whatever scale it was read or
-    /// worked out at (spec §primitives), as the JVM's boundary writes one.
-    AtABoundary,
-    /// Raoh's metadata of an issue, which holds each value as the value it is: a `Decimal` at its
-    /// scale, as a `BigDecimal` in the JVM's issue is (`1.50`, not `1.5`).
-    AsMetadata,
-}
-
 /// The tree as JSON, walked with a stack of its own rather than a frame per level, so how deep a
 /// value may be is not a question about the native stack.
-pub(crate) fn write(root: &Form, out: &mut Vec<u8>, written: Written) {
+pub(crate) fn write(root: &Form, out: &mut Vec<u8>) {
     let mut left = vec![Step::Form(root)];
     while let Some(step) = left.pop() {
         match step {
@@ -345,13 +334,12 @@ pub(crate) fn write(root: &Form, out: &mut Vec<u8>, written: Written) {
             Step::Form(Form::Bool(true)) => out.extend_from_slice(b"true"),
             Step::Form(Form::Bool(false)) => out.extend_from_slice(b"false"),
             Step::Form(Form::Number(value)) => out.extend_from_slice(value.to_string().as_bytes()),
-            Step::Form(Form::Amount(amount)) => out.extend_from_slice(
-                match written {
-                    Written::AtABoundary => amount.external_text(),
-                    Written::AsMetadata => amount.scaled_text(),
-                }
-                .as_bytes(),
-            ),
+            // A value crossing a boundary: a `Decimal` as its amount, whatever scale it was read
+            // or worked out at (spec §primitives), as the JVM's boundary writes one. An issue's
+            // metadata keeps the scale, and says so by writing it as its own type (`decoding`).
+            Step::Form(Form::Amount(amount)) => {
+                out.extend_from_slice(amount.external_text().as_bytes())
+            }
             Step::Form(Form::String(text)) => quoted(text, out),
             // What follows the opening is pushed last-first, so it comes off in the order written.
             Step::Form(Form::Array(items)) => {

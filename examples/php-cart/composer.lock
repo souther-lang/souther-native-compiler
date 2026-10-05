@@ -4,24 +4,64 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "3c7051eebe86053d7d21392dbf03c44d",
+    "content-hash": "02ddc61ce78fcd0c81c9314e2572757d",
     "packages": [
         {
-            "name": "raoh/raoh",
-            "version": "dev-develop",
+            "name": "raoh/notation-199x",
+            "version": "v0.2.0",
             "source": {
                 "type": "git",
-                "url": "https://github.com/kawasima/raoh-php.git",
-                "reference": "693eb0ebb4c59d3660aac7d08126c57d1041f780"
+                "url": "https://github.com/raoh-project/notation-199x-php.git",
+                "reference": "aa5930891d7304443c4f364111f0a68afb47d26f"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/kawasima/raoh-php/zipball/693eb0ebb4c59d3660aac7d08126c57d1041f780",
-                "reference": "693eb0ebb4c59d3660aac7d08126c57d1041f780",
+                "url": "https://api.github.com/repos/raoh-project/notation-199x-php/zipball/aa5930891d7304443c4f364111f0a68afb47d26f",
+                "reference": "aa5930891d7304443c4f364111f0a68afb47d26f",
                 "shasum": ""
             },
             "require": {
-                "php": "^8.2"
+                "php-64bit": "^8.2"
+            },
+            "require-dev": {
+                "phpstan/phpstan": "^2",
+                "phpunit/phpunit": "^11.5"
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Raoh\\Notation199x\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "Apache-2.0"
+            ],
+            "description": "The rules for reading text that Raoh and Souther share: Unicode 18.0.0 case conversion and normalization, White_Space, scalar values, temporal text and the pattern language, answered alike whatever Unicode version PHP was built with",
+            "homepage": "https://github.com/raoh-project/notation-199x",
+            "support": {
+                "issues": "https://github.com/raoh-project/notation-199x/issues",
+                "source": "https://github.com/raoh-project/notation-199x/tree/main/php"
+            },
+            "time": "2026-10-05T11:07:58+00:00"
+        },
+        {
+            "name": "raoh/raoh",
+            "version": "v0.9.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/raoh-project/raoh-php.git",
+                "reference": "edc4e8175c02ce00d7998e690d3afb94b57f7b76"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/raoh-project/raoh-php/zipball/edc4e8175c02ce00d7998e690d3afb94b57f7b76",
+                "reference": "edc4e8175c02ce00d7998e690d3afb94b57f7b76",
+                "shasum": ""
+            },
+            "require": {
+                "php": "^8.2",
+                "raoh/notation-199x": "^0.2.0"
             },
             "require-dev": {
                 "phpstan/phpstan": "^2",
@@ -30,7 +70,7 @@
             "type": "library",
             "extra": {
                 "branch-alias": {
-                    "dev-develop": "0.8.x-dev"
+                    "dev-develop": "0.9.x-dev"
                 }
             },
             "autoload": {
@@ -56,7 +96,7 @@
                 }
             ],
             "description": "Parse Don't Validate — composable decoder library for PHP 8.2+",
-            "homepage": "https://github.com/kawasima/raoh-php",
+            "homepage": "https://github.com/raoh-project/raoh-php",
             "keywords": [
                 "Result-Type",
                 "combinator",
@@ -67,10 +107,10 @@
                 "validation"
             ],
             "support": {
-                "issues": "https://github.com/kawasima/raoh-php/issues",
-                "source": "https://github.com/kawasima/raoh-php/tree/develop"
+                "issues": "https://github.com/raoh-project/raoh-php/issues",
+                "source": "https://github.com/raoh-project/raoh-php"
             },
-            "time": "2026-09-27T13:59:53+00:00"
+            "time": "2026-10-05T22:10:45+00:00"
         },
         {
             "name": "souther-lang/php-runtime",
@@ -82,7 +122,7 @@
             "require": {
                 "ext-ffi": "*",
                 "php": "^8.2",
-                "raoh/raoh": "0.8.x-dev"
+                "raoh/raoh": "^0.9"
             },
             "type": "library",
             "autoload": {
@@ -94,6 +134,7 @@
                 "Apache-2.0"
             ],
             "description": "What every PHP binding of a Souther library built by souther-native-compiler runs on: loading the library, a run's arena, handles, and failures",
+            "homepage": "https://github.com/souther-lang/souther-native-compiler/tree/develop/bindings/php/runtime",
             "transport-options": {
                 "relative": true
             }
@@ -1868,7 +1909,6 @@
     "aliases": [],
     "minimum-stability": "stable",
     "stability-flags": {
-        "raoh/raoh": 20,
         "souther-lang/php-runtime": 20
     },
     "prefer-stable": false,

@@ -122,8 +122,9 @@ jobs:
           && scripts/verify-php-runtime-release.sh
           && scripts/php-cart-example.sh'
           'scripts/rust-from-the-command-line.sh
-          && rustup toolchain install 1.87 --profile minimal
-          && cargo +1.87 build --locked --lib --manifest-path bindings/rust/runtime/Cargo.toml
+          && floor="$(sed -nE "s/^rust-version = \"(.*)\"$/\1/p" bindings/rust/runtime/Cargo.toml)"
+          && rustup toolchain install "$floor" --profile minimal
+          && cargo +"$floor" build --locked --lib --manifest-path bindings/rust/runtime/Cargo.toml
           && scripts/rust-cart-example.sh'
           'scripts/go-from-the-command-line.sh
           && scripts/verify-go-runtime-release.sh

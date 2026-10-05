@@ -5,7 +5,7 @@ description = "What every Rust binding of a Souther library built by souther-nat
 edition = "2024"
 # Raoh's, which every generated crate depends on beside this one: a host is held to the older of
 # the two, and this one asks nothing newer.
-rust-version = "1.87"
+rust-version = "1.88"
 license = "Apache-2.0"
 repository = "https://github.com/souther-lang/souther-native-compiler"
 readme = "README.md"
@@ -15,7 +15,7 @@ keywords = ["souther", "ffi", "bindings"]
 # Loads a library by path, and looks its functions up through that handle and no other.
 libloading = "0.8"
 # The issues a reading answers are Raoh's, as every host of a Souther model reads them.
-raoh = "0.1"
+raoh = "0.9"
 # An issue's metadata arrives as the JSON object it is, and is Raoh's `Value`s once read.
 #
 # `arbitrary_precision` keeps a number as it was spelt: a type's decoder hands the library the text

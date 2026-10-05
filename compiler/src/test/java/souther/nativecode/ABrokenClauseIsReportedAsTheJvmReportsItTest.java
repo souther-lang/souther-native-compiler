@@ -228,8 +228,8 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             """;
 
     /**
-     * The elements a list repeats are reported as a boundary writes them, whatever they are: a
-     * newtype as what it holds and a product as an object. The JVM puts the model's own values in
+     * The elements a list repeats are reported as a boundary writes them, whatever they are, each
+     * part by its type: a newtype as what it holds and a product as a record of its fields. The JVM puts the model's own values in
      * its metadata, which have no one written form to hold these to, so this is held to the form a
      * boundary writes, which is the one the native library hands a host anywhere else.
      */
@@ -243,8 +243,8 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
                 Checked.of(List.of(DECLARED)), decoding.harness());
 
         assertThat(answered).isEqualTo("""
-                skus: issues [@ duplicate_element {"duplicates":["a"]}]
-                points: issues [@ duplicate_element {"duplicates":[{"x":1,"y":2}]}]
+                skus: issues [@ duplicate_element {"duplicates":{"list":[{"string":"a"}]}}]
+                points: issues [@ duplicate_element {"duplicates":{"list":[{"record":{"x":{"int":1},"y":{"int":2}}}]}}]
                 """);
     }
 
@@ -268,7 +268,7 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
                 said.append(" key=").append(issue.messageKey());
             }
             if (!issue.meta().isEmpty()) {
-                said.append(' ').append(written(issue.meta()));
+                said.append(' ').append(meta(issue.meta()));
             }
             said.append(']');
         }
@@ -276,8 +276,10 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
     }
 
     /**
-     * The native harness's lines, each value and each issue's metadata read as JSON and written in
-     * the one form {@link #written} writes: what the JVM's answer is written in too.
+     * The native harness's lines, each value read as JSON and written in the one form
+     * {@link #written} writes, and each issue's metadata read as the types the library says its
+     * values are and written in the form {@link #meta} writes: what the JVM's answer is written in
+     * too.
      */
     private static String read(String answered) throws Exception {
         StringBuilder out = new StringBuilder();
@@ -296,7 +298,11 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
                 if (c == '{') {
                     try (JsonParser parser = JSON.createParser(line.substring(at))) {
                         JsonNode meta = parser.readValueAsTree();
-                        rewritten.append(written(meta));
+                        StringJoiner entries = new StringJoiner(",", "{", "}");
+                        new TreeMap<>(meta.properties().stream().collect(
+                                java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)))
+                                .forEach((name, said) -> entries.add(quoted(name) + ":" + nativeMeta(said)));
+                        rewritten.append(entries);
                         at += (int) parser.currentLocation().getCharOffset();
                     }
                     continue;
@@ -362,14 +368,80 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             case Long number -> new BigDecimal(number).toString();
             case BigInteger number -> new BigDecimal(number).toString();
             case BigDecimal number -> number.toString();
-            case Record value -> modelValue(value);
+            case Record value -> modelValue(value, ABrokenClauseIsReportedAsTheJvmReportsItTest::written);
             default -> throw new IllegalArgumentException(
                     "an answer this test has no written form for: " + said.getClass());
         };
     }
 
+    /**
+     * An issue's metadata as the JVM holds it, in a form that says each value's type: an integer as
+     * {@code int:5}, a {@code BigDecimal} as {@code decimal:} and its {@code toString} at its own
+     * scale, so {@code int:2}, {@code decimal:2} and {@code decimal:2.00} are three answers; text
+     * quoted, a list and a map as JSON writes them, and a value of the model as the checker says it
+     * crosses, each part so. Raoh holds and writes each value as its type, so a host's issue is held
+     * to the type and not only to the number.
+     */
+    private static String meta(Object said) {
+        return switch (said) {
+            case null -> "none";
+            case Map<?, ?> map -> {
+                StringJoiner entries = new StringJoiner(",", "{", "}");
+                new TreeMap<>(map).forEach((name, value) ->
+                        entries.add(quoted(name.toString()) + ":" + meta(value)));
+                yield entries.toString();
+            }
+            case List<?> list -> {
+                StringJoiner items = new StringJoiner(",", "[", "]");
+                list.forEach(item -> items.add(meta(item)));
+                yield items.toString();
+            }
+            case String text -> quoted(text);
+            case Boolean truth -> "bool:" + truth;
+            case Integer number -> "int:" + number;
+            case Long number -> "int:" + number;
+            case BigInteger number -> "int:" + number;
+            case BigDecimal number -> "decimal:" + number;
+            case Record value -> modelValue(value, ABrokenClauseIsReportedAsTheJvmReportsItTest::meta);
+            default -> throw new IllegalArgumentException(
+                    "metadata this test has no written form for: " + said.getClass());
+        };
+    }
+
+    /**
+     * An issue's metadata as the native library writes it, each value an object of one member named
+     * for its type, in the form {@link #meta} writes the JVM's in.
+     */
+    private static String nativeMeta(JsonNode said) {
+        if (!said.isObject() || said.size() != 1) {
+            throw new IllegalArgumentException("a value of metadata is written as its type: " + said);
+        }
+        Map.Entry<String, JsonNode> typed = said.properties().iterator().next();
+        JsonNode value = typed.getValue();
+        return switch (typed.getKey()) {
+            case "int" -> "int:" + value.bigIntegerValue();
+            case "decimal" -> "decimal:" + new BigDecimal(value.stringValue());
+            case "string" -> quoted(value.stringValue());
+            case "bool" -> "bool:" + value.booleanValue();
+            case "none" -> "none";
+            case "list" -> {
+                StringJoiner items = new StringJoiner(",", "[", "]");
+                value.values().forEach(item -> items.add(nativeMeta(item)));
+                yield items.toString();
+            }
+            case "record" -> {
+                StringJoiner entries = new StringJoiner(",", "{", "}");
+                new TreeMap<>(value.properties().stream().collect(java.util.stream.Collectors.toMap(
+                        Map.Entry::getKey, Map.Entry::getValue))).forEach((name, member) ->
+                        entries.add(quoted(name) + ":" + nativeMeta(member)));
+                yield entries.toString();
+            }
+            default -> throw new IllegalArgumentException("no type of metadata is " + typed.getKey());
+        };
+    }
+
     /** A value of a type the module declares, written as the checker says it crosses. */
-    private static String modelValue(Record value) {
+    private static String modelValue(Record value, java.util.function.Function<Object, String> written) {
         String name = value.getClass().getSimpleName();
         CheckedData data = Checked.of(List.of(MODULE)).modules().getFirst().data().stream()
                 .filter(it -> it.name().name().equals(name))
@@ -378,7 +450,7 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
         RecordComponent[] fields = value.getClass().getRecordComponents();
         try {
             return switch (data) {
-                case CheckedData.Newtype it -> written(fields[0].getAccessor().invoke(value));
+                case CheckedData.Newtype it -> written.apply(fields[0].getAccessor().invoke(value));
                 case CheckedData.Product it -> {
                     StringJoiner entries = new StringJoiner(",", "{", "}");
                     TreeMap<String, Object> named = new TreeMap<>();
@@ -386,7 +458,7 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
                         named.put(field.getName(), field.getAccessor().invoke(value));
                     }
                     named.forEach((field, held) ->
-                            entries.add(quoted(field) + ":" + written(held)));
+                            entries.add(quoted(field) + ":" + written.apply(held)));
                     yield entries.toString();
                 }
                 default -> throw new IllegalArgumentException(name + " is not built from fields");

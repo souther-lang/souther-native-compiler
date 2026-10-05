@@ -20,7 +20,7 @@ final class NativeLibrary
      * The ABI generation this runtime calls a library as, which a library is asked for before
      * anything else and refused where it answers another ({@see UnsupportedGeneration}).
      */
-    public const ABI_GENERATION = 10;
+    public const ABI_GENERATION = 11;
 
     /** @var array<string, self> */
     private static array $loaded = [];
