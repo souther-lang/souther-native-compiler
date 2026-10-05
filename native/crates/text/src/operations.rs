@@ -15,7 +15,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 /// Whether a code point is String whitespace (spec §string-whitespace): Unicode 18.0's
-/// `White_Space`, as 199x-notation holds it.
+/// `White_Space`, as notation-199x holds it.
 pub fn is_whitespace(character: char) -> bool {
     notation199x::is_white_space(character)
 }

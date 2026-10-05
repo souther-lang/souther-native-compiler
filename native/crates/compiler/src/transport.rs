@@ -107,7 +107,7 @@ pub const MOVES: &[(u32, &str)] = &[
     ),
     (
         31,
-        "a pattern, of `String.matches` or of a clause, as the image 199x-notation wrote the \
+        "a pattern, of `String.matches` or of a clause, as the image notation-199x wrote the \
          machine of what the checker read it as (`image`), in place of what it means part by part \
          (`meaning`)",
     ),
@@ -2634,7 +2634,7 @@ pub enum KernelFact {
         /// The pattern as its author wrote it: said in a message, and never read as a pattern.
         written: String,
         /// Which strings it accepts, as the checker read the text: the machine they make, written
-        /// as an image of a format 199x-notation defines.
+        /// as an image of a format notation-199x defines.
         image: String,
     },
     /// The type an ordering was checked against, and the type whose order its values are placed

@@ -44,8 +44,9 @@
         <jackson.version>3.2.2</jackson.version>
         <raoh.version>0.8.0</raoh.version>
         <!-- What writes a pattern's machine as an image the runtime reads with the Rust crate of the same
-             repository: the formats are 199x-notation's, so the two read an image alike whichever release
-             wrote it. Java's is released; the Rust crate is a commit of develop (native/Cargo.toml). -->
+             repository: the formats are notation-199x's, so the two read an image alike whichever release
+             wrote it. Java's is the one Souther's compiler takes, since the two share a class path,
+             and moves when Souther's does; the Rust crate is a release of its own (native/Cargo.toml). -->
         <notation199x.version>0.1.0</notation199x.version>
         <!-- What every file a jar holds is dated, so that building the same sources twice writes the same
              jar. The release embeds the checksum of each generator's jar in the compiler, and what it

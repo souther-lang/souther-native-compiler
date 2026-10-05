@@ -117,7 +117,7 @@ const MAX_LOCAL: i64 = MAX_DAY * SECONDS_PER_DAY + SECONDS_PER_DAY - 1;
 
 /// The first and the last second an `Instant` holds. A year wider than a `Date` holds at each end,
 /// as `java.time.Instant` has: `-1000000000-01-01T00:00:00Z` to `+1000000000-12-31T23:59:59.999999999Z`.
-/// What is read is held to them by 199x-notation and what is made by `INSTANT_SECONDS`, so these
+/// What is read is held to them by notation-199x and what is made by `INSTANT_SECONDS`, so these
 /// are what both are tested against.
 #[cfg(test)]
 const MIN_MOMENT: i64 = days_from_civil(-1_000_000_000, 1, 1) * SECONDS_PER_DAY;
@@ -193,7 +193,7 @@ fn instant_text(second: i64, nano: i64) -> String {
     written
 }
 
-// What is read: the text Raoh and Souther accept for each type, which is 199x-notation's to say.
+// What is read: the text Raoh and Souther accept for each type, which is notation-199x's to say.
 // It answers the fields a text writes, and the numbers they are kept as are worked out here.
 
 /// Why text is not a value of a type that only some text is.
@@ -1209,7 +1209,7 @@ mod tests {
         assert_eq!(MIN_DAY..=MAX_DAY, DATE_DAYS);
         assert_eq!(MIN_LOCAL..=MAX_LOCAL, DATE_TIME_SECONDS);
         assert_eq!(MIN_MOMENT..=MAX_MOMENT, INSTANT_SECONDS);
-        // And text is read as a temporal by 199x-notation, which has to hold the same ends.
+        // And text is read as a temporal by notation-199x, which has to hold the same ends.
         assert_eq!(
             (MIN_DAY, MAX_DAY),
             (

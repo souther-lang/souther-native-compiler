@@ -7,7 +7,7 @@ license.workspace = true
 
 # Nothing of the native backend: this is what the language says text means, over bytes, and
 # whatever it reached into here would be one more thing to carry when it moves out to what both
-# runtimes read (#17). What Unicode says of text is 199x-notation's, which every Souther and Raoh
+# runtimes read (#17). What Unicode says of text is notation-199x's, which every Souther and Raoh
 # runtime reads.
 [dependencies]
 notation199x.workspace = true

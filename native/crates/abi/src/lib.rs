@@ -183,7 +183,7 @@ pub const GENERATIONS: &[(u32, &str)] = &[
     ),
     (
         10,
-        "a pattern crosses to the runtime as the image 199x-notation wrote its machine in, behind \
+        "a pattern crosses to the runtime as the image notation-199x wrote its machine in, behind \
          room the runtime keeps the pattern it read in (`PATTERN_READ`, `PATTERN_LENGTH`, \
          `PATTERN_IMAGE`), in place of the words `souther_text::pattern` compiled it to: \
          `souther_string_matches` and `souther_read_pattern` take that; and a host that unloads a \
@@ -1109,7 +1109,7 @@ pub const TEXT_LENGTH: i64 = 0;
 /// a pointer to what the runtime keeps and owns until [`RELEASE`], which empties the room again.
 ///
 /// A pattern says the same thing every run, so what it is run as is worked out from the image and
-/// not carried in a layout of the runtime's own: the image is 199x-notation's format, which every
+/// not carried in a layout of the runtime's own: the image is notation-199x's format, which every
 /// implementation reading it reads alike (`image/P1.md`, `image/P2.md` in that repository), so what
 /// an object holds does not depend on how the runtime keeps a pattern.
 pub const PATTERN_READ: i64 = 0;
@@ -1117,7 +1117,7 @@ pub const PATTERN_READ: i64 = 0;
 /// Where a pattern's room says how many bytes its image is.
 pub const PATTERN_LENGTH: i64 = SLOT;
 
-/// Where a pattern's image begins: ASCII text, as 199x-notation's formats are written.
+/// Where a pattern's image begins: ASCII text, as notation-199x's formats are written.
 pub const PATTERN_IMAGE: i64 = 2 * SLOT;
 
 /// Where a string's text begins, as UTF-8 and in no other encoding.

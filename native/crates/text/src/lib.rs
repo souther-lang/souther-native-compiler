@@ -15,7 +15,7 @@
 //! here puts text in NFC that already is.
 //!
 //! Where the language names a Unicode version — for NFC, for case, for white space — what it says
-//! is 199x-notation's, which states the rules for text once for every Souther and Raoh runtime and
+//! is notation-199x's, which states the rules for text once for every Souther and Raoh runtime and
 //! answers at the version the specification names whatever Rust release it is built with.
 
 #![no_std]
@@ -117,7 +117,7 @@ pub fn code_points(text: Text) -> usize {
 ///
 /// A string is a sequence of Unicode scalar values and is ordered lexicographically over them: the
 /// first value where the two differ decides, and a run that begins the other comes before it (spec
-/// §equality), which is 199x-notation's order of text.
+/// §equality), which is notation-199x's order of text.
 pub fn compare(left: Text, right: Text) -> Ordering {
     notation199x::compare(left.0, right.0)
 }
