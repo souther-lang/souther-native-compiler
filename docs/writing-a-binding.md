@@ -23,7 +23,7 @@ are a jar, and the command runs both the same way.
 A generator of someone else's is named by its Maven coordinate and the SHA-256 of its jar:
 
 ```text
-souther-native --library out/native \
+souther compile --target native --library out/native \
     --binding com.acme:souther-binding-kotlin:1.2.0@sha256:<64 hex> out/kotlin \
     --binding-option package=com.acme.shop \
     src/

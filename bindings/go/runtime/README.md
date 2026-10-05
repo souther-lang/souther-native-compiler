@@ -1,8 +1,8 @@
 # The Go binding of a Souther library
 
 This module, `github.com/souther-lang/souther-native-compiler/bindings/go/runtime`, is what every Go
-binding of a Souther library runs on. A binding is written by `souther-native --go`, from the
-manifest the library was built with, as Go packages that call the library through this module. A
+binding of a Souther library runs on. A binding is written by `souther compile --target native --go`,
+from the manifest the library was built with, as Go packages that call the library through this module. A
 host imports the binding's packages and never calls this module itself, except for the types the
 binding hands it (`souther.Option`, the tuples, the temporals) and the errors it answers. How a
 binding is generated is in [Writing a binding](../../../docs/writing-a-binding.md), and the C ABI
@@ -13,7 +13,8 @@ the library exports is in [The host ABI](../../../docs/host-abi.md).
 The command writes the library and its Go binding in one run, with `--package` naming the import
 path of the binding:
 
-    souther-native --library build/native --go build/go --package example.com/acme model
+    souther compile --target native --library build/native --go build/go \
+        --package example.com/acme model
 
 A module of the model is a package of its own under that path (`cart.lines` is
 `example.com/acme/cart/lines`), which the module graph allows, since modules do not depend on one

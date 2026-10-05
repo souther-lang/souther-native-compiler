@@ -194,16 +194,17 @@ it.
 
 ## Building and running it
 
-What it needs is what the repository's own build needs: Maven, Cargo, and a C compiler, for the
-SQLite rusqlite builds.
+What it needs is `souther` with the native backend installed beside it, Cargo, and a C compiler,
+for the SQLite rusqlite builds. In a clone of this repository, `SOUTHER=../../scripts/souther
+bin/build` builds the backend from the clone and runs it in place of an installed one.
 
     bin/build
     cargo test
 
 `bin/build` runs the command line:
 
-    scripts/souther-native --library <here>/build/native --rust <here>/build/rust --crate model \
-        examples/cart-model
+    souther compile --target native --library <here>/build/native --rust <here>/build/rust \
+        --crate model <here>/../cart-model
 
 It writes the library into `build/native` and its binding into `build/rust`, as the crate `model`,
 which `Cargo.toml` depends on by path. The module is `com.example.cart.domain`, so its types are
