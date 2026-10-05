@@ -14,7 +14,14 @@ trap 'rm -rf "$logs"' EXIT
 pids=()
 i=0
 for command in "$@"; do
-    bash -euo pipefail -c "$command" > "$logs/$i" 2>&1 &
+    # How long each took is written last, so a step that is slow says which of them made it so.
+    (
+        started="$SECONDS"
+        status=0
+        bash -euo pipefail -c "$command" > "$logs/$i" 2>&1 || status=$?
+        echo "$((SECONDS - started))s" > "$logs/$i.took"
+        exit "$status"
+    ) &
     pids+=("$!")
     i=$((i + 1))
 done
@@ -28,11 +35,11 @@ for command in "$@"; do
         ended="failed"
         status=1
     fi
-    echo "::group::$ended: $command"
+    echo "::group::$ended in $(cat "$logs/$i.took"): $command"
     cat "$logs/$i"
     echo "::endgroup::"
     if [ "$ended" = "failed" ]; then
-        echo "::error::failed: $command"
+        echo "::error::failed in $(cat "$logs/$i.took"): $command"
     fi
     i=$((i + 1))
 done
