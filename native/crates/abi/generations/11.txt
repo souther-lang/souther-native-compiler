@@ -150,7 +150,7 @@ generated souther_read_decimal_min [Given(Path), Given(Host(Decoded)), Given(Hos
 generated souther_read_decimal_non_negative [Given(Path), Given(Host(Decoded)), Given(Host(Decimal))] -> Some(Host(Bool))
 generated souther_read_decimal_positive [Given(Path), Given(Host(Decoded)), Given(Host(Decimal))] -> Some(Host(Bool))
 generated souther_read_duplicate_key [Given(Path), Given(Host(Decoded))] -> None
-generated souther_read_duplicates [Given(Path), Given(Host(Decoded)), Given(Form)] -> None
+generated souther_read_duplicates [Given(Path), Given(Host(Decoded)), Given(Form), Given(Host(String))] -> None
 generated souther_read_element [Given(Node), Given(Host(Count))] -> Some(Node)
 generated souther_read_fixed_length [Given(Path), Given(Host(Decoded)), Given(Host(String)), Given(Host(Int))] -> Some(Host(Bool))
 generated souther_read_instant [Given(Node), Given(Path), Given(Host(Decoded)), Room(Host(Instant))] -> Some(Host(Bool))
@@ -269,13 +269,15 @@ input bool: a byte without a sign, true where it is not nought
 input bytes: read for as many as the count says where the count is above nought; a count below nought is a datum refused, and what the bytes say is a datum
 input datum: answered whatever it is; one a function does not take is refused by what it answers, and ends nothing
 input handle: one the library answered, of the type the function names, whose scope is open on the calling thread
-meta bool: a JSON boolean, of a value of the model a boundary writes as one
+meta bool: a JSON boolean
+meta date: a JSON string, the date as a boundary writes it
+meta datetime: a JSON string, the date-time as a boundary writes it
 meta decimal: a JSON string, the decimal at its scale as Java's BigDecimal.toString writes it
+meta instant: a JSON string, the instant as a boundary writes it
 meta int: a JSON integer, of 64 bits
 meta list: a JSON array of values each written as this says
-meta none: a JSON null, of a value of the model a boundary writes as null: an Option's None
-meta record: a JSON object of values each written as this says, of a value of the model a boundary writes as an object
 meta string: a JSON string
+meta time: a JSON string, the time as a boundary writes it
 release after: the library is used as before, and works out again what it had kept
 release again: dropping nothing kept is nothing
 release drops: what the library keeps beyond any scope, and nothing a scope holds

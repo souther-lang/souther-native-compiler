@@ -62,6 +62,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 	"unsafe"
 
@@ -331,11 +332,13 @@ func pathOf(pointer string) raoh.Path {
 }
 
 // metaValue is a value of an issue's metadata as the library writes it, an object of one member
-// named for its type in Raoh's value model, made a value of that type: an int as an int64, a decimal
-// as Raoh's Decimal at the scale it was written at, text as a string and a list as a []any of the
-// same, and a value of the model as a boundary writes it, an object as a map[string]any and an
-// Option's None as nil. So 5 and 1.50 are the decimals they are, as the JVM's issue holds them. The library writes
-// nothing else, and a library of another contract was refused at its generation when it was loaded.
+// named for its type in Raoh's value model, made a value of that type: an int as an int64, a
+// decimal as Raoh's Decimal at the scale it was written at, text as a string, a bool as a bool, a
+// date, a time, a date-time or an instant as this package's Date, Time, DateTime and Instant, each
+// of which writes itself as its message form, and a list as a []any of the same. So 5 and 1.50
+// are the decimals they are and a date is not text, as the JVM's issue holds them. The library
+// writes nothing else, and a library of another contract was refused at its generation when it was
+// loaded.
 func metaValue(said any) any {
 	typed, ok := said.(map[string]any)
 	if !ok || len(typed) != 1 {
@@ -352,14 +355,13 @@ func metaValue(said any) any {
 				return whole
 			}
 		case string:
-			switch name {
-			case "decimal":
-				decimal, err := raoh.ParseDecimal(it)
-				if err != nil {
-					panic(fmt.Sprintf("souther: the library writes a decimal as its text, and wrote %q", it))
-				}
-				return decimal
-			case "string":
+			if made, err := textMeta(name, it); err == nil {
+				return made
+			} else if !errors.Is(err, errNoSuchMeta) {
+				panic(fmt.Sprintf("souther: the library writes a %s as its text, and wrote %q: %v", name, it, err))
+			}
+		case bool:
+			if name == "bool" {
 				return it
 			}
 		case []any:
@@ -369,23 +371,63 @@ func metaValue(said any) any {
 				}
 				return it
 			}
-		case bool:
-			if name == "bool" {
-				return it
-			}
-		case map[string]any:
-			if name == "record" {
-				for member := range it {
-					it[member] = metaValue(it[member])
-				}
-				return it
-			}
-		case nil:
-			if name == "none" {
-				return nil
-			}
 		}
 		panic(fmt.Sprintf("souther: the library writes no %s of %v", name, value))
 	}
 	panic("unreachable")
+}
+
+// errNoSuchMeta is a type of metadata the library does not write as text.
+var errNoSuchMeta = errors.New("no such type of metadata is text")
+
+// textMeta is a value of metadata the library writes as text, made the type name says.
+func textMeta(name, text string) (any, error) {
+	switch name {
+	case "string":
+		return text, nil
+	case "decimal":
+		return raoh.ParseDecimal(text)
+	case "date":
+		read, err := time.Parse("2006-01-02", text)
+		if err != nil {
+			return nil, err
+		}
+		return NewDate(int32(read.Year()), uint8(read.Month()), uint8(read.Day()))
+	case "time":
+		return timeOfText(text)
+	case "datetime":
+		date, clock, found := strings.Cut(text, "T")
+		if !found {
+			return nil, fmt.Errorf("a date-time is a date, T and a time")
+		}
+		day, err := textMeta("date", date)
+		if err != nil {
+			return nil, err
+		}
+		of, err := timeOfText(clock)
+		if err != nil {
+			return nil, err
+		}
+		return NewDateTime(day.(Date), of), nil
+	case "instant":
+		read, err := time.Parse(time.RFC3339Nano, text)
+		if err != nil {
+			return nil, err
+		}
+		return InstantOf(read)
+	}
+	return nil, errNoSuchMeta
+}
+
+// timeOfText is a Time of HH:mm or HH:mm:ss, as Time.String writes one.
+func timeOfText(text string) (Time, error) {
+	layout := "15:04:05"
+	if len(text) == len("15:04") {
+		layout = "15:04"
+	}
+	read, err := time.Parse(layout, text)
+	if err != nil {
+		return Time{}, err
+	}
+	return NewTime(uint8(read.Hour()), uint8(read.Minute()), uint8(read.Second()))
 }

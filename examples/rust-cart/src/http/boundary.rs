@@ -129,7 +129,7 @@ mod tests {
             let mut missing = Issues::new();
             for name in required {
                 if object.get(name).is_none() {
-                    missing.push(Issue::new("missing_field").at(path.key(name).to_pointer()));
+                    missing.push(Issue::new("required").at(path.key(name).to_pointer()));
                 }
             }
             if missing.is_empty() {

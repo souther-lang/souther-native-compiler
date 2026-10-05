@@ -572,11 +572,11 @@ class ASetIsHeldByItsMembersTest {
         assertThat(AValueIsReadFromTheFormItIsWrittenInTest.run(Checked.of(List.of(READ)), harness))
                 .isEqualTo("""
                         holding: value {"tags":["a","b"],"counts":{"a":1,"b":2}}
-                        holding not a map: issues [@/counts type_mismatch {"actual":{"string":"array"},"expected":{"string":"an object"}}]
-                        holding wrong value: issues [@/tags/0 type_mismatch {"actual":{"string":"number"},"expected":{"string":"String"}}] [@/counts/a type_mismatch {"actual":{"string":"string"},"expected":{"string":"Int"}}]
+                        holding not a map: issues [@/counts type_mismatch {"actual":{"string":"array"},"expected":{"string":"object"}}]
+                        holding wrong value: issues [@/tags/0 type_mismatch {"actual":{"string":"number"},"expected":{"string":"string"}}] [@/counts/a type_mismatch {"actual":{"string":"string"},"expected":{"string":"long"}}]
                         shelf: value {"bySku":{"a":[],"b":[1,5]}}
                         shelf key: issues [@/bySku/ too_short {"actual":{"int":0},"min":{"int":1}}]
-                        shelf value first: issues [@/bySku/a/0 type_mismatch {"actual":{"string":"string"},"expected":{"string":"Int"}}]
+                        shelf value first: issues [@/bySku/a/0 type_mismatch {"actual":{"string":"string"},"expected":{"string":"long"}}]
                         moments: value {"at":{"2026-01-01T00:00:00Z":1}}
                         moments twice: issues [@/at/2026-01-01T09:00:00+09:00 duplicate_key]
                         """);

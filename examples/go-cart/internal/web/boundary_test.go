@@ -22,7 +22,7 @@ func recording(read *[]string, required ...string) raoh.Decoder[any, struct{}] {
 		var missing []raoh.Issue
 		for _, name := range required {
 			if _, ok := given.Get(name); !ok {
-				missing = append(missing, raoh.NewIssue("missing_field").At(raoh.Path{}.Key(name)))
+				missing = append(missing, raoh.NewIssue("required").At(raoh.Path{}.Key(name)))
 			}
 		}
 		if len(missing) > 0 {

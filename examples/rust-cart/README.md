@@ -179,8 +179,8 @@ found the first, and the model the other two.
 ```json
 {"issues": [
   {"path": "/orderer/email", "code": "invalid_format", ...},
-  {"path": "/orderer/companyName", "code": "missing_field", ...},
-  {"path": "/orderer/corporateNumber", "code": "missing_field", ...}]}
+  {"path": "/orderer/companyName", "code": "required", ...},
+  {"path": "/orderer/corporateNumber", "code": "required", ...}]}
 ```
 
 A rule a type states is reported at the field's path. A newtype's rule with a Raoh equivalent is

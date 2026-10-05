@@ -194,8 +194,10 @@ pub const GENERATIONS: &[(u32, &str)] = &[
         11,
         "an issue's metadata (`souther_issue_meta`) writes each value as the type it is in Raoh's \
          value model, a JSON object of one member named for it (`META_TYPES`), in place of the \
-         plain JSON value, in which a `Decimal` of scale nought was an `Int` and a host read \
-         `1.50` as the float 1.5 (souther-native-compiler#150)",
+         plain JSON value, in which a `Decimal` of scale nought was an `Int`, a date was a string \
+         and a host read `1.50` as the float 1.5; and `souther_read_duplicates` takes the type of \
+         the elements, which the compiler gives from the list's declaration \
+         (souther-native-compiler#153)",
     ),
 ];
 
@@ -1886,8 +1888,9 @@ pub const READ_LIST_FIXED_SIZE: &str = "souther_read_list_fixed_size";
 /// `(list, hasher, equality) -> list`: the elements the list holds more than once, each once, in
 /// the order their repetition was found.
 pub const LIST_DUPLICATES: &str = "souther_list_duplicates";
-/// `(path, reading, form)`: a list held no element twice and does, `duplicate_element` with the
-/// form of the elements it repeats, which it takes.
+/// `(path, reading, form, string)`: a list held no element twice and does, `duplicate_element` with
+/// the form of the elements it repeats, which it takes, each the type the string names: one of
+/// [`META_TYPES`], or `list<T>` of one.
 pub const READ_DUPLICATES: &str = "souther_read_duplicates";
 /// `(path, reading, map) -> bool`: one entry or more, `too_small.nonempty`.
 pub const READ_MAP_NON_EMPTY: &str = "souther_read_map_non_empty";
@@ -1937,10 +1940,11 @@ pub const ISSUE_META: &str = "souther_issue_meta";
 /// Raoh holds each value of an issue's metadata as the type it is, and a host's Raoh writes and
 /// compares it as that type: a `Decimal` is its text at its scale, so `5` read as a `Decimal` is not
 /// the `Int` 5, and `1.50` is not `1.5`. Plain JSON says neither, so each value says its type, and a
-/// host makes the value of that type and guesses nothing. A value of the model in the metadata (an
-/// element `duplicates` lists) is written as a boundary writes it, each part by its type. Each line
-/// is held by the generation's record, so a type added or written otherwise is a contract that
-/// moved.
+/// host makes the value of that type and guesses nothing. The types are the ones Raoh gives a
+/// message form, which are the only ones its metadata holds: an element `duplicates` lists is one
+/// of them, or a list of them, and the compiler refuses a `unique` of any other
+/// (souther-lang/souther#2149). Each line is held by the generation's record, so a type added or
+/// written otherwise is a contract that moved.
 pub const META_TYPES: &[(&str, &str)] = &[
     ("int", "a JSON integer, of 64 bits"),
     (
@@ -1948,20 +1952,18 @@ pub const META_TYPES: &[(&str, &str)] = &[
         "a JSON string, the decimal at its scale as Java's BigDecimal.toString writes it",
     ),
     ("string", "a JSON string"),
+    ("bool", "a JSON boolean"),
+    ("date", "a JSON string, the date as a boundary writes it"),
+    ("time", "a JSON string, the time as a boundary writes it"),
+    (
+        "datetime",
+        "a JSON string, the date-time as a boundary writes it",
+    ),
+    (
+        "instant",
+        "a JSON string, the instant as a boundary writes it",
+    ),
     ("list", "a JSON array of values each written as this says"),
-    (
-        "bool",
-        "a JSON boolean, of a value of the model a boundary writes as one",
-    ),
-    (
-        "record",
-        "a JSON object of values each written as this says, of a value of the model a boundary \
-         writes as an object",
-    ),
-    (
-        "none",
-        "a JSON null, of a value of the model a boundary writes as null: an Option's None",
-    ),
 ];
 
 /// What a host hands over and is handed, one word at a time, as a C declaration says it.
@@ -3693,7 +3695,12 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: READ_DUPLICATES,
-            takes: &[Given(Path), Given(Host(Decoded)), Given(Form)],
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Form),
+                Given(Host(String)),
+            ],
             answers: None,
         },
         GeneratedCall {

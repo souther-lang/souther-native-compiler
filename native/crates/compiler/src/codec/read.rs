@@ -898,6 +898,14 @@ impl Reading<'_, '_> {
         let CodecShape::ListOf { element } = shape else {
             unreachable!("`Declared::of` held a list's constraint to be stated of a list")
         };
+        let element_type = self.meta_type(element).ok_or_else(|| {
+            not_lowered(format!(
+                "a list of {} whose elements must be distinct: Raoh's `unique` takes only elements \
+                 an issue can write, and this backend writes no other until Souther decides what \
+                 such a clause is (souther-lang/souther#2149)",
+                element.ty().spelt()
+            ))
+        })?;
         let [hasher, equality] = self
             .value_ops
             .both(self.builder, self.module, &element.ty());
@@ -924,12 +932,50 @@ impl Reading<'_, '_> {
             codecs: &mut *self.codecs,
         }
         .shaped(shape, repeated)?;
-        self.call(Runtime::ReadDuplicates, &[path, self.decoding, written]);
+        let element_type = self.literal(&element_type);
+        self.call(
+            Runtime::ReadDuplicates,
+            &[path, self.decoding, written, element_type],
+        );
         let broken = self.builder.ins().iconst(types::I8, 0);
         self.builder.ins().jump(answered, &[broken.into()]);
 
         self.builder.switch_to_block(answered);
         Ok(self.builder.block_params(answered)[0])
+    }
+
+    /// The type an element of `shape` is in Raoh's value model, as an issue's metadata names it
+    /// (`META_TYPES`), read off the declaration and not off what the element is written as: a
+    /// newtype is what it holds, as a boundary writes it, and a list is `list<T>` of its elements'.
+    /// None where Raoh gives the element no message form, so no issue can write it: an optional, a
+    /// product, a sum, a set or a map.
+    fn meta_type(&self, shape: &CodecShape) -> Option<String> {
+        match shape {
+            CodecShape::Scalar { scalar } => Some(
+                match scalar {
+                    LeafScalar::Int => "int",
+                    LeafScalar::Decimal => "decimal",
+                    LeafScalar::String => "string",
+                    LeafScalar::Bool => "bool",
+                    LeafScalar::Date => "date",
+                    LeafScalar::Time => "time",
+                    LeafScalar::DateTime => "datetime",
+                    LeafScalar::Instant => "instant",
+                }
+                .to_owned(),
+            ),
+            CodecShape::ListOf { element } => Some(format!("list<{}>", self.meta_type(element)?)),
+            CodecShape::Named { named } => match self.declared.body_of(named) {
+                CaseBody::Declared {
+                    declaration: Declaration::Newtype { field, .. },
+                    ..
+                } => self.meta_type(&field.codec),
+                _ => None,
+            },
+            CodecShape::SetOf { .. } | CodecShape::MapOf { .. } | CodecShape::OptionOf { .. } => {
+                None
+            }
+        }
     }
 
     /// One of a set of alternatives, told apart the way the set's form says it is written.

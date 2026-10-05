@@ -156,7 +156,7 @@ class ARustHostComposesATypesDecoderWithItsOwnTest {
                 corporation: ok
                 short email: [/orderer/email too_short]
                 no such case: [/orderer/type not_allowed]
-                missing field: [/orderer/companyName missing_field]
+                missing field: [/orderer/companyName required]
                 missing member: [/orderer required]
                 both: [/who too_short] [/individual/email too_short] [/email invariant_violation]
                 quantity: [/n out_of_range key=out_of_range.positive]

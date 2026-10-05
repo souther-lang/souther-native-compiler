@@ -167,12 +167,19 @@ stopped, or every issue found. A clause that does not hold is one of the issues.
 code, its message key, its path and its metadata (`souther_issue_meta`), a JSON object with a
 member for each name Raoh gives the issue. Each value in it is written as the type it is in Raoh's
 value model, an object of one member named for the type: `{"int":5}`, `{"decimal":"1.50"}` (the
-decimal at its scale, as Java's `BigDecimal.toString` writes it), `{"string":"…"}` and
-`{"list":[…]}`, and a value of the model an element `duplicates` lists as a boundary writes it, with
-`{"bool":…}`, `{"record":{…}}` and `{"none":null}` beside those. A host makes each value that type
-in its own Raoh and guesses nothing from the JSON, since plain JSON writes the `Decimal` 5 and the
-`Int` 5 alike and a JSON reader takes `1.50` as the float 1.5. `_encode` writes a value in its
-external form. A behavior answering a union no declaration names has
+decimal at its scale, as Java's `BigDecimal.toString` writes it), `{"string":"…"}`,
+`{"bool":true}`, `{"date":"2026-01-31"}` and the same for `time`, `datetime` and `instant`, and
+`{"list":[…]}`. These are the types Raoh gives a message form, which are the only ones its
+metadata holds. The type is the one the declaration gives, never one read off the JSON a value
+would be written as, where a `Decimal` of scale nought is an `Int` and a date is a string: an
+element `duplicates` lists is the type its list declares, a newtype what it holds, and a
+`unique` of elements of any other type is refused when the library is built
+(souther-lang/souther#2149). A host makes each value that type in its own Raoh and guesses
+nothing. An issue's code and wording are Raoh's, word for word as the JVM's `jsonDecoder()` gives
+them: `required` where a value is `null` or a member is missing, and `type_mismatch` naming the
+kinds of JSON found and wanted, in the words the JVM's decoders use for them (string, long,
+number, boolean, object and array).
+`_encode` writes a value in its external form. A behavior answering a union no declaration names has
 `_b_<behavior>_answer_case` beside its call, which says which of the union's cases the value is.
 
 A primitive among the cases of a union is carried by the runtime, and a host makes one and reads it

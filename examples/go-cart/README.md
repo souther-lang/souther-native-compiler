@@ -139,8 +139,8 @@ first, and the model the other two.
 ```json
 {"issues": [
   {"path": "/orderer/email", "code": "invalid_format", ...},
-  {"path": "/orderer/companyName", "code": "missing_field", ...},
-  {"path": "/orderer/corporateNumber", "code": "missing_field", ...}]}
+  {"path": "/orderer/companyName", "code": "required", ...},
+  {"path": "/orderer/corporateNumber", "code": "required", ...}]}
 ```
 
 ## Where a row meets the model

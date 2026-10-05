@@ -13,6 +13,9 @@ use Raoh\Issue;
 use Raoh\Input\JsonNumber;
 use Raoh\Input\JsonObject;
 use Raoh\Issues;
+use Raoh\Value\Temporal\LocalDate;
+use Raoh\Value\Temporal\LocalDateTime;
+use Raoh\Value\Temporal\LocalTime;
 use Raoh\Path;
 use Raoh\Result;
 
@@ -610,8 +613,8 @@ final class Session
     /**
      * A value of an issue's metadata as the library writes it, an array of one member named for its
      * type in Raoh's value model, made a value of that type: an int, a
-     * {@see \Raoh\Value\Decimal} at the scale it was written at, a string, or a list of the same;
-     * and a value of the model as a boundary writes it, an object as an array keyed by its members.
+     * {@see \Raoh\Value\Decimal} at the scale it was written at, a string, a bool, a date, a time,
+     * a date-time or an instant as Raoh reads one, or a list of the same.
      * So `5` and `1.50` are the decimals they are, as the JVM's issue holds them. The library writes
      * nothing else, and a library of another contract was refused at its generation when it was
      * loaded.
@@ -633,10 +636,14 @@ final class Session
                 : throw new \LogicException('the library writes a list as an array'),
             'bool' => is_bool($value) ? $value
                 : throw new \LogicException('the library writes a bool as a boolean'),
-            'record' => is_array($value) ? array_map(self::metaValue(...), $value)
-                : throw new \LogicException('the library writes a record as an object'),
-            'none' => $value === null ? null
-                : throw new \LogicException('the library writes none as null'),
+            'date' => (is_string($value) ? LocalDate::parse($value) : null)
+                ?? throw new \LogicException('the library writes a date as Raoh reads one'),
+            'time' => (is_string($value) ? LocalTime::parse($value) : null)
+                ?? throw new \LogicException('the library writes a time as Raoh reads one'),
+            'datetime' => (is_string($value) ? LocalDateTime::parse($value) : null)
+                ?? throw new \LogicException('the library writes a date-time as Raoh reads one'),
+            'instant' => (is_string($value) ? \Raoh\Value\Temporal\Instant::parse($value) : null)
+                ?? throw new \LogicException('the library writes an instant as Raoh reads one'),
             default => throw new \LogicException('the library writes no ' . key($said)),
         };
     }

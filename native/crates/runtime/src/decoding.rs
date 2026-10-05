@@ -115,14 +115,91 @@ fn string(text: &str) -> *const u8 {
     string_of(text).cast()
 }
 
+/// A value of an issue's metadata as the type it is in Raoh's value model (`META_TYPES`), which
+/// is what decides how it is written: the type each value is said to be is the one its declaration
+/// gives, never one read off the JSON it would be written as, in which a `Decimal` of scale nought
+/// and an `Int` are alike, and so are a date and a string.
+#[derive(Debug)]
+enum Meta {
+    Int(i64),
+    Decimal(Amount),
+    String(Vec<u8>),
+    Bool(bool),
+    Date(Vec<u8>),
+    Time(Vec<u8>),
+    DateTime(Vec<u8>),
+    Instant(Vec<u8>),
+    List(Vec<Meta>),
+}
+
+impl Meta {
+    /// The type's name in `META_TYPES`.
+    fn type_name(&self) -> &'static str {
+        match self {
+            Meta::Int(_) => "int",
+            Meta::Decimal(_) => "decimal",
+            Meta::String(_) => "string",
+            Meta::Bool(_) => "bool",
+            Meta::Date(_) => "date",
+            Meta::Time(_) => "time",
+            Meta::DateTime(_) => "datetime",
+            Meta::Instant(_) => "instant",
+            Meta::List(_) => "list",
+        }
+    }
+
+    /// As `META_TYPES` writes it: an object of one member, named for the type.
+    fn written(&self) -> Said {
+        let name = self.type_name();
+        debug_assert!(META_TYPES.iter().any(|(type_name, _)| *type_name == name));
+        let value = match self {
+            Meta::Int(n) => Said::Number(*n),
+            Meta::Decimal(amount) => Said::String(amount.scaled_text().into_bytes()),
+            Meta::String(text)
+            | Meta::Date(text)
+            | Meta::Time(text)
+            | Meta::DateTime(text)
+            | Meta::Instant(text) => Said::String(text.clone()),
+            Meta::Bool(truth) => Said::Bool(*truth),
+            Meta::List(items) => Said::Array(items.iter().map(Meta::written).collect()),
+        };
+        Said::Object(vec![(name.as_bytes().to_vec(), value)])
+    }
+
+    /// An element of a list as the boundary wrote it, made the type `declared` names: one of
+    /// `META_TYPES`, or `list<T>` of one. What generated code writes for an element of that type is
+    /// the only form it is handed, so any other is a contract broken, and not a value to guess at.
+    fn of(form: &Said, declared: &str) -> Meta {
+        if let Some(element) = declared
+            .strip_prefix("list<")
+            .and_then(|it| it.strip_suffix('>'))
+        {
+            let Said::Array(items) = form else {
+                panic!("a list<{element}> is written as an array");
+            };
+            return Meta::List(items.iter().map(|item| Meta::of(item, element)).collect());
+        }
+        match (declared, form) {
+            ("int", Said::Number(n)) => Meta::Int(*n),
+            ("decimal", Said::Amount(amount)) => Meta::Decimal(amount.clone()),
+            ("string", Said::String(text)) => Meta::String(text.clone()),
+            ("bool", Said::Bool(truth)) => Meta::Bool(*truth),
+            ("date", Said::String(text)) => Meta::Date(text.clone()),
+            ("time", Said::String(text)) => Meta::Time(text.clone()),
+            ("datetime", Said::String(text)) => Meta::DateTime(text.clone()),
+            ("instant", Said::String(text)) => Meta::Instant(text.clone()),
+            (declared, form) => panic!("a {declared} is not written as {form:?}"),
+        }
+    }
+}
+
 /// The metadata of an issue as the JSON object it is written as: its entries in the order of their
 /// names, one entry to a name, so one issue's metadata is written one way wherever it is read, and
-/// each value as the type it is (`META_TYPES`), so a host makes a `Decimal` of `5` and `1.50` and an
-/// `Int` of `5`, as the JVM's issue holds them.
-fn metadata(entries: Vec<(&str, Said)>) -> String {
+/// each value as the type it is.
+fn metadata(entries: Vec<(&str, Meta)>) -> String {
     let mut members: Vec<(Vec<u8>, Said)> = entries
         .into_iter()
-        .map(|(name, said)| (name.as_bytes().to_vec(), typed(&said)))
+        .map(|(name, meta)| (name.as_bytes().to_vec(), meta.written()))
         .collect();
     members.sort_by(|a, b| a.0.cmp(&b.0));
     assert!(
@@ -134,34 +211,9 @@ fn metadata(entries: Vec<(&str, Said)>) -> String {
     String::from_utf8(written).expect("JSON written of text is text")
 }
 
-/// A value of an issue's metadata as `META_TYPES` writes it: an object of one member, named for
-/// its type, and a value of the model (an element `duplicates` lists) as a boundary writes it, each
-/// part so.
-fn typed(said: &Said) -> Said {
-    let (name, value) = match said {
-        Said::Number(n) => ("int", Said::Number(*n)),
-        Said::Amount(amount) => ("decimal", Said::String(amount.scaled_text().into_bytes())),
-        Said::String(text) => ("string", Said::String(text.clone())),
-        Said::Array(items) => ("list", Said::Array(items.iter().map(typed).collect())),
-        Said::Bool(truth) => ("bool", Said::Bool(*truth)),
-        Said::Object(members) => (
-            "record",
-            Said::Object(
-                members
-                    .iter()
-                    .map(|(name, value)| (name.clone(), typed(value)))
-                    .collect(),
-            ),
-        ),
-        Said::Null => ("none", Said::Null),
-    };
-    debug_assert!(META_TYPES.iter().any(|(type_name, _)| *type_name == name));
-    Said::Object(vec![(name.as_bytes().to_vec(), value)])
-}
-
 /// Text an issue says under a name.
-fn words(text: &str) -> Said {
-    Said::String(text.as_bytes().to_vec())
+fn words(text: &str) -> Meta {
+    Meta::String(text.as_bytes().to_vec())
 }
 
 /// Records an issue found at `path`, under `key` where Raoh gives it a message key of its own and
@@ -175,7 +227,7 @@ unsafe fn found(
     code: &str,
     key: Option<&str>,
     path: *const Path,
-    meta: Vec<(&str, Said)>,
+    meta: Vec<(&str, Meta)>,
 ) {
     let issue = held(Issue {
         code: string(code),
@@ -193,8 +245,26 @@ unsafe fn found(
     decoding.count += 1;
 }
 
-/// A place was something other than what was declared there.
+/// What a reading wanted where it found another kind of input, as `type_mismatch` names it in
+/// `expected`: the kind of JSON Raoh's decoder of the type reads, which is what the JVM's
+/// `jsonDecoder()` says, word for word. Each is the one statement of its word here.
+mod wanted {
+    pub(super) const STRING: &str = "string";
+    pub(super) const INT: &str = "long";
+    pub(super) const DECIMAL: &str = "number";
+    pub(super) const BOOL: &str = "boolean";
+    pub(super) const OBJECT: &str = "object";
+    pub(super) const ARRAY: &str = "array";
+}
+
+/// Records that `node` is not the kind of input a reading takes at `path`: `required` where it is
+/// `null`, which Raoh's decoders take as no value given and not as a value of the wrong kind, and
+/// otherwise `type_mismatch`, with the kind found and the kind `wanted` (one of [`wanted`]).
 unsafe fn mismatched(decoding: *mut Decoding, path: *const Path, node: &Node, wanted: &str) {
+    if matches!(node, Node::Null) {
+        unsafe { found(decoding, "required", None, path, Vec::new()) };
+        return;
+    }
     unsafe {
         found(
             decoding,
@@ -378,7 +448,7 @@ pub unsafe extern "C" fn souther_read_array(
     if node.length().is_some() {
         return Bool::TRUE;
     }
-    unsafe { mismatched(decoding, path, node, "an array") };
+    unsafe { mismatched(decoding, path, node, wanted::ARRAY) };
     Bool::FALSE
 }
 
@@ -424,7 +494,7 @@ pub unsafe extern "C" fn souther_read_object(
     if node.is_object() {
         return Bool::TRUE;
     }
-    unsafe { mismatched(decoding, path, node, "an object") };
+    unsafe { mismatched(decoding, path, node, wanted::OBJECT) };
     Bool::FALSE
 }
 
@@ -502,21 +572,13 @@ pub unsafe extern "C" fn souther_read_duplicate_key(path: *const Path, decoding:
 }
 
 /// Records that a field the declaration says every value has was not written, at `path`, which
-/// is where it would have been.
+/// is where it would have been: `required`, as Raoh's decoder of a field says it.
 ///
 /// # Safety
 /// As [`souther_read_object`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_missing(path: *const Path, decoding: *mut Decoding) {
-    unsafe {
-        found(
-            decoding,
-            "missing_field",
-            None,
-            path,
-            vec![("actual", words("nothing")), ("expected", words("a field"))],
-        )
-    };
+    unsafe { found(decoding, "required", None, path, Vec::new()) };
 }
 
 /// Whether `node` is `null`, which is what absence is written as where there is no key to leave
@@ -560,7 +622,7 @@ pub unsafe extern "C" fn souther_read_int(
 
 unsafe fn int(node: &Node, path: *const Path, decoding: *mut Decoding) -> Option<i64> {
     let Node::Number(written) = node else {
-        unsafe { mismatched(decoding, path, node, "Int") };
+        unsafe { mismatched(decoding, path, node, wanted::INT) };
         return None;
     };
     let (negative, digits) = match written.split_first() {
@@ -570,7 +632,7 @@ unsafe fn int(node: &Node, path: *const Path, decoding: *mut Decoding) -> Option
     // A point or an exponent means the document wrote an amount and not a whole number, whatever
     // amount it is.
     if !digits.iter().all(u8::is_ascii_digit) {
-        unsafe { mismatched(decoding, path, node, "Int") };
+        unsafe { mismatched(decoding, path, node, wanted::INT) };
         return None;
     }
     let mut magnitude: i128 = 0;
@@ -583,13 +645,15 @@ unsafe fn int(node: &Node, path: *const Path, decoding: *mut Decoding) -> Option
     let value = if negative { -magnitude } else { magnitude };
     let read = i64::try_from(value).ok();
     if read.is_none() {
+        // A whole number past what an Int holds is no number of the kind wanted, as Raoh's decoder
+        // of a long says it, under a message key of its own.
         unsafe {
             found(
                 decoding,
-                "out_of_range",
-                None,
+                "type_mismatch",
+                Some("type_mismatch.numeric_range"),
                 path,
-                vec![("actual", words("number")), ("expected", words("Int"))],
+                vec![("expected", words(wanted::INT))],
             )
         };
     }
@@ -611,7 +675,7 @@ pub unsafe extern "C" fn souther_read_bool(
     let read = match unsafe { &*node } {
         Node::Bool(truth) => Some(Bool::from(*truth)),
         other => {
-            unsafe { mismatched(decoding, path, other, "Bool") };
+            unsafe { mismatched(decoding, path, other, wanted::BOOL) };
             None
         }
     };
@@ -635,7 +699,7 @@ pub unsafe extern "C" fn souther_read_string(
             unsafe { admitted_text(written, STRING_HOLDS, path, decoding) }.map(|it| string_of(&it))
         }
         other => {
-            unsafe { mismatched(decoding, path, other, "String") };
+            unsafe { mismatched(decoding, path, other, wanted::STRING) };
             None
         }
     };
@@ -676,7 +740,7 @@ pub unsafe extern "C" fn souther_read_decimal(
             read.as_ref().map(decimal_of)
         }
         other => {
-            unsafe { mismatched(decoding, path, other, "Decimal") };
+            unsafe { mismatched(decoding, path, other, wanted::DECIMAL) };
             None
         }
     };
@@ -693,7 +757,7 @@ unsafe fn temporal_text<'a>(
     match node {
         Node::String(written) => unsafe { admitted_text(written, STRING_HOLDS, path, decoding) },
         other => {
-            unsafe { mismatched(decoding, path, other, "String") };
+            unsafe { mismatched(decoding, path, other, wanted::STRING) };
             None
         }
     }
@@ -808,7 +872,7 @@ unsafe fn read_case(
         // it, which is what its `discriminate` and its `oneOf` over strings read a name with.
         match node {
             Node::Null => unsafe { found(decoding, "required", None, path, Vec::new()) },
-            other => unsafe { mismatched(decoding, path, other, "string") },
+            other => unsafe { mismatched(decoding, path, other, wanted::STRING) },
         }
         return Bool::FALSE;
     };
@@ -963,8 +1027,8 @@ pub unsafe extern "C" fn souther_read_no_such_tag(
 ///
 /// # Safety
 /// `names` is a string of the runtime's layout holding what `case_names_written` wrote.
-unsafe fn allowed(names: *const Text) -> Said {
-    Said::Array(
+unsafe fn allowed(names: *const Text) -> Meta {
+    Meta::List(
         case_names_read(unsafe { text(&names) }.as_str())
             .map(words)
             .collect(),
@@ -1010,7 +1074,7 @@ unsafe fn meets(
     path: *const Path,
     code: &str,
     key: Option<&str>,
-    meta: impl FnOnce() -> Vec<(&'static str, Said)>,
+    meta: impl FnOnce() -> Vec<(&'static str, Meta)>,
 ) -> Bool {
     if !holds {
         unsafe { found(decoding, code, key, path, meta()) };
@@ -1048,7 +1112,7 @@ pub unsafe extern "C" fn souther_read_min_length(
     let actual = unsafe { characters(value) };
     unsafe {
         meets(actual >= n, decoding, path, "too_short", None, || {
-            vec![("min", Said::Number(n)), ("actual", Said::Number(actual))]
+            vec![("min", Meta::Int(n)), ("actual", Meta::Int(actual))]
         })
     }
 }
@@ -1067,7 +1131,7 @@ pub unsafe extern "C" fn souther_read_max_length(
     let actual = unsafe { characters(value) };
     unsafe {
         meets(actual <= n, decoding, path, "too_long", None, || {
-            vec![("max", Said::Number(n)), ("actual", Said::Number(actual))]
+            vec![("max", Meta::Int(n)), ("actual", Meta::Int(actual))]
         })
     }
 }
@@ -1086,10 +1150,7 @@ pub unsafe extern "C" fn souther_read_fixed_length(
     let actual = unsafe { characters(value) };
     unsafe {
         meets(actual == n, decoding, path, "invalid_length", None, || {
-            vec![
-                ("expected", Said::Number(n)),
-                ("actual", Said::Number(actual)),
-            ]
+            vec![("expected", Meta::Int(n)), ("actual", Meta::Int(actual))]
         })
     }
 }
@@ -1134,7 +1195,7 @@ pub unsafe extern "C" fn souther_read_int_min(
             path,
             "out_of_range",
             Some("out_of_range.minimum"),
-            || vec![("min", Said::Number(n)), ("actual", Said::Number(value))],
+            || vec![("min", Meta::Int(n)), ("actual", Meta::Int(value))],
         )
     }
 }
@@ -1157,7 +1218,7 @@ pub unsafe extern "C" fn souther_read_int_max(
             path,
             "out_of_range",
             Some("out_of_range.maximum"),
-            || vec![("max", Said::Number(n)), ("actual", Said::Number(value))],
+            || vec![("max", Meta::Int(n)), ("actual", Meta::Int(value))],
         )
     }
 }
@@ -1179,7 +1240,7 @@ pub unsafe extern "C" fn souther_read_int_positive(
             path,
             "out_of_range",
             Some("out_of_range.positive"),
-            || vec![("min", Said::Number(1)), ("actual", Said::Number(value))],
+            || vec![("min", Meta::Int(1)), ("actual", Meta::Int(value))],
         )
     }
 }
@@ -1202,21 +1263,21 @@ pub unsafe extern "C" fn souther_read_int_non_negative(
             path,
             "out_of_range",
             Some("out_of_range.non_negative"),
-            || vec![("min", Said::Number(0)), ("actual", Said::Number(value))],
+            || vec![("min", Meta::Int(0)), ("actual", Meta::Int(value))],
         )
     }
 }
 
 /// A `Decimal` as metadata holds it: the value, scale and all, which [`metadata`] writes at its
 /// scale.
-unsafe fn amount_said(at: *const Decimal) -> Said {
-    Said::Amount(unsafe { amount(at) })
+unsafe fn amount_said(at: *const Decimal) -> Meta {
+    Meta::Decimal(unsafe { amount(at) })
 }
 
 /// The `Decimal` nought a bound of a `Decimal` is stated against: a `Decimal` and not the `Int` 0,
 /// as Raoh's `DecimalDecoder` holds `BigDecimal.ZERO`, so a host's issue says the same type.
-fn decimal_zero() -> Said {
-    Said::Amount(Amount::of_int(0))
+fn decimal_zero() -> Meta {
+    Meta::Decimal(Amount::of_int(0))
 }
 
 /// `DecimalDecoder.min(n)`: `out_of_range` under `out_of_range.minimum`, with `min` and `actual`,
@@ -1340,7 +1401,7 @@ unsafe fn sized(decoding: *mut Decoding, path: *const Path, actual: i64, bound: 
     };
     unsafe {
         meets(holds, decoding, path, code, key, || {
-            vec![(name, Said::Number(n)), ("actual", Said::Number(actual))]
+            vec![(name, Meta::Int(n)), ("actual", Meta::Int(actual))]
         })
     }
 }
@@ -1409,26 +1470,33 @@ pub unsafe extern "C" fn souther_read_list_fixed_size(
 }
 
 /// `ListDecoder.unique()` refused: `duplicate_element` with the `duplicates`, the elements the list
-/// holds more than once as a boundary writes them, which generated code wrote into `duplicates`.
-/// Which elements those are is [`crate::souther_list_duplicates`]'s answer.
+/// holds more than once, which generated code wrote into `duplicates` as a boundary writes them,
+/// and each the type `element` names (`META_TYPES`, or `list<T>` of one), which the compiler gave
+/// from the list's declaration. Which elements those are is [`crate::souther_list_duplicates`]'s
+/// answer.
 ///
 /// # Safety
 /// As [`souther_read_invariant`]; `duplicates` is a form the caller owns, and owns no longer once
-/// this returns.
+/// this returns, and `element` is a string of the runtime's layout.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_duplicates(
     path: *const Path,
     decoding: *mut Decoding,
     duplicates: *mut Said,
+    element: *const Text,
 ) {
     let duplicates = *unsafe { Box::from_raw(duplicates) };
+    let element = unsafe { text(&element) };
     unsafe {
         found(
             decoding,
             "duplicate_element",
             None,
             path,
-            vec![("duplicates", duplicates)],
+            vec![(
+                "duplicates",
+                Meta::of(&duplicates, &format!("list<{}>", element.as_str())),
+            )],
         )
     };
 }
@@ -1702,35 +1770,35 @@ mod tests {
         assert_eq!(
             int("9223372036854775808"),
             Err(vec![
-                r#" out_of_range {"actual":{"string":"number"},"expected":{"string":"Int"}}"#
+                r#" type_mismatch key=type_mismatch.numeric_range {"expected":{"string":"long"}}"#
                     .to_string()
             ])
         );
         assert_eq!(
             int("-99999999999999999999999"),
             Err(vec![
-                r#" out_of_range {"actual":{"string":"number"},"expected":{"string":"Int"}}"#
+                r#" type_mismatch key=type_mismatch.numeric_range {"expected":{"string":"long"}}"#
                     .to_string()
             ])
         );
         assert_eq!(
             int("1.0"),
             Err(vec![
-                r#" type_mismatch {"actual":{"string":"number"},"expected":{"string":"Int"}}"#
+                r#" type_mismatch {"actual":{"string":"number"},"expected":{"string":"long"}}"#
                     .to_string()
             ])
         );
         assert_eq!(
             int("1e0"),
             Err(vec![
-                r#" type_mismatch {"actual":{"string":"number"},"expected":{"string":"Int"}}"#
+                r#" type_mismatch {"actual":{"string":"number"},"expected":{"string":"long"}}"#
                     .to_string()
             ])
         );
         assert_eq!(
             int("\"1\""),
             Err(vec![
-                r#" type_mismatch {"actual":{"string":"string"},"expected":{"string":"Int"}}"#
+                r#" type_mismatch {"actual":{"string":"string"},"expected":{"string":"long"}}"#
                     .to_string()
             ])
         );
@@ -1748,12 +1816,7 @@ mod tests {
             souther_path_below(b, literal("0"))
         };
         unsafe { souther_read_missing(path, decoding) };
-        assert_eq!(
-            issues(decoding),
-            vec![
-                r#"/a~1b/~0c/0 missing_field {"actual":{"string":"nothing"},"expected":{"string":"a field"}}"#
-            ]
-        );
+        assert_eq!(issues(decoding), vec![r#"/a~1b/~0c/0 required {}"#]);
         souther_scope_close(scope);
     }
 
@@ -1779,8 +1842,8 @@ mod tests {
         assert_eq!(
             issues(decoding),
             vec![
-                r#"/xs/1 type_mismatch {"actual":{"string":"boolean"},"expected":{"string":"Int"}}"#,
-                r#"/xs/1 type_mismatch {"actual":{"string":"boolean"},"expected":{"string":"an array"}}"#,
+                r#"/xs/1 type_mismatch {"actual":{"string":"boolean"},"expected":{"string":"long"}}"#,
+                r#"/xs/1 type_mismatch {"actual":{"string":"boolean"},"expected":{"string":"array"}}"#,
             ]
         );
         souther_scope_close(scope);
@@ -2002,10 +2065,46 @@ mod tests {
 
         let decoding = begun("{}");
         let form = crate::external::handed(Said::Array(vec![Said::Number(3), Said::Number(1)]));
-        unsafe { souther_read_duplicates(ptr::null(), decoding, form) };
+        unsafe { souther_read_duplicates(ptr::null(), decoding, form, literal("int")) };
         assert_eq!(
             issues(decoding),
             vec![r#" duplicate_element {"duplicates":{"list":[{"int":3},{"int":1}]}}"#]
+        );
+        souther_scope_close(scope);
+    }
+
+    /// The elements `duplicates` lists are each the type the declaration gives them, whatever
+    /// they are written as: a date is not text, and a `Decimal` of scale nought is not an `Int`.
+    #[test]
+    fn the_elements_a_list_repeats_are_the_type_their_declaration_gives() {
+        let scope = souther_scope_open();
+        let decoding = begun("{}");
+        let reported = |elements: Vec<Said>, element: &str| unsafe {
+            souther_read_duplicates(
+                ptr::null(),
+                decoding,
+                crate::external::handed(Said::Array(elements)),
+                literal(element),
+            )
+        };
+        reported(vec![Said::String(b"2026-01-31".to_vec())], "date");
+        reported(
+            vec![Said::Amount(
+                Amount::of_json_number(b"2").expect("a number"),
+            )],
+            "decimal",
+        );
+        reported(
+            vec![Said::Array(vec![Said::Bool(true), Said::Bool(false)])],
+            "list<bool>",
+        );
+        assert_eq!(
+            issues(decoding),
+            vec![
+                r#" duplicate_element {"duplicates":{"list":[{"date":"2026-01-31"}]}}"#,
+                r#" duplicate_element {"duplicates":{"list":[{"decimal":"2"}]}}"#,
+                r#" duplicate_element {"duplicates":{"list":[{"list":[{"bool":true},{"bool":false}]}]}}"#,
+            ]
         );
         souther_scope_close(scope);
     }

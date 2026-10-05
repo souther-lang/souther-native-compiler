@@ -660,8 +660,8 @@ impl Words {
 
 /// A value of an issue's metadata as the library writes it, an object of one member named for its
 /// type in Raoh's value model, made a value of that type: a `Decimal` at the scale it was written
-/// at, so `5` and `1.50` are the decimals they are, as the JVM's issue holds them, and a value of
-/// the model as a boundary writes it, an object as a record.
+/// at, so `5` and `1.50` are the decimals they are, and a date, a time, a date-time or an instant
+/// as Raoh reads one, so a date is not text, as the JVM's issue holds them.
 ///
 /// The library writes nothing else, so anything else is a library of another contract, which the
 /// generation it was loaded at already refused.
@@ -682,19 +682,26 @@ fn meta_value(said: serde_json::Value) -> raoh::MetaValue {
                 .expect("the library writes a decimal as its text"),
         ),
         ("string", serde_json::Value::String(text)) => raoh::MetaValue::String(text),
+        ("bool", serde_json::Value::Bool(truth)) => raoh::MetaValue::Bool(truth),
+        ("date", serde_json::Value::String(text)) => raoh::MetaValue::Date(
+            text.parse()
+                .expect("the library writes a date as Raoh reads one"),
+        ),
+        ("time", serde_json::Value::String(text)) => raoh::MetaValue::Time(
+            text.parse()
+                .expect("the library writes a time as Raoh reads one"),
+        ),
+        ("datetime", serde_json::Value::String(text)) => raoh::MetaValue::DateTime(
+            text.parse()
+                .expect("the library writes a date-time as Raoh reads one"),
+        ),
+        ("instant", serde_json::Value::String(text)) => raoh::MetaValue::Instant(
+            text.parse()
+                .expect("the library writes an instant as Raoh reads one"),
+        ),
         ("list", serde_json::Value::Array(items)) => {
             raoh::MetaValue::List(items.into_iter().map(meta_value).collect())
         }
-        ("bool", serde_json::Value::Bool(truth)) => raoh::MetaValue::Bool(truth),
-        ("record", serde_json::Value::Object(members)) => raoh::MetaValue::Record(
-            members
-                .into_iter()
-                .map(|(name, value)| (name, meta_value(value)))
-                .collect(),
-        ),
-        // Raoh's metadata has no value that is none, so an Option's None among the elements
-        // `duplicates` lists is held as the text a message writes for it.
-        ("none", serde_json::Value::Null) => raoh::MetaValue::String("null".to_owned()),
         (name, value) => panic!("the library writes no {name} of {value}"),
     }
 }

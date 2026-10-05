@@ -45,8 +45,9 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
 
     private static final String MODULE = """
             module held exposing ( Short, Long, Exact, Coded, Positive, Counted, AtLeast, Below, \
-            Price, Floor, Capped, Charge, Owed, Tags, Several, Few, Pair, Distinct, Words, Line, \
-            Lines, Keyed, Filled, Sparse, Ranged, Partly, Digits, Box, Amounts, Grid )
+            Price, Floor, Capped, Charge, Owed, Tags, Several, Few, Pair, Distinct, Words, Days, \
+            Hours, Stamps, Moments, Flags, Sku, Skus, Keyed, Filled, Sparse, Ranged, Partly, Digits, \
+            Box, Amounts, Grid )
 
             data Short = String
                 invariant String.length(value) > 0
@@ -105,9 +106,25 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             data Words = List<String>
                 invariant List.allDistinctBy(x -> x, value)
 
-            data Line = { amount: Decimal }
+            data Days = List<Date>
+                invariant List.allDistinctBy(x -> x, value)
 
-            data Lines = List<Line>
+            data Hours = List<Time>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Stamps = List<DateTime>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Moments = List<Instant>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Flags = List<Bool>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Sku = String
+                invariant String.length(value) > 0
+
+            data Skus = List<Sku>
                 invariant List.allDistinctBy(x -> x, value)
 
             data Keyed = Map<String, Int>
@@ -165,7 +182,12 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             new Decoding.Row("distinct", "Distinct", "[3, 1, 3, 2, 1, 3]"),
             new Decoding.Row("distinct held", "Distinct", "[1, 2]"),
             new Decoding.Row("words", "Words", "[\"a\", \"b\", \"a\"]"),
-            new Decoding.Row("lines", "Lines", "[{\"amount\": 1.0}, {\"amount\": 1.00}]"),
+            new Decoding.Row("days", "Days", "[\"2026-01-31\", \"2026-02-01\", \"2026-01-31\"]"),
+            new Decoding.Row("hours", "Hours", "[\"10:00\", \"10:00:30.5\", \"10:00\", \"10:00:30.5\"]"),
+            new Decoding.Row("stamps", "Stamps", "[\"2026-01-31T10:00\", \"2026-01-31T10:00\"]"),
+            new Decoding.Row("moments", "Moments", "[\"2026-01-31T10:00:00Z\", \"2026-01-31T10:00:00Z\"]"),
+            new Decoding.Row("flags", "Flags", "[true, false, true]"),
+            new Decoding.Row("skus", "Skus", "[\"a\", \"b\", \"a\"]"),
             new Decoding.Row("amounts twice", "Amounts", "[1.0, 1.0, 2.50]"),
             new Decoding.Row("amounts at two scales", "Amounts", "[1.0, 1.00]"),
             new Decoding.Row("grid at two scales", "Grid", "[[1.0], [1.00]]"),
@@ -178,7 +200,28 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             new Decoding.Row("partly letters", "Partly", "\"ab\""),
             new Decoding.Row("digits both", "Digits", "\"ab\""),
             new Decoding.Row("digits short", "Digits", "\"12\""),
-            new Decoding.Row("box", "Box", "{\"n\": -1}"));
+            new Decoding.Row("box", "Box", "{\"n\": -1}"),
+            // Each kind of input a reading can be handed where it takes another, which
+            // `type_mismatch` names as Raoh does.
+            new Decoding.Row("a number for a string", "Short", "7"),
+            new Decoding.Row("a string for an int", "Positive", "\"7\""),
+            new Decoding.Row("a fraction for an int", "Positive", "7.5"),
+            new Decoding.Row("a string for a decimal", "Price", "\"7\""),
+            new Decoding.Row("a number for a bool", "Flags", "[1]"),
+            new Decoding.Row("a number for a date", "Days", "[1]"),
+            new Decoding.Row("a string for an object", "Box", "\"n\""),
+            new Decoding.Row("an object for a list", "Tags", "{}"),
+            new Decoding.Row("a list for a map", "Keyed", "[]"),
+            new Decoding.Row("a number for a member of a map", "Keyed", "{\"a\": \"x\", \"b\": 2}"),
+            new Decoding.Row("null for a string", "Short", "null"),
+            new Decoding.Row("null for an int", "Positive", "null"),
+            new Decoding.Row("null for a decimal", "Price", "null"),
+            new Decoding.Row("null for a list", "Tags", "null"),
+            new Decoding.Row("null for an object", "Box", "null"),
+            new Decoding.Row("null for a member", "Box", "{\"n\": null}"),
+            new Decoding.Row("a member missing", "Box", "{}"),
+            new Decoding.Row("an int past 64 bits", "Positive", "9223372036854775808"),
+            new Decoding.Row("null for an element", "Tags", "[null]"));
 
     /** Reads a fraction as the decimal it was written as, which a boundary reads a {@code Decimal}
      *  from, and not as a {@code double}, which it refuses. */
@@ -210,42 +253,6 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
                 Checked.of(List.of(MODULE)), decoding.harness());
 
         assertThat(read(answered)).isEqualTo(expected.toString());
-    }
-
-    private static final String DECLARED = """
-            module shelf exposing ( Sku, Skus, Point, Points )
-
-            data Sku = String
-                invariant String.length(value) > 0
-
-            data Skus = List<Sku>
-                invariant List.allDistinctBy(x -> x, value)
-
-            data Point = { x: Int, y: Int }
-
-            data Points = List<Point>
-                invariant List.allDistinctBy(p -> p, value)
-            """;
-
-    /**
-     * The elements a list repeats are reported as a boundary writes them, whatever they are, each
-     * part by its type: a newtype as what it holds and a product as a record of its fields. The JVM puts the model's own values in
-     * its metadata, which have no one written form to hold these to, so this is held to the form a
-     * boundary writes, which is the one the native library hands a host anywhere else.
-     */
-    @Test
-    void theElementsAListRepeatsAreWrittenAsABoundaryWritesThem() throws Exception {
-        Decoding decoding = new Decoding().type("shelf", "Skus").type("shelf", "Points")
-                .row("skus", "Skus", "[\"a\", \"b\", \"a\"]")
-                .row("points", "Points", "[{\"x\": 1, \"y\": 2}, {\"x\": 1, \"y\": 2}]");
-
-        String answered = AValueIsReadFromTheFormItIsWrittenInTest.run(
-                Checked.of(List.of(DECLARED)), decoding.harness());
-
-        assertThat(answered).isEqualTo("""
-                skus: issues [@ duplicate_element {"duplicates":{"list":[{"string":"a"}]}}]
-                points: issues [@ duplicate_element {"duplicates":{"list":[{"record":{"x":{"int":1},"y":{"int":2}}}]}}]
-                """);
     }
 
     /** What the JVM's decoder says of the document, in the one written form both sides are read
@@ -402,6 +409,10 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             case Long number -> "int:" + number;
             case BigInteger number -> "int:" + number;
             case BigDecimal number -> "decimal:" + number;
+            case java.time.LocalDate date -> "date:" + date;
+            case java.time.LocalTime time -> "time:" + time;
+            case java.time.LocalDateTime dateTime -> "datetime:" + dateTime;
+            case java.time.Instant instant -> "instant:" + instant;
             case Record value -> modelValue(value, ABrokenClauseIsReportedAsTheJvmReportsItTest::meta);
             default -> throw new IllegalArgumentException(
                     "metadata this test has no written form for: " + said.getClass());
@@ -423,18 +434,11 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             case "decimal" -> "decimal:" + new BigDecimal(value.stringValue());
             case "string" -> quoted(value.stringValue());
             case "bool" -> "bool:" + value.booleanValue();
-            case "none" -> "none";
+            case "date", "time", "datetime", "instant" -> typed.getKey() + ":" + value.stringValue();
             case "list" -> {
                 StringJoiner items = new StringJoiner(",", "[", "]");
                 value.values().forEach(item -> items.add(nativeMeta(item)));
                 yield items.toString();
-            }
-            case "record" -> {
-                StringJoiner entries = new StringJoiner(",", "{", "}");
-                new TreeMap<>(value.properties().stream().collect(java.util.stream.Collectors.toMap(
-                        Map.Entry::getKey, Map.Entry::getValue))).forEach((name, member) ->
-                        entries.add(quoted(name) + ":" + nativeMeta(member)));
-                yield entries.toString();
             }
             default -> throw new IllegalArgumentException("no type of metadata is " + typed.getKey());
         };
