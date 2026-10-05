@@ -82,26 +82,60 @@ into the compiler's jar. It then builds the publication, as a Maven repository, 
 workflow's artifact `maven-repository`, with the compiler in it carrying those checksums, before it
 creates the GitHub release with the bundles and the checksums file.
 
+What `souther compile --target native` runs is the backend jar, which the compiler's module attaches
+beside its own jar with the classifier `backend`: the compiler and everything it runs with, carrying
+the compiler's manifest, and so its version, which is the release it fetches at. Its descriptor,
+`META-INF/souther/backend.properties`, holds the target `native` and the `souther.version` of the
+top-level `pom.xml`, written in when it is packaged (`compiler/src/backend`). The CLI runs a backend
+only where that version is exactly its own, so each Souther release needs a release of this backend
+built against it, and a release of this backend leaves the Souther it names alone. A test in the
+launcher's module holds the descriptor to the Souther compiler the build compiles against, and runs
+the jar alone as the CLI runs it; `verify-release-build.sh` holds the published jar to the
+checksums, as it holds the compiler's.
+
+The CLI that runs an installed backend is not published for the Souther snapshot a clone builds
+against, so in a clone the examples' `bin/build` is run with `$SOUTHER` naming
+[`scripts/souther`](../scripts/souther), which takes `souther compile --target native` and runs
+`scripts/souther-native` with the rest. Given a CLI that does run installed backends,
+[`scripts/with-the-souther-cli`](../scripts/with-the-souther-cli) puts this clone's backend jar where
+that CLI looks and runs a command with `$SOUTHER` naming it, so
+`scripts/with-the-souther-cli <souther> scripts/rust-cart-example.sh` is the example as a user runs it.
+
 The Go runtime is a module of its own in a directory of this repository, and its version is its own:
 the file `bindings/go/runtime/VERSION`, beside its `go.mod`, which the Go generator is built with
 and requires. It is not the compiler's, which has no reason to move when the runtime does not, and
 cannot be a module's from version 2 on, where the path of the module says its major version. A
 module in a directory is versioned by a tag that begins with the directory,
 `bindings/go/runtime/v<version>`, and the repository's own `v<version>` is the version of no module
-in it. A release publishes that tag
-([`scripts/publish-go-runtime.sh`](../scripts/publish-go-runtime.sh)) as the last thing before the
-GitHub release, when it is not published already, since the Go module proxy keeps what it has
-fetched of a tag and does not take it back. So nothing is pushed that has not been asked for first,
-and each of these refuses: a version that is not a semantic version; a path that does not say the
-major version from 2 on, or says one before it; a runtime that is not what it was when the tag was
-published, which needs another version; and a module that cannot be fetched by its path and its
-version out of a repository that has this commit tagged (a rehearsal, in a directory that stands
-where GitHub does). Every build asks the same with `--check`, which pushes nothing, so a change to
+in it. That tag is pushed by hand
+([`scripts/publish-go-runtime.sh`](../scripts/publish-go-runtime.sh)), when it is not published
+already, since the Go module proxy keeps what it has fetched of a tag and does not take it back. So
+nothing is pushed that has not been asked for first, and each of these refuses: a version that is
+not a semantic version; a path that does not say the major version from 2 on, or says one before it;
+a runtime that is not what it was when the tag was published, which needs another version; a module
+that cannot be fetched by its path and its version out of a repository that has this commit tagged
+(a rehearsal, in a directory that stands where GitHub does); and, when it is about to push, a runtime
+that requires a pseudo-version rather than a release. Every build asks the same with `--check`, which pushes nothing, so a change to
 the runtime that leaves its version alone is found in the pull request, and
 [`scripts/verify-go-runtime-release.sh`](../scripts/verify-go-runtime-release.sh) holds the whole of
 it, without a release: a host with no `replace` requires the module at a tag made that way and is
 built, and each refusal is exercised. The tests that build a host do use a `replace`, since they run
 in a clone, so that is what holds the resolution.
+
+Nothing is published from CI. The release workflow keeps the publication and creates the GitHub
+release, and what goes to a registry is published by hand, from a clean clone at the tag, once the
+Souther the backend names is on Maven Central: the publication, which holds the backend jar, to Maven
+Central from the workflow's `maven-repository` artifact; the Rust runtime with `cargo publish` in
+`bindings/rust/runtime`; the Go runtime's tag with `scripts/publish-go-runtime.sh`; and the PHP
+runtime with [`scripts/publish-php-runtime.sh`](../scripts/publish-php-runtime.sh). Packagist reads
+a package from the root of a repository, so the PHP runtime is published to a mirror,
+`souther-lang/php-runtime`, which holds the runtime and nothing else: each version is one commit whose
+tree is `bindings/php/runtime` at the commit published, tagged `v<version>`, the version being the
+runtime's own, in `bindings/php/runtime/VERSION`. The script refuses as the Go one does: a version
+that is not a semantic version, a tag already standing at another runtime, a package Composer does
+not validate, and, when it is about to push, a runtime requiring a development version. Each runtime
+requires only released versions of Raoh when it is published; Cargo refuses a git dependency on its
+own, and the two scripts refuse the rest.
 
 The checksums are a fact about builds that follow the commit, so the file is not committed, and a
 build of a release version that does not have every one of them fails

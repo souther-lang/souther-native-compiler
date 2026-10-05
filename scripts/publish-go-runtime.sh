@@ -131,7 +131,16 @@ if $check; then
     exit 0
 fi
 
+# A published runtime requires only what is released: a pseudo-version is a commit of somebody's
+# repository, which a host would build against as if it were a release. Asked when the tag is about
+# to be pushed and not by --check, which every build runs while the runtime may still require one.
 if ! $published; then
+    unreleased="$(git show "$sha:$directory/go.mod" \
+        | grep -E '[[:space:]]v[0-9]+\.[0-9]+\.[0-9]+-([0-9A-Za-z.-]*\.)?[0-9]{14}-[0-9a-f]{12}([[:space:]]|$)' || true)"
+    if [ -n "$unreleased" ]; then
+        refuse "the runtime requires what is not released, and is published requiring releases only:
+$unreleased"
+    fi
     git push "$remote" "$sha:refs/tags/$tag"
 fi
 GIT_TERMINAL_PROMPT=0 fetches || refuse "$tag is published and $module@v$version cannot be fetched from it"
