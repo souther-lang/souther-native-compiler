@@ -78,8 +78,10 @@ jobs:
 
       # souther-compiler comes from Maven Central at the release pom.xml's `souther.version` names.
       # Through verify and not test: the launcher's tests run the generators' jars, which the reactor
-      # packs before it, as the command runs any generator's jar.
-      - run: mvn --batch-mode verify
+      # packs before it, as the command runs any generator's jar. A snapshot of Souther is asked for
+      # anew on every run: the Maven cache holds the one an earlier run resolved, which Maven would
+      # otherwise keep for a day, and the versions this build takes from Souther's pom with it.
+      - run: mvn --batch-mode --update-snapshots verify
 
       # What follows is a host of each language at a time, all three at once: each waits on a
       # compiler of its own (Composer and PHP, Cargo, Go) and shares nothing with the others but the

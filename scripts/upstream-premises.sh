@@ -29,7 +29,9 @@ fi
 # the build at another local repository point this there too.
 jars="$(mktemp -d)"
 trap 'rm -rf "$jars"' EXIT
-mvn --batch-mode --quiet --non-recursive dependency:copy \
+# Asked anew, since a snapshot kept from an earlier resolution is a build other than the latest, and
+# its commit is what every premise is held against.
+mvn --batch-mode --quiet --non-recursive --update-snapshots dependency:copy \
     -Dartifact="org.souther-lang:souther-compiler:$version" -DoutputDirectory="$jars" >&2
 # The one jar copied, under whatever name it has: a snapshot is named by the build it resolved to.
 jar=("$jars"/souther-compiler-*.jar)
