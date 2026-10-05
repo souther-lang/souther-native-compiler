@@ -62,9 +62,15 @@ jobs:
       # to as well, so a file rust-cache already hashes put here would turn a change it restores
       # most of into a build from nothing. EveryRustCacheIsKeptUnderWhatDecidesTheBuildTest holds
       # every virtual root in the repository to this list.
+      #
+      # Saved by develop and main only. A pull request reads what they saved and keeps nothing of its
+      # own: each push of one saved some 800MB under a key no other branch reads, the repository's
+      # 10GB of caches filled, and GitHub let go of develop's first, so the next pull request found
+      # no cache at all and built every crate from nothing.
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ hashFiles('native/Cargo.toml', '**/.cargo/config.toml', '**/.cargo/config') }}
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
           workspaces: |
             native
             bindings/rust/runtime

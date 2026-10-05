@@ -29,6 +29,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * have restored most of into a build from nothing, which the next run after a key of every
  * manifest showed. So the key is held to exactly the roots this repository has, found here rather
  * than listed, and a root added later is a key to change.
+ *
+ * <p>And every one is saved by develop and main only. A cache a pull request or a tag saves is read
+ * by no other ref, and each one saved took room the repository's caches have only so much of, until
+ * GitHub let go of develop's and the next pull request built every crate from nothing.
  */
 class EveryRustCacheIsKeptUnderWhatDecidesTheBuildTest {
 
@@ -59,6 +63,28 @@ class EveryRustCacheIsKeptUnderWhatDecidesTheBuildTest {
         assertThat(steps).as("rust-cache steps found").isPositive();
         assertThat(keyedOtherwise).as("rust-cache steps not keyed `%s`", key).isEmpty();
     }
+
+    @Test
+    void everyRustCacheStepIsSavedByDevelopAndMainOnly() throws IOException {
+        List<String> savedOtherwise = new ArrayList<>();
+        int steps = 0;
+        try (Stream<Path> workflows = Files.list(Repository.file(".github", "workflows"))) {
+            for (Path workflow : workflows.filter(it -> it.toString().endsWith(".yml")).toList()) {
+                Matcher step = STEP.matcher(Files.readString(workflow));
+                while (step.find()) {
+                    steps++;
+                    if (!step.group(2).lines().map(String::strip).toList().contains(SAVED)) {
+                        savedOtherwise.add(workflow.getFileName() + ": " + step.group().strip());
+                    }
+                }
+            }
+        }
+        assertThat(steps).as("rust-cache steps found").isPositive();
+        assertThat(savedOtherwise).as("rust-cache steps not `%s`", SAVED).isEmpty();
+    }
+
+    private static final String SAVED =
+            "save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}";
 
     /** The key every step is to carry: the virtual roots found, then Cargo's config files. */
     private static String key() throws IOException {
