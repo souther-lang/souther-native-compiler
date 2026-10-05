@@ -165,6 +165,18 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.5.4</version>
                     <configuration>
+                        <!-- Test classes run at once, each class's tests one after another. Most of
+                             a test is waiting on a C compiler, Cargo, Go or PHP it started, so one
+                             class at a time left the runner's other cores idle. A class that changes
+                             what the whole JVM sees, a system property or the temporary directory
+                             it watches, says so with @Isolated and runs with nothing beside it. -->
+                        <properties>
+                            <configurationParameters>
+                                junit.jupiter.execution.parallel.enabled = true
+                                junit.jupiter.execution.parallel.mode.default = same_thread
+                                junit.jupiter.execution.parallel.mode.classes.default = concurrent
+                            </configurationParameters>
+                        </properties>
                         <systemPropertyVariables>
                             <souther.repository>${maven.multiModuleProjectDirectory}</souther.repository>
                             <souther.native.driver>${maven.multiModuleProjectDirectory}/native/target/debug/souther-native-driver</souther.native.driver>

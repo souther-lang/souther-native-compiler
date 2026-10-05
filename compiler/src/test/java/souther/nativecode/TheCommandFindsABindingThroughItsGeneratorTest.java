@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -25,7 +26,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>The jars are written by the test from generators it compiled ({@link TestGenerators}), and
  * loaded as the command loads any.
+ *
+ * <p>Alone, since what a generator was asked is a system property, and so is the jar the command
+ * finds for a binding: another class running beside this one would see them change.
  */
+@Isolated
 class TheCommandFindsABindingThroughItsGeneratorTest {
 
     private static final String MONEY = """

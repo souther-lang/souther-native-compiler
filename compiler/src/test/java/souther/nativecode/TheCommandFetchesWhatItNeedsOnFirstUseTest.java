@@ -3,6 +3,7 @@ package souther.nativecode;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -40,7 +41,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * <p>Read over HTTP from a server of the test's own, so that what is asked and what is kept are what
  * a real fetch would do.
+ *
+ * <p>Alone, since a released compiler is one that no system property names a driver for, and the
+ * temporary directory is held to have no copy of a jar left in it after a command.
  */
+@Isolated
 class TheCommandFetchesWhatItNeedsOnFirstUseTest {
 
     private static final String VERSION = "1.2.3";
