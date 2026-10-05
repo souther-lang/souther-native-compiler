@@ -89,7 +89,10 @@ jobs:
       # PHP. What an application does, with no Java calling the API: the command line builds a
       # library and its binding, Composer installs the runtime from its path, and PHP calls the
       # library. Then every Composer project installs what its lock fixes, and the lock still
-      # matches it. Then the cart example, built and tested the way its README says: an
+      # matches it. Then what publishing the runtime does, rehearsed into a mirror that is a
+      # directory: a host requires the package from it by name and version, and what a publication
+      # would refuse is refused before anything is pushed. Then the cart example, built and tested
+      # the way its README says: an
       # application's whole path from HTTP JSON through raoh-php into the model and out to a
       # database over PDO.
       #
@@ -101,9 +104,9 @@ jobs:
       # and what rustc refuses a host of the model.
       #
       # Go. The same from Go: the command line builds a library and its module, and a Go host
-      # depending on it with the runtime put in place from the clone calls the library. Then what a
-      # release does for the Go runtime, without one: the module is resolved by its path and its
-      # version, from a tag made as the release makes it, with no `replace` (which the tests use,
+      # depending on it with the runtime put in place from the clone calls the library. Then what
+      # publishing the Go runtime does, rehearsed: the module is resolved by its path and its
+      # version, from a tag made as a publication makes it, with no `replace` (which the tests use,
       # and nobody outside this clone has); and what would be refused is refused before anything is
       # pushed. Then the runtime as this commit has it against the version it says it is: where that
       # version is published, it has to be the runtime that was published, so a change to the
@@ -114,6 +117,7 @@ jobs:
           scripts/in-parallel.sh
           'scripts/php-from-the-command-line.sh
           && scripts/composer-locks.sh
+          && scripts/verify-php-runtime-release.sh
           && scripts/php-cart-example.sh'
           'scripts/rust-from-the-command-line.sh
           && rustup toolchain install 1.87 --profile minimal
