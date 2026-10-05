@@ -45,11 +45,19 @@ if [ "$generators" -eq 0 ]; then
     exit 1
 fi
 
-compiler="$repository/org/souther-lang/souther-native-compiler/$version/souther-native-compiler-$version.jar"
-if ! unzip -p "$compiler" souther/nativecode/release-checksums.properties | diff - "$checksums" > /dev/null; then
-    echo "$compiler does not carry the checksums that were written" >&2
-    exit 1
-fi
+# The compiler, and the backend jar `souther compile --target native` runs, which is the compiler with
+# what it runs with: both are published, and a user of either fetches what these checksums are of.
+for compiler in "$repository/org/souther-lang/souther-native-compiler/$version/souther-native-compiler-$version.jar" \
+        "$repository/org/souther-lang/souther-native-compiler/$version/souther-native-compiler-$version-backend.jar"; do
+    if [ ! -f "$compiler" ]; then
+        echo "no $compiler" >&2
+        exit 1
+    fi
+    if ! unzip -p "$compiler" souther/nativecode/release-checksums.properties | diff - "$checksums" > /dev/null; then
+        echo "$compiler does not carry the checksums that were written" >&2
+        exit 1
+    fi
+done
 
 artifact_of() {
     sed -n '/<\/parent>/,$ s#^ *<artifactId>\(.*\)</artifactId> *$#\1#p' "$1" | head -1

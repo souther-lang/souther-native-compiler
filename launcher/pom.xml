@@ -61,6 +61,10 @@
                         <souther.generator.php>${maven.multiModuleProjectDirectory}/bindings/php/generator/target/souther-binding-php-${project.version}.jar</souther.generator.php>
                         <souther.generator.rust>${maven.multiModuleProjectDirectory}/bindings/rust/generator/target/souther-binding-rust-${project.version}.jar</souther.generator.rust>
                         <souther.generator.go>${maven.multiModuleProjectDirectory}/bindings/go/generator/target/souther-binding-go-${project.version}.jar</souther.generator.go>
+                        <!-- The backend jar the compiler's module attaches, which a test runs as the CLI
+                             runs it, and the version it is to say it is. -->
+                        <souther.backend.jar>${maven.multiModuleProjectDirectory}/compiler/target/souther-native-compiler-${project.version}-backend.jar</souther.backend.jar>
+                        <souther.native.version>${project.version}</souther.native.version>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

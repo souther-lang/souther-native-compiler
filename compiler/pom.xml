@@ -64,10 +64,10 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
                 <executions>
-                    <!-- What starts the command from the artifact (jbang runs the jar's main class),
-                         and what says which release this is: the version a released compiler
-                         fetches its generators and its driver at. A build from a clone has no such
-                         entry, which is how it knows it has no release to fetch from. -->
+                    <!-- What starts the command from a jar, and what says which release this is: the
+                         version a released compiler fetches its generators and its driver at. The
+                         backend jar below carries this manifest. A build from a clone is a
+                         snapshot's version, which is how it knows it has no release to fetch from. -->
                     <execution>
                         <id>default-jar</id>
                         <configuration>
@@ -84,6 +84,96 @@
                         <goals>
                             <goal>test-jar</goal>
                         </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- The descriptor `souther compile` chooses a backend by, with the Souther this is
+                 built against written in: the target it answers to and that version, and nothing
+                 else, since the CLI refuses any other key. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <id>backend-descriptor</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/backend</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>src/backend</directory>
+                                    <filtering>true</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- The backend: this jar and everything it runs with, as one executable jar carrying the
+                 descriptor, which `souther compile` runs for the native target as a process of its own.
+                 Attached beside the jar and not in its place, so that what depends on the compiler
+                 as a library (the testkit) is handed its dependencies as dependencies, and the
+                 descriptor is only in the jar that can run alone. Its manifest is this jar's, so
+                 the release it says it is, which is what it fetches at, is the compiler's version. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.2</version>
+                <executions>
+                    <execution>
+                        <id>backend</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>backend</shadedClassifierName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <!-- Run on the class path, where a module descriptor says
+                                             nothing, and several would be one path. -->
+                                        <exclude>module-info.class</exclude>
+                                        <exclude>META-INF/versions/*/module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>souther.nativecode.Main</mainClass>
+                                    <manifestEntries>
+                                        <Multi-Release>true</Multi-Release>
+                                    </manifestEntries>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/souther-docs/sets</resource>
+                                </transformer>
+                                <!-- Jackson's jars each carry their license and notice at one path,
+                                     and the jar keeps every one of them rather than whichever came
+                                     first. -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/LICENSE</resource>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/NOTICE</resource>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                                    <resource>META-INF/souther/backend.properties</resource>
+                                    <file>${project.build.directory}/backend/backend.properties</file>
+                                </transformer>
+                            </transformers>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

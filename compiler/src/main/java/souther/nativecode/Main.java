@@ -64,12 +64,12 @@ public final class Main {
             }
             asked.append("]");
         }
-        return "usage: souther-native [--offline] [-cp <path>] -o <object> <source>...\n"
-                + "       souther-native [--offline] [-cp <path>] --library <dir> [--with <object>]...\n"
-                + "                      " + asked + "\n"
-                + "                      [--binding <generator> <dir> [--binding-option <key>=<value>]...]...\n"
-                + "                      <source>...\n"
-                + "       souther-native --fetch\n"
+        return "usage: souther compile --target native [--offline] [-cp <path>] -o <object> <source>...\n"
+                + "       souther compile --target native [--offline] [-cp <path>] --library <dir>\n"
+                + "           [--with <object>]... " + asked + "\n"
+                + "           [--binding <generator> <dir> [--binding-option <key>=<value>]...]...\n"
+                + "           <source>...\n"
+                + "       souther compile --target native --fetch\n"
                 + "\n"
                 + "  --offline           fetch nothing: use only the driver and the generators already kept\n"
                 + "  --fetch             fetch the driver and every generator this does not have, and end\n"
