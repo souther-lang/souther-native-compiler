@@ -31,6 +31,10 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- What surefire reads, and what each module's exec of a test runner reads too: a build
+             with -DskipTests (scripts/souther-native's) runs no tests, Rust's and Go's no more than
+             Java's. A runner bound to the test phase without it ran on every command a clone ran. -->
+        <skipTests>false</skipTests>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
         <souther.version>0.3.1-SNAPSHOT</souther.version>

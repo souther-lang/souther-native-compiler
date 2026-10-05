@@ -175,6 +175,7 @@
                             <goal>exec</goal>
                         </goals>
                         <configuration>
+                            <skip>${skipTests}</skip>
                             <executable>cargo</executable>
                             <workingDirectory>${maven.multiModuleProjectDirectory}/native</workingDirectory>
                             <arguments>
