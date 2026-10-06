@@ -202,7 +202,8 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             new Decoding.Row("flags", "Flags", "[true, false, true]"),
             new Decoding.Row("skus", "Skus", "[\"a\", \"b\", \"a\"]"),
             // Raoh's `unique` takes only elements an issue can write, and the checker states it only
-            // of those (souther-lang/souther#2149): a list of anything else keeps its own check.
+            // of those (Souther's specification, "Codes an invariant produces"): a list of anything
+            // else keeps its own check.
             new Decoding.Row("products twice", "Points", "[{\"x\": 1, \"y\": 2}, {\"x\": 1, \"y\": 2}]"),
             new Decoding.Row("units twice", "Markers", "[{}, {}]"),
             new Decoding.Row("nothing twice", "Maybes", "[null, 1, null]"),

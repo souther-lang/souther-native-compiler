@@ -174,8 +174,9 @@ metadata holds. The type is the one the declaration gives, never one read off th
 would be written as, where a `Decimal` of scale nought is an `Int` and a date is a string: an
 element `duplicates` lists is the type the checker gives the elements' message form, a newtype
 what it holds. The checker states a list's uniqueness only of elements that have one, and a list of
-anything else keeps its own check, reported as `invariant_violation` (souther-lang/souther#2149).
-A host makes each value that type in its own Raoh and guesses nothing. An issue's code and wording are Raoh's, word for word as the JVM's `jsonDecoder()` gives
+anything else keeps its own check, reported as `invariant_violation` (Souther's specification,
+"Codes an invariant produces"). A host makes each value that type in its own Raoh and guesses
+nothing. An issue's code and wording are Raoh's, word for word as the JVM's `jsonDecoder()` gives
 them: `required` where a value is `null` or a member is missing, and `type_mismatch` naming the
 kinds of JSON found and wanted, in the words the JVM's decoders use for them (string, long,
 number, boolean, object and array).

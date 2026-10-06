@@ -1943,8 +1943,9 @@ pub const ISSUE_META: &str = "souther_issue_meta";
 /// host makes the value of that type and guesses nothing. The types are the ones Raoh gives a
 /// message form, which are the only ones its metadata holds: an element `duplicates` lists is one
 /// of them, or a list of them, which the checker gives from the elements' message form, and the
-/// checker states no uniqueness of any other (souther-lang/souther#2149). Each line is held by the
-/// generation's record, so a type added or written otherwise is a contract that moved.
+/// checker states no uniqueness of any other (Souther's specification, "Codes an invariant
+/// produces"). Each line is held by the generation's record, so a type added or written otherwise
+/// is a contract that moved.
 pub const META_TYPES: &[(&str, &str)] = &[
     ("int", "a JSON integer, of 64 bits"),
     (
