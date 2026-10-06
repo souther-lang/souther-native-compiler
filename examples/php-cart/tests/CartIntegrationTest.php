@@ -281,7 +281,7 @@ final class CartIntegrationTest extends TestCase
         $response = $this->checkout('/carts/checkout', self::USER, $individual);
 
         self::assertSame(400, $response->status);
-        self::assertSame(['path' => '/orderer/name', 'code' => 'missing_field'],
+        self::assertSame(['path' => '/orderer/name', 'code' => 'required'],
             array_intersect_key(self::body($response)['issues'][0], ['path' => 0, 'code' => 0]));
     }
 

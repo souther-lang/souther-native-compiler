@@ -15,9 +15,9 @@
 #     before anything is pushed, and publishes one requiring releases only; and a rehearsal pushes to
 #     nothing but a directory.
 #
-# HEAD is rehearsed and not published, so this holds while the runtime still requires a development
-# version of raoh-php, which a publication would refuse; what a publication refuses is held with a
-# runtime of its own below. Needs PHP and Composer, and reaches raoh-php on Packagist. What is
+# HEAD is rehearsed and not published, so this holds whatever the runtime requires between releases,
+# a development version of raoh-php too, which a publication would refuse; what a publication refuses
+# is held with a runtime of its own below. Needs PHP and Composer, and reaches raoh-php on Packagist. What is
 # published is HEAD, so what is not committed is not in it.
 set -euo pipefail
 
@@ -81,8 +81,9 @@ esac
 [ "$(git -C "$work/mirror.git" rev-parse refs/heads/main)" = "$main" ] || fail "publishing again pushed"
 
 # What a host has: the package by its name and version, from the mirror and Packagist and nothing
-# local. The runtime may require a development version of raoh-php until it is published, which a
-# host takes only where it lowers its stability; a publication refuses that, below.
+# local. Between releases the runtime may require a development version of raoh-php, which a host
+# takes only where it lowers its stability: so does this one, since a rehearsal asks nothing of a
+# release, and a publication refuses that requirement, below.
 mkdir "$work/host"
 cat > "$work/host/composer.json" <<JSON
 {
@@ -146,11 +147,12 @@ refused "a publication of a runtime requiring a development version" "requires w
     "$work/none.git" HEAD
 git_in reset --quiet --hard HEAD~1
 
-# And one requiring releases only is published.
+# And one requiring releases only is published: any development version it requires taken out, and
+# nothing to take out where it requires none.
 php -r '$p = "'"$work/synthetic/$directory"'/composer.json"; $j = json_decode(file_get_contents($p), true);
     $j["require"] = array_filter($j["require"], fn ($c) => !preg_match("/(^dev-|-dev$|@dev)/i", $c));
     file_put_contents($p, json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
-git_in commit --quiet -am "requires releases only"
+git_in commit --quiet --allow-empty -am "requires releases only"
 git init --quiet --bare "$work/third.git"
 said="$(cd "$work/synthetic" && "$publish" "$work/third.git" HEAD 2>&1)" \
     || fail "a publication requiring releases only was refused: $said"

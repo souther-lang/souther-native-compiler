@@ -16,37 +16,38 @@
 //! report, since the model was not handed it; what is wrong inside it is its decoder's to say.
 
 use raoh::json::prelude::*;
+use raoh::json::{JsonObject, Lexeme, View};
 use raoh::{Issues, Path, Pointer, decoder_fn};
 
 /// A member of a value the model reads whole, and the boundary's decoder of it.
-pub type Member = (&'static str, BoxDecoder<Value, Value>);
+pub type Member = (&'static str, BoxDecoder<Json, Node>);
 
 /// A value read whole by `model` once each of `members` it has is decoded by the boundary.
 pub fn members<'a, T>(
     members: Vec<Member>,
-    model: impl Decoder<Value, Output = T> + 'a,
-) -> impl Decoder<Value, Output = T> + 'a {
-    decoder_fn(move |given: &Value, path: &Path<'_>| {
-        let mut decoded = given.clone();
+    model: impl Decoder<Json, Output = T> + 'a,
+) -> impl Decoder<Json, Output = T> + 'a {
+    decoder_fn(move |given: &Json, path: &Path<'_>| {
+        let mut decoded = owned(given);
         let mut found = Issues::new();
         let mut refused: Vec<Pointer> = Vec::new();
-        if let Value::Object(object) = &mut decoded {
-            for (name, decoder) in &members {
-                let Some(member) = object.get(*name) else {
+        if let Node::Object(object) = &decoded {
+            let mut kept = Vec::with_capacity(object.len());
+            for (name, member) in object.iter() {
+                let Some((_, decoder)) = members.iter().find(|(it, _)| *it == name) else {
+                    kept.push((name.to_owned(), member.clone()));
                     continue;
                 };
                 let at = path.key(name);
                 match decoder.decode_at(member, &at) {
-                    Ok(written) => {
-                        object.insert((*name).to_owned(), written);
-                    }
+                    Ok(written) => kept.push((name.to_owned(), written)),
                     Err(issues) => {
-                        object.remove(*name);
                         refused.push(at.to_pointer());
                         found.merge(issues);
                     }
                 }
             }
+            decoded = Node::Object(JsonObject::new(kept).expect("the names of one object"));
         }
         match model.decode_at(&decoded, path) {
             Ok(read) if found.is_empty() => Ok(read),
@@ -63,6 +64,25 @@ pub fn members<'a, T>(
     })
 }
 
+/// What a decoder was handed, as a value of its own the boundary can take members out of and put
+/// members into: each number as the text it was written as.
+fn owned(given: &Json) -> Node {
+    match given.view() {
+        View::Missing | View::Null => Node::Null,
+        View::Bool(truth) => Node::Bool(truth),
+        View::Number(number) => {
+            Node::Number(Lexeme::new(&number.lexeme()).expect("a number of the input model"))
+        }
+        View::String(text) => Node::String(text.to_owned()),
+        View::Array(elements) => Node::Array(elements.iter().map(owned).collect()),
+        View::Object(object) => {
+            let mut kept = Vec::with_capacity(object.len());
+            object.each(&mut |name, value| kept.push((name.to_owned(), owned(value))));
+            Node::Object(JsonObject::new(kept).expect("the names of one object"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -71,17 +91,45 @@ mod tests {
 
     use super::*;
 
+    /// A value written as JSON, to say what the model was handed.
+    fn written(node: &Node) -> String {
+        match node {
+            Node::Null => "null".to_owned(),
+            Node::Bool(truth) => truth.to_string(),
+            Node::Number(lexeme) => lexeme.to_string(),
+            Node::String(text) => serde_json::to_string(text).unwrap(),
+            Node::Array(items) => {
+                format!("[{}]", items.iter().map(written).collect::<Vec<_>>().join(","))
+            }
+            Node::Object(object) => format!(
+                "{{{}}}",
+                object
+                    .iter()
+                    .map(|(name, value)| format!(
+                        "{}:{}",
+                        serde_json::to_string(name).unwrap(),
+                        written(value)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+        }
+    }
+
     /// A model that records what it was handed, and reports each of `required` it is missing.
     fn recording<'r>(
-        read: &'r RefCell<Vec<Value>>,
+        read: &'r RefCell<Vec<String>>,
         required: &'r [&'r str],
-    ) -> impl Decoder<Value, Output = ()> + 'r {
-        decoder_fn(move |given: &Value, path: &Path<'_>| {
-            read.borrow_mut().push(given.clone());
+    ) -> impl Decoder<Json, Output = ()> + 'r {
+        decoder_fn(move |given: &Json, path: &Path<'_>| {
+            read.borrow_mut().push(written(&owned(given)));
+            let View::Object(object) = given.view() else {
+                return Err(Issue::new("type_mismatch").at(path.to_pointer()).into());
+            };
             let mut missing = Issues::new();
             for name in required {
-                if given.get(*name).is_none() {
-                    missing.push(Issue::new("missing_field").at(path.key(name).to_pointer()));
+                if object.get(name).is_none() {
+                    missing.push(Issue::new("required").at(path.key(name).to_pointer()));
                 }
             }
             if missing.is_empty() {
@@ -99,7 +147,7 @@ mod tests {
                 .trim()
                 .lowercase()
                 .email()
-                .map(Value::String)
+                .map(Node::String)
                 .boxed(),
         )
     }
@@ -119,7 +167,7 @@ mod tests {
             .decode(&json!({ "email": " A@Example.COM " }))
             .unwrap();
 
-        assert_eq!(read.into_inner(), [json!({ "email": "a@example.com" })]);
+        assert_eq!(read.into_inner(), [r#"{"email":"a@example.com"}"#]);
     }
 
     #[test]
@@ -130,7 +178,7 @@ mod tests {
             .decode(&json!({ "email": " X ", "city": "Tokyo" }))
             .unwrap_err();
 
-        assert_eq!(read.into_inner(), [json!({ "city": "Tokyo" })]);
+        assert_eq!(read.into_inner(), [r#"{"city":"Tokyo"}"#]);
         assert_eq!(paths(&issues), ["/email"]);
     }
 
@@ -146,11 +194,20 @@ mod tests {
     }
 
     #[test]
+    fn a_number_reaches_the_model_as_it_was_written() {
+        let read = RefCell::new(Vec::new());
+
+        from_str(&members(vec![email()], recording(&read, &[])), r#"{"price":1.50}"#).unwrap();
+
+        assert_eq!(read.into_inner(), [r#"{"price":1.50}"#]);
+    }
+
+    #[test]
     fn only_the_refused_members_own_path_is_taken_for_the_boundarys() {
         // The boundary's decoder of an address refuses its postcode, and the address is taken out.
         // The model reports it missing, which is dropped, and the model's own issue beside it is
         // kept: nothing at a path merely under or beside the refused member is dropped.
-        let address = decoder_fn(|_: &Value, path: &Path<'_>| -> Result<Value, Issues> {
+        let address = decoder_fn(|_: &Json, path: &Path<'_>| -> Result<Node, Issues> {
             Err(Issue::new("invalid_format")
                 .at(path.key("postcode").to_pointer())
                 .into())

@@ -667,7 +667,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_read_duplicates",
-            shape_of(souther_read_duplicates as unsafe extern "C" fn(*const Path, D, *mut Form)),
+            shape_of(souther_read_duplicates as unsafe extern "C" fn(*const Path, D, *mut Form, T)),
         ),
         (
             "souther_list_duplicates",

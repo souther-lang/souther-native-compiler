@@ -25,7 +25,8 @@ use super::{Codecs, Runtime};
 use crate::literals::Literals;
 use crate::patterns::Patterns;
 use crate::transport::{
-    AlternativesForm, BoundaryConstraint, Case, CodecShape, Declaration, Field, LeafScalar, Prim,
+    AlternativesForm, BoundaryConstraint, Case, CodecShape, Declaration, Field, LeafScalar,
+    MetaType, Prim,
 };
 use crate::{
     CaseBody, Construction, Constructors, Declared, Emitting, Lowered, POINTER, TRUSTED,
@@ -861,7 +862,7 @@ impl Reading<'_, '_> {
                 let bound = n(self, bound);
                 self.asked(Runtime::ReadListFixedSize, &[path, reading, value, bound])
             }
-            BoundaryConstraint::Unique => self.unique(shape, value, path)?,
+            BoundaryConstraint::Unique { element } => self.unique(shape, element, value, path)?,
             BoundaryConstraint::MapNonEmpty => {
                 self.asked(Runtime::ReadMapNonEmpty, &[path, reading, value])
             }
@@ -888,10 +889,12 @@ impl Reading<'_, '_> {
 
     /// Whether the list `value` of `shape` holds no element twice, compared as Souther compares.
     /// Where it holds some, they are written as a boundary writes the list's elements and handed
-    /// to the runtime, which records them as Raoh's `duplicates`.
+    /// to the runtime, which records them as Raoh's `duplicates`, each the type `element_type`
+    /// names, which the checker gave.
     fn unique(
         &mut self,
         shape: &CodecShape,
+        element_type: &MetaType,
         value: ir::Value,
         path: ir::Value,
     ) -> Lowered<ir::Value> {
@@ -924,7 +927,11 @@ impl Reading<'_, '_> {
             codecs: &mut *self.codecs,
         }
         .shaped(shape, repeated)?;
-        self.call(Runtime::ReadDuplicates, &[path, self.decoding, written]);
+        let element_type = self.literal(element_type.as_str());
+        self.call(
+            Runtime::ReadDuplicates,
+            &[path, self.decoding, written, element_type],
+        );
         let broken = self.builder.ins().iconst(types::I8, 0);
         self.builder.ins().jump(answered, &[broken.into()]);
 

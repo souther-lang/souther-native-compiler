@@ -2617,7 +2617,7 @@ fn a_sort_by_a_variable_with_no_order_said_is_the_halves_disagreeing() {
     );
 }
 
-/// What a pattern crosses as is an image the runtime reads, of a format 199x-notation defines, and
+/// What a pattern crosses as is an image the runtime reads, of a format notation-199x defines, and
 /// one it could not read would end the run the first time the pattern is matched. So a text that
 /// is no image of any format is refused as the two halves disagreeing, before anything is written.
 #[test]

@@ -18,7 +18,7 @@ tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 # SQLite built from source, so the example needs no SQLite installed beside it.
 rusqlite = { version = "0.37", features = ["bundled"] }
 # The form of each field at the boundary. The model's own decoders answer in Raoh's issues too.
-raoh = { version = "0.1", features = ["regex", "uuid"] }
+raoh = "0.9"
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 # Today, which the quote route hands the model; how long a quotation holds is the model's.

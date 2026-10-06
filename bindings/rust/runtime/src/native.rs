@@ -13,7 +13,7 @@ use std::sync::{Mutex, PoisonError};
 /// The ABI generation this crate calls a library as, which [`NativeLibrary::load`] asks a library
 /// for before anything else and refuses any other of. The rooms `bound.rs` lays out are this
 /// generation's.
-pub const ABI_GENERATION: u32 = 10;
+pub const ABI_GENERATION: u32 = 11;
 
 /// The one function every generation has and none changes, asked before any other.
 const GENERATION_QUERY: &str = "souther_abi_generation";
@@ -651,10 +651,58 @@ impl Words {
                 .with_message_key(key)
                 .at(raoh::Pointer::parse(&path).expect("the library writes a JSON Pointer"));
             for (name, said) in meta {
-                made = made.with_meta(name, said);
+                made = made.with_meta(name, meta_value(said));
             }
             made
         }
+    }
+}
+
+/// A value of an issue's metadata as the library writes it, an object of one member named for its
+/// type in Raoh's value model, made a value of that type: a `Decimal` at the scale it was written
+/// at, so `5` and `1.50` are the decimals they are, and a date, a time, a date-time or an instant
+/// as Raoh reads one, so a date is not text, as the JVM's issue holds them.
+///
+/// The library writes nothing else, so anything else is a library of another contract, which the
+/// generation it was loaded at already refused.
+fn meta_value(said: serde_json::Value) -> raoh::MetaValue {
+    let serde_json::Value::Object(typed) = said else {
+        panic!("the library writes a value of metadata as its type, and wrote {said}");
+    };
+    let mut members = typed.into_iter();
+    let (Some((name, value)), None) = (members.next(), members.next()) else {
+        panic!("the library writes a value of metadata as one member, its type");
+    };
+    match (name.as_str(), value) {
+        ("int", serde_json::Value::Number(n)) => {
+            raoh::MetaValue::Int(n.as_i64().expect("the library writes an int of 64 bits"))
+        }
+        ("decimal", serde_json::Value::String(text)) => raoh::MetaValue::Decimal(
+            text.parse()
+                .expect("the library writes a decimal as its text"),
+        ),
+        ("string", serde_json::Value::String(text)) => raoh::MetaValue::String(text),
+        ("bool", serde_json::Value::Bool(truth)) => raoh::MetaValue::Bool(truth),
+        ("date", serde_json::Value::String(text)) => raoh::MetaValue::Date(
+            text.parse()
+                .expect("the library writes a date as Raoh reads one"),
+        ),
+        ("time", serde_json::Value::String(text)) => raoh::MetaValue::Time(
+            text.parse()
+                .expect("the library writes a time as Raoh reads one"),
+        ),
+        ("datetime", serde_json::Value::String(text)) => raoh::MetaValue::DateTime(
+            text.parse()
+                .expect("the library writes a date-time as Raoh reads one"),
+        ),
+        ("instant", serde_json::Value::String(text)) => raoh::MetaValue::Instant(
+            text.parse()
+                .expect("the library writes an instant as Raoh reads one"),
+        ),
+        ("list", serde_json::Value::Array(items)) => {
+            raoh::MetaValue::List(items.into_iter().map(meta_value).collect())
+        }
+        (name, value) => panic!("the library writes no {name} of {value}"),
     }
 }
 

@@ -45,8 +45,9 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
 
     private static final String MODULE = """
             module held exposing ( Short, Long, Exact, Coded, Positive, Counted, AtLeast, Below, \
-            Price, Floor, Capped, Charge, Owed, Tags, Several, Few, Pair, Distinct, Words, Line, \
-            Lines, Keyed, Filled, Sparse, Ranged, Partly, Digits, Box, Amounts, Grid )
+            Price, Floor, Capped, Charge, Owed, Tags, Several, Few, Pair, Distinct, Words, Days, \
+            Hours, Stamps, Moments, Flags, Sku, Skus, Point, Points, Marker, Markers, Maybes, Keyed, \
+            Filled, Sparse, Ranged, Partly, Digits, Box, Amounts, Grid )
 
             data Short = String
                 invariant String.length(value) > 0
@@ -105,9 +106,38 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             data Words = List<String>
                 invariant List.allDistinctBy(x -> x, value)
 
-            data Line = { amount: Decimal }
+            data Days = List<Date>
+                invariant List.allDistinctBy(x -> x, value)
 
-            data Lines = List<Line>
+            data Hours = List<Time>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Stamps = List<DateTime>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Moments = List<Instant>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Flags = List<Bool>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Sku = String
+                invariant String.length(value) > 0
+
+            data Skus = List<Sku>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Point = { x: Int, y: Int }
+
+            data Points = List<Point>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Marker
+
+            data Markers = List<Marker>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Maybes = List<Option<Int>>
                 invariant List.allDistinctBy(x -> x, value)
 
             data Keyed = Map<String, Int>
@@ -165,7 +195,18 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             new Decoding.Row("distinct", "Distinct", "[3, 1, 3, 2, 1, 3]"),
             new Decoding.Row("distinct held", "Distinct", "[1, 2]"),
             new Decoding.Row("words", "Words", "[\"a\", \"b\", \"a\"]"),
-            new Decoding.Row("lines", "Lines", "[{\"amount\": 1.0}, {\"amount\": 1.00}]"),
+            new Decoding.Row("days", "Days", "[\"2026-01-31\", \"2026-02-01\", \"2026-01-31\"]"),
+            new Decoding.Row("hours", "Hours", "[\"10:00\", \"10:00:30.5\", \"10:00\", \"10:00:30.5\"]"),
+            new Decoding.Row("stamps", "Stamps", "[\"2026-01-31T10:00\", \"2026-01-31T10:00\"]"),
+            new Decoding.Row("moments", "Moments", "[\"2026-01-31T10:00:00Z\", \"2026-01-31T10:00:00Z\"]"),
+            new Decoding.Row("flags", "Flags", "[true, false, true]"),
+            new Decoding.Row("skus", "Skus", "[\"a\", \"b\", \"a\"]"),
+            // Raoh's `unique` takes only elements an issue can write, and the checker states it only
+            // of those (Souther's specification, "Codes an invariant produces"): a list of anything
+            // else keeps its own check.
+            new Decoding.Row("products twice", "Points", "[{\"x\": 1, \"y\": 2}, {\"x\": 1, \"y\": 2}]"),
+            new Decoding.Row("units twice", "Markers", "[{}, {}]"),
+            new Decoding.Row("nothing twice", "Maybes", "[null, 1, null]"),
             new Decoding.Row("amounts twice", "Amounts", "[1.0, 1.0, 2.50]"),
             new Decoding.Row("amounts at two scales", "Amounts", "[1.0, 1.00]"),
             new Decoding.Row("grid at two scales", "Grid", "[[1.0], [1.00]]"),
@@ -178,7 +219,28 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             new Decoding.Row("partly letters", "Partly", "\"ab\""),
             new Decoding.Row("digits both", "Digits", "\"ab\""),
             new Decoding.Row("digits short", "Digits", "\"12\""),
-            new Decoding.Row("box", "Box", "{\"n\": -1}"));
+            new Decoding.Row("box", "Box", "{\"n\": -1}"),
+            // Each kind of input a reading can be handed where it takes another, which
+            // `type_mismatch` names as Raoh does.
+            new Decoding.Row("a number for a string", "Short", "7"),
+            new Decoding.Row("a string for an int", "Positive", "\"7\""),
+            new Decoding.Row("a fraction for an int", "Positive", "7.5"),
+            new Decoding.Row("a string for a decimal", "Price", "\"7\""),
+            new Decoding.Row("a number for a bool", "Flags", "[1]"),
+            new Decoding.Row("a number for a date", "Days", "[1]"),
+            new Decoding.Row("a string for an object", "Box", "\"n\""),
+            new Decoding.Row("an object for a list", "Tags", "{}"),
+            new Decoding.Row("a list for a map", "Keyed", "[]"),
+            new Decoding.Row("a number for a member of a map", "Keyed", "{\"a\": \"x\", \"b\": 2}"),
+            new Decoding.Row("null for a string", "Short", "null"),
+            new Decoding.Row("null for an int", "Positive", "null"),
+            new Decoding.Row("null for a decimal", "Price", "null"),
+            new Decoding.Row("null for a list", "Tags", "null"),
+            new Decoding.Row("null for an object", "Box", "null"),
+            new Decoding.Row("null for a member", "Box", "{\"n\": null}"),
+            new Decoding.Row("a member missing", "Box", "{}"),
+            new Decoding.Row("an int past 64 bits", "Positive", "9223372036854775808"),
+            new Decoding.Row("null for an element", "Tags", "[null]"));
 
     /** Reads a fraction as the decimal it was written as, which a boundary reads a {@code Decimal}
      *  from, and not as a {@code double}, which it refuses. */
@@ -212,42 +274,6 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
         assertThat(read(answered)).isEqualTo(expected.toString());
     }
 
-    private static final String DECLARED = """
-            module shelf exposing ( Sku, Skus, Point, Points )
-
-            data Sku = String
-                invariant String.length(value) > 0
-
-            data Skus = List<Sku>
-                invariant List.allDistinctBy(x -> x, value)
-
-            data Point = { x: Int, y: Int }
-
-            data Points = List<Point>
-                invariant List.allDistinctBy(p -> p, value)
-            """;
-
-    /**
-     * The elements a list repeats are reported as a boundary writes them, whatever they are: a
-     * newtype as what it holds and a product as an object. The JVM puts the model's own values in
-     * its metadata, which have no one written form to hold these to, so this is held to the form a
-     * boundary writes, which is the one the native library hands a host anywhere else.
-     */
-    @Test
-    void theElementsAListRepeatsAreWrittenAsABoundaryWritesThem() throws Exception {
-        Decoding decoding = new Decoding().type("shelf", "Skus").type("shelf", "Points")
-                .row("skus", "Skus", "[\"a\", \"b\", \"a\"]")
-                .row("points", "Points", "[{\"x\": 1, \"y\": 2}, {\"x\": 1, \"y\": 2}]");
-
-        String answered = AValueIsReadFromTheFormItIsWrittenInTest.run(
-                Checked.of(List.of(DECLARED)), decoding.harness());
-
-        assertThat(answered).isEqualTo("""
-                skus: issues [@ duplicate_element {"duplicates":["a"]}]
-                points: issues [@ duplicate_element {"duplicates":[{"x":1,"y":2}]}]
-                """);
-    }
-
     /** What the JVM's decoder says of the document, in the one written form both sides are read
      *  into ({@link #written}). */
     private static String jvmRead(Decoding.Row row) throws Exception {
@@ -268,7 +294,7 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
                 said.append(" key=").append(issue.messageKey());
             }
             if (!issue.meta().isEmpty()) {
-                said.append(' ').append(written(issue.meta()));
+                said.append(' ').append(meta(issue.meta()));
             }
             said.append(']');
         }
@@ -276,8 +302,10 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
     }
 
     /**
-     * The native harness's lines, each value and each issue's metadata read as JSON and written in
-     * the one form {@link #written} writes: what the JVM's answer is written in too.
+     * The native harness's lines, each value read as JSON and written in the one form
+     * {@link #written} writes, and each issue's metadata read as the types the library says its
+     * values are and written in the form {@link #meta} writes: what the JVM's answer is written in
+     * too.
      */
     private static String read(String answered) throws Exception {
         StringBuilder out = new StringBuilder();
@@ -296,7 +324,11 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
                 if (c == '{') {
                     try (JsonParser parser = JSON.createParser(line.substring(at))) {
                         JsonNode meta = parser.readValueAsTree();
-                        rewritten.append(written(meta));
+                        StringJoiner entries = new StringJoiner(",", "{", "}");
+                        new TreeMap<>(meta.properties().stream().collect(
+                                java.util.stream.Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)))
+                                .forEach((name, said) -> entries.add(quoted(name) + ":" + nativeMeta(said)));
+                        rewritten.append(entries);
                         at += (int) parser.currentLocation().getCharOffset();
                     }
                     continue;
@@ -362,14 +394,77 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             case Long number -> new BigDecimal(number).toString();
             case BigInteger number -> new BigDecimal(number).toString();
             case BigDecimal number -> number.toString();
-            case Record value -> modelValue(value);
+            case Record value -> modelValue(value, ABrokenClauseIsReportedAsTheJvmReportsItTest::written);
             default -> throw new IllegalArgumentException(
                     "an answer this test has no written form for: " + said.getClass());
         };
     }
 
+    /**
+     * An issue's metadata as the JVM holds it, in a form that says each value's type: an integer as
+     * {@code int:5}, a {@code BigDecimal} as {@code decimal:} and its {@code toString} at its own
+     * scale, so {@code int:2}, {@code decimal:2} and {@code decimal:2.00} are three answers; text
+     * quoted, a list and a map as JSON writes them, and a value of the model as the checker says it
+     * crosses, each part so. Raoh holds and writes each value as its type, so a host's issue is held
+     * to the type and not only to the number.
+     */
+    private static String meta(Object said) {
+        return switch (said) {
+            case null -> "none";
+            case Map<?, ?> map -> {
+                StringJoiner entries = new StringJoiner(",", "{", "}");
+                new TreeMap<>(map).forEach((name, value) ->
+                        entries.add(quoted(name.toString()) + ":" + meta(value)));
+                yield entries.toString();
+            }
+            case List<?> list -> {
+                StringJoiner items = new StringJoiner(",", "[", "]");
+                list.forEach(item -> items.add(meta(item)));
+                yield items.toString();
+            }
+            case String text -> quoted(text);
+            case Boolean truth -> "bool:" + truth;
+            case Integer number -> "int:" + number;
+            case Long number -> "int:" + number;
+            case BigInteger number -> "int:" + number;
+            case BigDecimal number -> "decimal:" + number;
+            case java.time.LocalDate date -> "date:" + date;
+            case java.time.LocalTime time -> "time:" + time;
+            case java.time.LocalDateTime dateTime -> "datetime:" + dateTime;
+            case java.time.Instant instant -> "instant:" + instant;
+            case Record value -> modelValue(value, ABrokenClauseIsReportedAsTheJvmReportsItTest::meta);
+            default -> throw new IllegalArgumentException(
+                    "metadata this test has no written form for: " + said.getClass());
+        };
+    }
+
+    /**
+     * An issue's metadata as the native library writes it, each value an object of one member named
+     * for its type, in the form {@link #meta} writes the JVM's in.
+     */
+    private static String nativeMeta(JsonNode said) {
+        if (!said.isObject() || said.size() != 1) {
+            throw new IllegalArgumentException("a value of metadata is written as its type: " + said);
+        }
+        Map.Entry<String, JsonNode> typed = said.properties().iterator().next();
+        JsonNode value = typed.getValue();
+        return switch (typed.getKey()) {
+            case "int" -> "int:" + value.bigIntegerValue();
+            case "decimal" -> "decimal:" + new BigDecimal(value.stringValue());
+            case "string" -> quoted(value.stringValue());
+            case "bool" -> "bool:" + value.booleanValue();
+            case "date", "time", "datetime", "instant" -> typed.getKey() + ":" + value.stringValue();
+            case "list" -> {
+                StringJoiner items = new StringJoiner(",", "[", "]");
+                value.values().forEach(item -> items.add(nativeMeta(item)));
+                yield items.toString();
+            }
+            default -> throw new IllegalArgumentException("no type of metadata is " + typed.getKey());
+        };
+    }
+
     /** A value of a type the module declares, written as the checker says it crosses. */
-    private static String modelValue(Record value) {
+    private static String modelValue(Record value, java.util.function.Function<Object, String> written) {
         String name = value.getClass().getSimpleName();
         CheckedData data = Checked.of(List.of(MODULE)).modules().getFirst().data().stream()
                 .filter(it -> it.name().name().equals(name))
@@ -378,7 +473,7 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
         RecordComponent[] fields = value.getClass().getRecordComponents();
         try {
             return switch (data) {
-                case CheckedData.Newtype it -> written(fields[0].getAccessor().invoke(value));
+                case CheckedData.Newtype it -> written.apply(fields[0].getAccessor().invoke(value));
                 case CheckedData.Product it -> {
                     StringJoiner entries = new StringJoiner(",", "{", "}");
                     TreeMap<String, Object> named = new TreeMap<>();
@@ -386,7 +481,7 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
                         named.put(field.getName(), field.getAccessor().invoke(value));
                     }
                     named.forEach((field, held) ->
-                            entries.add(quoted(field) + ":" + written(held)));
+                            entries.add(quoted(field) + ":" + written.apply(held)));
                     yield entries.toString();
                 }
                 default -> throw new IllegalArgumentException(name + " is not built from fields");

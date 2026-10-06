@@ -110,6 +110,9 @@ fn surface() -> BTreeSet<String> {
         lines.insert(format!("hashing {at} {rule}"));
     }
     lines.insert(format!("runtime says {}", runtime_generation_symbol()));
+    for (name, written) in META_TYPES {
+        lines.insert(format!("meta {name}: {written}"));
+    }
     for (name, value) in constants() {
         lines.insert(format!("const {name} = {value}"));
     }

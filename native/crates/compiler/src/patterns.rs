@@ -2,7 +2,7 @@
 //! it.
 //!
 //! The checker read the pattern, and what crossed is the machine of what it read, written as an
-//! image by 199x-notation, whose formats every implementation that reads them reads alike. Nothing
+//! image by notation-199x, whose formats every implementation that reads them reads alike. Nothing
 //! here reads pattern text, and nothing here builds a machine: the image is held to the format it
 //! says it is written in ([`check`]) and written into the object as it is, and the runtime reads it
 //! with the same crate, once however many calls match against it. A pattern says the same thing

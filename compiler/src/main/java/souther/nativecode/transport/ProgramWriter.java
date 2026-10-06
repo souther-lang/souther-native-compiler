@@ -4,6 +4,7 @@ import souther.compiler.abort.AbortKind;
 import souther.compiler.abort.AbortSet;
 import souther.compiler.check.CallElaborator;
 import souther.compiler.core.BoundaryConstraint;
+import souther.compiler.core.MessageForm;
 import souther.compiler.core.Composition;
 import souther.compiler.core.Contract;
 import souther.compiler.core.Core;
@@ -95,7 +96,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 32;
+    public static final int TRANSPORT_VERSION = 33;
 
     private final CheckedProgram program;
 
@@ -478,10 +479,34 @@ public final class ProgramWriter {
             case BoundaryConstraint.MinSize it -> bounded("minsize", it.n());
             case BoundaryConstraint.MaxSize it -> bounded("maxsize", it.n());
             case BoundaryConstraint.FixedSize it -> bounded("fixedsize", it.n());
-            case BoundaryConstraint.Unique it -> "{\"is\":\"unique\"}";
+            case BoundaryConstraint.Unique it ->
+                    "{\"is\":\"unique\",\"element\":" + quoted(metaType(it.element())) + "}";
             case BoundaryConstraint.MapNonEmpty it -> "{\"is\":\"mapnonempty\"}";
             case BoundaryConstraint.MapMinSize it -> bounded("mapminsize", it.n());
             case BoundaryConstraint.MapMaxSize it -> bounded("mapmaxsize", it.n());
+        };
+    }
+
+    /**
+     * The type values of {@code form} are written as in an issue's metadata, as the ABI's
+     * {@code META_TYPES} names it: what the checker gave the form of, a newtype as what it wraps,
+     * which is how the boundary writes it. Every scalar a form can be has a name here, so a scalar
+     * the language adds is a case this does not compile without.
+     */
+    static String metaType(MessageForm form) {
+        return switch (form) {
+            case MessageForm.Scalar it -> switch (it.scalar()) {
+                case INT -> "int";
+                case DECIMAL -> "decimal";
+                case STRING -> "string";
+                case BOOL -> "bool";
+                case DATE -> "date";
+                case TIME -> "time";
+                case DATETIME -> "datetime";
+                case INSTANT -> "instant";
+            };
+            case MessageForm.ListOf it -> "list<" + metaType(it.element()) + ">";
+            case MessageForm.Newtype it -> metaType(it.wraps());
         };
     }
 

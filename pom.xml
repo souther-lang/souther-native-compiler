@@ -42,11 +42,6 @@
         <junit.version>5.14.0</junit.version>
         <assertj.version>3.27.6</assertj.version>
         <jackson.version>3.2.2</jackson.version>
-        <raoh.version>0.8.0</raoh.version>
-        <!-- What writes a pattern's machine as an image the runtime reads with the Rust crate of the same
-             repository: the formats are 199x-notation's, so the two read an image alike whichever release
-             wrote it. Java's is released; the Rust crate is a commit of develop (native/Cargo.toml). -->
-        <notation199x.version>0.1.0</notation199x.version>
         <!-- What every file a jar holds is dated, so that building the same sources twice writes the same
              jar. The release embeds the checksum of each generator's jar in the compiler, and what it
              publishes has to be what it checksummed. -->
@@ -60,7 +55,7 @@
              is for. Held to BindingApi.MAJOR and ManifestReader.ABI by the launcher's tests, which load
              the jars as the command does and are refused otherwise. -->
         <souther.bindings.api>1</souther.bindings.api>
-        <souther.abi.generations>10</souther.abi.generations>
+        <souther.abi.generations>11</souther.abi.generations>
     </properties>
 
     <!-- Where a souther snapshot is published, for a build that takes one before its release: Central
@@ -91,35 +86,32 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- What tests are written against is this project's to choose, and Souther's BOM below
+                 manages JUnit too: an import declared first is the one that manages what both do. -->
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Souther's own versions: of its modules, and of what they share a class path with here
+                 and inside the backend jar, Raoh and notation-199x (which writes a pattern's machine as
+                 the image the runtime reads with the Rust crate of the same repository). A version of
+                 one of those that is not Souther's puts two releases of a library under one Souther, so
+                 none is written here: they are what the Souther named by souther.version manages, and
+                 move with it. -->
             <dependency>
                 <groupId>org.souther-lang</groupId>
-                <artifactId>souther-compiler</artifactId>
+                <artifactId>souther-parent</artifactId>
                 <version>${souther.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.souther-lang</groupId>
-                <artifactId>souther-runtime</artifactId>
-                <version>${souther.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>net.unit8.raoh</groupId>
-                <artifactId>raoh</artifactId>
-                <version>${raoh.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>net.unit8.raoh</groupId>
-                <artifactId>raoh-json</artifactId>
-                <version>${raoh.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
             </dependency>
             <dependency>
                 <groupId>tools.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
                 <version>${jackson.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>net.unit8.199x</groupId>
-                <artifactId>199x-notation</artifactId>
-                <version>${notation199x.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

@@ -142,7 +142,7 @@ spelt apart: `souther<n>`, `<n>` being the ABI generation, then the module as `_
 segment of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape
 a list's element crosses in, or `_fn_` and the shape of a function value, and then what is done with
 it. A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther10_m_shop_b_quote` at generation
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther11_m_shop_b_quote` at generation
 10, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
 `_` or `u`, which keeps every spelling readable back to the names it was made from. The functions
 that spell each name are in [`native/crates/abi/src/lib.rs`](../native/crates/abi/src/lib.rs), each
@@ -163,8 +163,24 @@ bytes, and `_decode_host` out of a value a host built of ordered maps and wrote 
 as an object. Each answers a status, which is not `ANSWERED` only where a clause the reading runs
 ended without a value, and otherwise writes through room a reading the host asks what it came to
 through the runtime's `souther_decoded_*` functions: a value, bytes that are not JSON and where they
-stopped, or every issue found. A clause that does not hold is one of the issues. `_encode` writes a
-value in its external form. A behavior answering a union no declaration names has
+stopped, or every issue found. A clause that does not hold is one of the issues. An issue says its
+code, its message key, its path and its metadata (`souther_issue_meta`), a JSON object with a
+member for each name Raoh gives the issue. Each value in it is written as the type it is in Raoh's
+value model, an object of one member named for the type: `{"int":5}`, `{"decimal":"1.50"}` (the
+decimal at its scale, as Java's `BigDecimal.toString` writes it), `{"string":"…"}`,
+`{"bool":true}`, `{"date":"2026-01-31"}` and the same for `time`, `datetime` and `instant`, and
+`{"list":[…]}`. These are the types Raoh gives a message form, which are the only ones its
+metadata holds. The type is the one the declaration gives, never one read off the JSON a value
+would be written as, where a `Decimal` of scale nought is an `Int` and a date is a string: an
+element `duplicates` lists is the type the checker gives the elements' message form, a newtype
+what it holds. The checker states a list's uniqueness only of elements that have one, and a list of
+anything else keeps its own check, reported as `invariant_violation` (Souther's specification,
+"Codes an invariant produces"). A host makes each value that type in its own Raoh and guesses
+nothing. An issue's code and wording are Raoh's, word for word as the JVM's `jsonDecoder()` gives
+them: `required` where a value is `null` or a member is missing, and `type_mismatch` naming the
+kinds of JSON found and wanted, in the words the JVM's decoders use for them (string, long,
+number, boolean, object and array).
+`_encode` writes a value in its external form. A behavior answering a union no declaration names has
 `_b_<behavior>_answer_case` beside its call, which says which of the union's cases the value is.
 
 A primitive among the cases of a union is carried by the runtime, and a host makes one and reads it

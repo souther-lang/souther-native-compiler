@@ -194,7 +194,7 @@ class AGoHostCallsALibraryThroughItsBindingTest {
             encoded: {"line":{"price":3,"quantity":2,"note":"gift"},"placed":true}
             read back: 2 placed true
             wrong: out_of_range at [price]
-            wrong: missing_field at [quantity]
+            wrong: required at [quantity]
             wrong: type_mismatch at [note]
             broken: invalid_format
             inside: 5, then 2

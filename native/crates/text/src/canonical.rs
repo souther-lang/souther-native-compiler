@@ -4,7 +4,7 @@
 //! Text arriving from outside is put in it where it arrives, and an operation that builds a string
 //! out of others puts what it built in it again, since NFC is not closed under joining two strings
 //! or under mapping case: a base letter and a combining mark written apart compose into one code
-//! point. What NFC makes of text is 199x-notation's, the one implementation every Souther and Raoh
+//! point. What NFC makes of text is notation-199x's, the one implementation every Souther and Raoh
 //! runtime reads, so the tables and the algorithm are its and not a copy kept here.
 
 use crate::Text;
@@ -24,7 +24,7 @@ pub(crate) fn nfc_of_input(text: &str, capacity: Capacity) -> Option<String> {
     notation199x::normalize_within(Form::Nfc, text, within(capacity))
 }
 
-/// The most code points a budget holds, as 199x-notation's bounded rules take it.
+/// The most code points a budget holds, as notation-199x's bounded rules take it.
 fn within(capacity: Capacity) -> usize {
     usize::try_from(capacity.code_points()).unwrap_or(0)
 }

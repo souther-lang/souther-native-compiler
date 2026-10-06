@@ -138,7 +138,7 @@ class AListCrossesBetweenTwoBuildsTest {
                 List.of(new NativeArtifacts.Bytes(NativeArtifacts.object(builtBefore()))), harness))
                 .isEqualTo("""
                         basket: value {"lines":[{"sku":"a","quantity":1}]}
-                        basket broken line: issues [@/lines/1 invariant_violation {"clause":"positive","module":"lib.orders","type":"OrderLine"}]
+                        basket broken line: issues [@/lines/1 invariant_violation {"clause":{"string":"positive"},"module":{"string":"lib.orders"},"type":{"string":"OrderLine"}}]
                         """);
     }
 

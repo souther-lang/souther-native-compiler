@@ -147,7 +147,7 @@ class APhpHostComposesATypesDecoderWithItsOwnTest {
             corporation: ok Corporation
             short email: [/orderer/email too_short]
             no such case: [/orderer/type not_allowed]
-            missing field: [/orderer/companyName missing_field]
+            missing field: [/orderer/companyName required]
             both: [/who too_short] [/individual/email too_short]
             quantity: [/n out_of_range key=out_of_range.positive]
             a float: [/ type_mismatch]

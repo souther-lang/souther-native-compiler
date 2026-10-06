@@ -278,7 +278,7 @@ fn a_host_builds_reads_and_writes_a_value_through_the_header_and_the_library() {
     assert!(!VALUING.contains("__asm__"));
     assert_eq!(
         ran(VALUES, VALUING),
-        "0 7\n{\"n\":7}\n0 1 9\n0 1 1 missing_field\n0 42\n"
+        "0 7\n{\"n\":7}\n0 1 9\n0 1 1 required\n0 42\n"
     );
 }
 
@@ -596,7 +596,7 @@ fn a_case_no_declaration_names_is_read_and_written_as_the_language_writes_it() {
             "0 case 0 holds 4 {\"type\":\"Int\",\"value\":4}\n",
             "0 case 1 {\"type\":\"DivisionByZero\"}\n",
             "0 case 2 {\"type\":\"A\"}\n",
-            "0 issues 1 missing_field\n",
+            "0 issues 1 required\n",
             "0 issues 1 type_mismatch\n",
             "{\"type\":\"Int\",\"value\":9}\n",
             "{\"type\":\"DivisionByZero\"}\n",

@@ -46,7 +46,7 @@ public final class ManifestReader {
     public static final int VERSION = 15;
 
     /** The ABI generation the functions a manifest names answer to, which this reads. */
-    public static final int ABI = 10;
+    public static final int ABI = 11;
 
     private ManifestReader() {
     }

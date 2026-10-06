@@ -75,7 +75,7 @@ pub fn checkout<'run>(run: &mut Run<'run>, body: &str) -> Read<(UserId<'run>, Or
 
 /// The `userId` of a query, which is absent where the query has none.
 pub fn user_id<'run>(run: &mut Run<'run>, given: Option<&str>) -> Read<UserId<'run>> {
-    let given = given.map_or(Value::Null, |it| Value::String(it.to_owned()));
+    let given = given.map_or(Node::Null, |it| Node::String(it.to_owned()));
     Decoding::read(run, |decoding| id(decoding, UserId::new).decode(&given))
 }
 
@@ -84,13 +84,13 @@ pub fn user_id<'run>(run: &mut Run<'run>, given: Option<&str>) -> Read<UserId<'r
 fn id<'a, 'run: 'a, T: 'a>(
     decoding: &'a Decoding<'_, 'run>,
     make: fn(&mut Run<'run>, &str) -> Result<Construction<T>, Failure>,
-) -> impl Decoder<Value, Output = T> + 'a {
+) -> impl Decoder<Json, Output = T> + 'a {
     uuid().pipe(decoding.of(move |run, id: &String| make(run, id)))
 }
 
 /// A UUID as this API writes one, and as the database keeps it: in lower case, with its hyphens.
 /// Another notation of one (braced, a URN, without hyphens) is not how a client writes an id here.
-fn uuid() -> impl Decoder<Value, Output = String> {
+fn uuid() -> impl Decoder<Json, Output = String> {
     string().lowercase().refine(
         |text: &String| hyphenated(text),
         "invalid_format",
@@ -110,7 +110,7 @@ fn hyphenated(text: &str) -> bool {
 
 /// A member the boundary writes as text, `decoder` saying how.
 fn text(
-    decoder: impl Decoder<Value, Output = String> + Send + Sync + 'static,
-) -> BoxDecoder<Value, Value> {
-    decoder.map(Value::String).boxed()
+    decoder: impl Decoder<Json, Output = String> + Send + Sync + 'static,
+) -> BoxDecoder<Json, Node> {
+    decoder.map(Node::String).boxed()
 }

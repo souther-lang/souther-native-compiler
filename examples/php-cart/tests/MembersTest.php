@@ -89,7 +89,7 @@ final class MembersTest extends TestCase
             foreach ($required as $name) {
                 if (!array_key_exists($name, $given)) {
                     $missing = $missing->merge(
-                        Result::fail($path->append($name), 'missing_field', 'field is missing')->issues);
+                        Result::fail($path->append($name), 'required', 'field is missing')->issues);
                 }
             }
             return $missing->isEmpty() ? Result::ok(null) : Result::err($missing);

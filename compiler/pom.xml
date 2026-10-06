@@ -41,7 +41,7 @@
         <!-- What writes the machine of a pattern the checker read as the image the runtime reads. -->
         <dependency>
             <groupId>net.unit8.199x</groupId>
-            <artifactId>199x-notation</artifactId>
+            <artifactId>notation-199x</artifactId>
         </dependency>
         <!-- What reads the manifest the driver writes, which is this command's and no generator's. -->
         <dependency>

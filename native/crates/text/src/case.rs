@@ -4,7 +4,7 @@
 //! The full mapping, so one code point may become several (`ß` uppercases to `SS`), and no locale:
 //! a Turkish `i` uppercases to `I`, never to `İ`. The one condition read is `Final_Sigma`, which is
 //! about the text around a capital sigma and not about who is reading it. The mapping is
-//! 199x-notation's, and what either answers is put in NFC again, since mapping case can leave text
+//! notation-199x's, and what either answers is put in NFC again, since mapping case can leave text
 //! that is not.
 
 use crate::Text;
@@ -26,7 +26,7 @@ pub fn uppercase(text: Text, capacity: Capacity) -> Option<String> {
     nfc_of_input(&mapped, capacity)
 }
 
-/// The most code points a budget holds, as 199x-notation's bounded rules take it.
+/// The most code points a budget holds, as notation-199x's bounded rules take it.
 fn most(capacity: Capacity) -> usize {
     usize::try_from(capacity.code_points()).unwrap_or(0)
 }
