@@ -46,8 +46,8 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
     private static final String MODULE = """
             module held exposing ( Short, Long, Exact, Coded, Positive, Counted, AtLeast, Below, \
             Price, Floor, Capped, Charge, Owed, Tags, Several, Few, Pair, Distinct, Words, Days, \
-            Hours, Stamps, Moments, Flags, Sku, Skus, Keyed, Filled, Sparse, Ranged, Partly, Digits, \
-            Box, Amounts, Grid )
+            Hours, Stamps, Moments, Flags, Sku, Skus, Point, Points, Marker, Markers, Maybes, Keyed, \
+            Filled, Sparse, Ranged, Partly, Digits, Box, Amounts, Grid )
 
             data Short = String
                 invariant String.length(value) > 0
@@ -127,6 +127,19 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             data Skus = List<Sku>
                 invariant List.allDistinctBy(x -> x, value)
 
+            data Point = { x: Int, y: Int }
+
+            data Points = List<Point>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Marker
+
+            data Markers = List<Marker>
+                invariant List.allDistinctBy(x -> x, value)
+
+            data Maybes = List<Option<Int>>
+                invariant List.allDistinctBy(x -> x, value)
+
             data Keyed = Map<String, Int>
                 invariant Map.size(value) >= 2
 
@@ -188,6 +201,11 @@ class ABrokenClauseIsReportedAsTheJvmReportsItTest {
             new Decoding.Row("moments", "Moments", "[\"2026-01-31T10:00:00Z\", \"2026-01-31T10:00:00Z\"]"),
             new Decoding.Row("flags", "Flags", "[true, false, true]"),
             new Decoding.Row("skus", "Skus", "[\"a\", \"b\", \"a\"]"),
+            // Raoh's `unique` takes only elements an issue can write, and the checker states it only
+            // of those (souther-lang/souther#2149): a list of anything else keeps its own check.
+            new Decoding.Row("products twice", "Points", "[{\"x\": 1, \"y\": 2}, {\"x\": 1, \"y\": 2}]"),
+            new Decoding.Row("units twice", "Markers", "[{}, {}]"),
+            new Decoding.Row("nothing twice", "Maybes", "[null, 1, null]"),
             new Decoding.Row("amounts twice", "Amounts", "[1.0, 1.0, 2.50]"),
             new Decoding.Row("amounts at two scales", "Amounts", "[1.0, 1.00]"),
             new Decoding.Row("grid at two scales", "Grid", "[[1.0], [1.00]]"),

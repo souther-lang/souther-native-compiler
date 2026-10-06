@@ -89,33 +89,6 @@ class WhatThisBackendDoesNotWriteYetTest {
                         + java.time.LocalDate.parse("2026-07-25").toEpochDay() + ",\"nano\":0");
     }
 
-    /**
-     * Raoh's {@code unique} takes only elements an issue can write, which Raoh gives a message form
-     * to (spec decoder-language.md, Types), and Souther states it of any list
-     * (souther-lang/souther#2149). A list of what has none, an optional, a product, a unit, is not
-     * written until Souther decides what such a clause is, rather than reported with elements no
-     * host's Raoh holds as a value of the type they are.
-     */
-    @Test
-    void aUniqueOfElementsAnIssueCannotWriteIsNotWrittenYet() {
-        for (String elements : List.of("Option<Int>", "Point", "Marker")) {
-            CheckedProgram program = Checked.of(List.of("""
-                    module shelf exposing ( Point, Marker, Held )
-
-                    data Point = { x: Int, y: Int }
-                    data Marker
-
-                    data Held = List<%s>
-                        invariant List.allDistinctBy(x -> x, value)
-                    """.formatted(elements)));
-
-            assertThatThrownBy(() -> NativeCompiler.compile(program))
-                    .as("a list of %s", elements)
-                    .isInstanceOf(NotLowered.class)
-                    .hasMessageContaining("souther-lang/souther#2149");
-        }
-    }
-
     /** What the driver has no lowering for arrives as that, and not as a document it could not read. */
     @Test
     void theDriverSaysItIsOneThisBackendHasNotGotRoundTo() {

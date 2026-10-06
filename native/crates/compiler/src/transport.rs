@@ -117,6 +117,11 @@ pub const MOVES: &[(u32, &str)] = &[
          `base`), in place of a reading in the newtype that a backend told apart by the operands' \
          types; read in a type (`in`), neither side is opened",
     ),
+    (
+        33,
+        "a list's uniqueness names the type its repeated elements are reported as in an issue's \
+         metadata (`element`), which the checker gives only where they have one, in place of none",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1523,6 +1528,45 @@ impl Projection {
     }
 }
 
+/// The type a value of an issue's metadata is written as, as a document names it: one of the ABI's
+/// `META_TYPES`, or `list<T>` of one. A name this side does not have is a document the two halves
+/// disagree about, and is refused as one when it is read, not when the library runs.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(try_from = "String")]
+pub struct MetaType(String);
+
+impl MetaType {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for MetaType {
+    type Error = String;
+
+    fn try_from(written: String) -> Result<Self, String> {
+        fn names(written: &str) -> bool {
+            match written
+                .strip_prefix("list<")
+                .and_then(|it| it.strip_suffix('>'))
+            {
+                Some(element) => names(element),
+                None => {
+                    written != "list"
+                        && souther_native_abi::META_TYPES
+                            .iter()
+                            .any(|(name, _)| *name == written)
+                }
+            }
+        }
+        if names(&written) {
+            Ok(MetaType(written))
+        } else {
+            Err(format!("no type of an issue's metadata is {written}"))
+        }
+    }
+}
+
 /// One standard constraint a part of a clause is exactly (`BoundaryConstraint`), grouped by the type
 /// of the field it is about. Which code, message key and metadata a failure of it is reported with
 /// are not here: they are Raoh's, and the runtime says them.
@@ -1563,8 +1607,10 @@ pub enum BoundaryConstraint {
     MaxSize { n: i64 },
     /// A `List` of exactly `n` elements.
     FixedSize { n: i64 },
-    /// A `List` no element of which appears twice.
-    Unique,
+    /// A `List` no element of which appears twice, the elements it finds repeated reported as
+    /// `element` says: one of the ABI's `META_TYPES`, or `list<T>` of one, which the checker gives
+    /// from the elements' message form, a newtype seen through.
+    Unique { element: MetaType },
     /// A `Map` of one entry or more.
     MapNonEmpty,
     /// A `Map` of at least `n` entries.
@@ -1643,7 +1689,7 @@ impl BoundaryConstraint {
             | BoundaryConstraint::MinSize { .. }
             | BoundaryConstraint::MaxSize { .. }
             | BoundaryConstraint::FixedSize { .. }
-            | BoundaryConstraint::Unique => ConstraintOf::List,
+            | BoundaryConstraint::Unique { .. } => ConstraintOf::List,
             BoundaryConstraint::MapNonEmpty
             | BoundaryConstraint::MapMinSize { .. }
             | BoundaryConstraint::MapMaxSize { .. } => ConstraintOf::Map,
@@ -3495,6 +3541,24 @@ mod tests {
                 pair[1],
                 pair[0]
             );
+        }
+    }
+
+    /// A uniqueness names the type its repeated elements are reported as, which is one the ABI
+    /// writes or a list of one; any other name is a document the two halves disagree about, and
+    /// is refused when it is read.
+    #[test]
+    fn a_uniqueness_names_a_type_the_metadata_writes() {
+        let read = |element: &str| {
+            serde_json::from_str::<BoundaryConstraint>(&format!(
+                r#"{{"is":"unique","element":"{element}"}}"#
+            ))
+        };
+        for element in ["int", "date", "list<decimal>", "list<list<instant>>"] {
+            assert!(read(element).is_ok(), "{element}");
+        }
+        for element in ["record", "none", "list", "list<record>", "Int"] {
+            assert!(read(element).is_err(), "{element}");
         }
     }
 }
