@@ -62,7 +62,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 	"unsafe"
 
@@ -388,46 +387,13 @@ func textMeta(name, text string) (any, error) {
 	case "decimal":
 		return raoh.ParseDecimal(text)
 	case "date":
-		read, err := time.Parse("2006-01-02", text)
-		if err != nil {
-			return nil, err
-		}
-		return NewDate(int32(read.Year()), uint8(read.Month()), uint8(read.Day()))
+		return dateOfText(text)
 	case "time":
 		return timeOfText(text)
 	case "datetime":
-		date, clock, found := strings.Cut(text, "T")
-		if !found {
-			return nil, fmt.Errorf("a date-time is a date, T and a time")
-		}
-		day, err := textMeta("date", date)
-		if err != nil {
-			return nil, err
-		}
-		of, err := timeOfText(clock)
-		if err != nil {
-			return nil, err
-		}
-		return NewDateTime(day.(Date), of), nil
+		return dateTimeOfText(text)
 	case "instant":
-		read, err := time.Parse(time.RFC3339Nano, text)
-		if err != nil {
-			return nil, err
-		}
-		return InstantOf(read)
+		return instantOfText(text)
 	}
 	return nil, errNoSuchMeta
-}
-
-// timeOfText is a Time of HH:mm or HH:mm:ss, as Time.String writes one.
-func timeOfText(text string) (Time, error) {
-	layout := "15:04:05"
-	if len(text) == len("15:04") {
-		layout = "15:04"
-	}
-	read, err := time.Parse(layout, text)
-	if err != nil {
-		return Time{}, err
-	}
-	return NewTime(uint8(read.Hour()), uint8(read.Minute()), uint8(read.Second()))
 }

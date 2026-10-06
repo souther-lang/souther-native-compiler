@@ -20,8 +20,11 @@ class AGoHostIsHandedEachValueOfAnIssueAsItsTypeTest {
 
     private static String host() {
         StringJoiner rows = new StringJoiner("\n");
+        StringJoiner rendered = new StringJoiner("\n");
         for (IssueMetaContract.Row row : IssueMetaContract.ROWS) {
             rows.add("\t\tfmt.Println(\"%s:\", said(meta.%sDecoder(r).Decode(json(`%s`))))"
+                    .formatted(row.label(), row.type(), row.document()));
+            rendered.add("\t\tfmt.Println(\"%s:\", render(meta.%sDecoder(r).Decode(json(`%s`))))"
                     .formatted(row.label(), row.type(), row.document()));
         }
         return """
@@ -107,6 +110,25 @@ class AGoHostIsHandedEachValueOfAnIssueAsItsTypeTest {
                 	return strings.Join(each, " ")
                 }
 
+                func render[T any](_ T, err error) string {
+                	if err == nil {
+                		return "ok"
+                	}
+                	issues, ok := errors.AsType[*raoh.Issues](err)
+                	if !ok {
+                		return "failed: " + err.Error()
+                	}
+                	var each []string
+                	for _, it := range issues.Render(raoh.English) {
+                		meta, err := encoding.Marshal(it.Meta)
+                		if err != nil {
+                			panic(err)
+                		}
+                		each = append(each, "["+it.Path+" "+it.Code+" "+string(meta)+"]")
+                	}
+                	return strings.Join(each, " ")
+                }
+
                 func main() {
                 	library, err := shop.Load(os.Args[1])
                 	if err != nil {
@@ -121,20 +143,22 @@ class AGoHostIsHandedEachValueOfAnIssueAsItsTypeTest {
                 			return v
                 		}
                 %s
+                		fmt.Println("--")
+                %s
                 		return nil
                 	})
                 	if err != nil {
                 		panic(err)
                 	}
                 }
-                """.formatted(rows);
+                """.formatted(rows, rendered);
     }
 
     @Test
     void eachValueIsTheTypeTheJvmHoldsItAs(@TempDir Path into) throws Exception {
         String said = GoHost.ran(into, IssueMetaContract.MODULE, "example.com/shop", host());
 
-        assertThat(said).isEqualTo(IssueMetaContract.expected());
+        assertThat(said).isEqualTo(IssueMetaContract.answered(IssueMetaContract.DecimalWritten.NUMBER));
         assertThat(IssueMetaContract.typesIn(said)).isEqualTo(IssueMetaContract.metaTypes());
     }
 }

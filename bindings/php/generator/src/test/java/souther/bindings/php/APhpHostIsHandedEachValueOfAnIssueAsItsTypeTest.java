@@ -30,9 +30,12 @@ class APhpHostIsHandedEachValueOfAnIssueAsItsTypeTest {
 
     private static String host() {
         StringJoiner rows = new StringJoiner("\n");
+        StringJoiner rendered = new StringJoiner("\n");
         for (IssueMetaContract.Row row : IssueMetaContract.ROWS) {
             String reader = row.type() + (IssueMetaContract.SUMS.contains(row.type()) ? "Codec" : "");
             rows.add("    $out[] = '%s: ' . said(from_json(\\Acme\\Shop\\Meta\\%s::decoder())->decode('%s'));"
+                    .formatted(row.label(), reader, row.document()));
+            rendered.add("    $out[] = '%s: ' . render(from_json(\\Acme\\Shop\\Meta\\%s::decoder())->decode('%s'));"
                     .formatted(row.label(), reader, row.document()));
         }
         return """
@@ -88,12 +91,28 @@ class APhpHostIsHandedEachValueOfAnIssueAsItsTypeTest {
                             $issues->toArray())));
                 }
 
+                function render(Result $result): string {
+                    return $result->fold(
+                        fn (mixed $value): string => 'ok',
+                        fn ($issues): string => implode(' ', array_map(
+                            function (array $it): string {
+                                $meta = $it['meta'];
+                                ksort($meta, SORT_STRING);
+                                return '[' . $it['path'] . ' ' . $it['code'] . ' '
+                                    . json_encode((object) $meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                                    . ']';
+                            },
+                            $issues->toJsonList())));
+                }
+
                 echo Binding::load($argv[3])->run(function (): string {
                     $out = [];
                 %s
+                    $out[] = '--';
+                %s
                     return implode("\\n", $out) . "\\n";
                 });
-                """.formatted(rows);
+                """.formatted(rows, rendered);
     }
 
     @Test
@@ -107,7 +126,7 @@ class APhpHostIsHandedEachValueOfAnIssueAsItsTypeTest {
                 RUNTIME.toAbsolutePath().toString(), binding.root().toString(),
                 library.library().toString()));
 
-        assertThat(said).isEqualTo(IssueMetaContract.expected());
+        assertThat(said).isEqualTo(IssueMetaContract.answered(IssueMetaContract.DecimalWritten.STRING));
         assertThat(IssueMetaContract.typesIn(said)).isEqualTo(IssueMetaContract.metaTypes());
     }
 }

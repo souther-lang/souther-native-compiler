@@ -24,8 +24,11 @@ class ARustHostIsHandedEachValueOfAnIssueAsItsTypeTest {
 
     private static String host() {
         StringJoiner rows = new StringJoiner("\n");
+        StringJoiner rendered = new StringJoiner("\n");
         for (IssueMetaContract.Row row : IssueMetaContract.ROWS) {
             rows.add("        println!(\"%s: {}\", said(Decoding::read(run, |decoding| from_str(&%s::decoder(decoding), %s))));"
+                    .formatted(row.label(), row.type(), rust(row.document())));
+            rendered.add("        println!(\"%s: {}\", render(Decoding::read(run, |decoding| from_str(&%s::decoder(decoding), %s))));"
                     .formatted(row.label(), row.type(), rust(row.document())));
         }
         return """
@@ -77,6 +80,37 @@ class ARustHostIsHandedEachValueOfAnIssueAsItsTypeTest {
                     }
                 }
 
+                fn render<T>(read: Result<Result<T, Issues>, shop_binding::Failure>) -> String {
+                    match read {
+                        Ok(Ok(_)) => "ok".to_owned(),
+                        Ok(Err(issues)) => issues
+                            .to_json()
+                            .as_array()
+                            .expect("issues are written as an array")
+                            .iter()
+                            .map(|it| {
+                                let Value::Object(meta) = &it["meta"] else {
+                                    panic!("an issue's metadata is written as an object");
+                                };
+                                let sorted: std::collections::BTreeMap<_, _> = meta.iter().collect();
+                                let entries = sorted
+                                    .iter()
+                                    .map(|(name, value)| format!("{}:{}", Value::String((*name).clone()), value))
+                                    .collect::<Vec<_>>()
+                                    .join(",");
+                                format!(
+                                    "[{} {} {{{}}}]",
+                                    it["path"].as_str().expect("a path is written as text"),
+                                    it["code"].as_str().expect("a code is written as text"),
+                                    entries
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        Err(failure) => format!("failed: {failure}"),
+                    }
+                }
+
                 fn main() {
                     let path = std::env::args().nth(1).expect("the library's path");
                     // SAFETY: the library the binding was generated from.
@@ -84,10 +118,12 @@ class ARustHostIsHandedEachValueOfAnIssueAsItsTypeTest {
                     library
                         .run(|run| {
                 %s
+                            println!("--");
+                %s
                         })
                         .unwrap();
                 }
-                """.formatted(rows);
+                """.formatted(rows, rendered);
     }
 
     /** A document as a Rust raw string. */
@@ -103,7 +139,7 @@ class ARustHostIsHandedEachValueOfAnIssueAsItsTypeTest {
         String said = RustHost.ran(into, binding, "shop-binding", host(),
                 List.of(library.library().toString()));
 
-        assertThat(said).isEqualTo(IssueMetaContract.expected());
+        assertThat(said).isEqualTo(IssueMetaContract.answered(IssueMetaContract.DecimalWritten.STRING));
         assertThat(IssueMetaContract.typesIn(said)).isEqualTo(IssueMetaContract.metaTypes());
     }
 }

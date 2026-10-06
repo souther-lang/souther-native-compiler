@@ -149,6 +149,8 @@ func DateOf[B any](r *Run[B], word unsafe.Pointer) Date
 
 func (d Date) Day() uint8
 
+func (d Date) MarshalJSON() ([]byte, error)
+
 func (d Date) Month() uint8
 
 func (d Date) String() string
@@ -165,6 +167,8 @@ func NewDateTime(date Date, time Time) DateTime
 
 func (d DateTime) Date() Date
 
+func (d DateTime) MarshalJSON() ([]byte, error)
+
 func (d DateTime) String() string
 
 func (d DateTime) Time() Time
@@ -180,6 +184,8 @@ type Instant struct {
 }
 
 func InstantOfWord[B any](r *Run[B], word unsafe.Pointer) Instant
+
+func (i Instant) MarshalJSON() ([]byte, error)
 
 func (i Instant) Nano() uint32
 
@@ -290,6 +296,8 @@ type Time struct {
 func TimeOf[B any](r *Run[B], word unsafe.Pointer) Time
 
 func (t Time) Hour() uint8
+
+func (t Time) MarshalJSON() ([]byte, error)
 
 func (t Time) Minute() uint8
 

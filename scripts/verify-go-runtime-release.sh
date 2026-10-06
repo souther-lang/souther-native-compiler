@@ -75,8 +75,8 @@ case "$said" in
 esac
 
 # What a host has: the module by its path and its version, and Raoh as the runtime requires it, from
-# nothing local.
-raoh="$(sed -nE 's#^require (github.com/raoh-project/raoh-go) (.+)$#\1 \2#p' "$directory/go.mod")"
+# nothing local. The version is asked of Go, which reads go.mod however it is laid out.
+raoh="$(cd "$directory" && go list -m -f '{{.Path}} {{.Version}}' github.com/raoh-project/raoh-go)"
 protocol="$(sed -nE 's#^const Protocol = ([0-9]+)$#\1#p' "$directory/protocol.go")"
 mkdir -p "$work/host"
 cat > "$work/host/go.mod" <<GOMOD

@@ -186,7 +186,9 @@ value a Go program has is always one, and a refusal from the library is reported
 `String` writes the text `java.time` writes for it, for a Go program to show; that text never
 crosses to the library. They are not `time.Time`, since none of them is what one is: a `Date` and
 a `Time` have no zone and no instant, and an `Instant` reaches a billion years either way.
-`InstantOf` and `Instant.Time` convert.
+`InstantOf` and `Instant.Time` convert. Each writes itself to JSON as the string of its text, as Raoh
+observes one, so an issue whose metadata holds one (an element `duplicates` lists) is written by
+raoh-go's `Issues.Render` as raoh-go writes its own.
 
 An optional is a `souther.Option`, at every depth, since a pointer cannot tell an optional of
 nothing from nothing. A tuple is a `souther.Tuple2` and its like up to eight members. A list, a set

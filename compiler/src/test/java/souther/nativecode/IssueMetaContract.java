@@ -49,7 +49,7 @@ public final class IssueMetaContract {
 
     public static final String MODULE = """
             module meta exposing ( Counted, Price, Charge, Capped, Named, Shade, Flags, Days, Hours, \
-            Stamps, Moments, Grid, Sku, Skus )
+            Stamps, Moments, Grid, Sku, Skus, Amounts )
 
             data Counted = Int
                 invariant value >= 3
@@ -91,6 +91,9 @@ public final class IssueMetaContract {
 
             data Skus = List<Sku>
                 invariant List.allDistinctBy(x -> x, value)
+
+            data Amounts = List<Decimal>
+                invariant List.allDistinctBy(x -> x, value)
             """;
 
     /** The types of {@link #MODULE} that are sums, which a binding may read through a codec of their own. */
@@ -109,7 +112,18 @@ public final class IssueMetaContract {
             new Row("datetime", "Stamps", "[\"2026-01-31T10:00\", \"2026-01-31T10:00\"]"),
             new Row("instant", "Moments", "[\"2026-01-31T10:00:00Z\", \"2026-01-31T10:00:00Z\"]"),
             new Row("list of list", "Grid", "[[1, 2], [1, 2]]"),
-            new Row("newtype", "Skus", "[\"a\", \"b\", \"a\"]"));
+            new Row("newtype", "Skus", "[\"a\", \"b\", \"a\"]"),
+            // The ends of what each type holds, which a parser of the usual text of a date does
+            // not reach: years past 9999 and below nought, and an instant a billion years either way.
+            new Row("date at the ends", "Days",
+                    "[\"+999999999-12-31\", \"-999999999-01-01\", \"+999999999-12-31\", \"-999999999-01-01\"]"),
+            new Row("date past 9999 and before nought", "Days",
+                    "[\"+10000-01-01\", \"-0001-12-31\", \"+10000-01-01\", \"-0001-12-31\"]"),
+            new Row("datetime past 9999", "Stamps", "[\"+10000-01-01T00:00\", \"+10000-01-01T00:00\"]"),
+            new Row("instant at the ends", "Moments",
+                    "[\"+1000000000-12-31T23:59:59.999999999Z\", \"-1000000000-01-01T00:00:00Z\", "
+                            + "\"+1000000000-12-31T23:59:59.999999999Z\", \"-1000000000-01-01T00:00:00Z\"]"),
+            new Row("decimal with an exponent", "Amounts", "[1E+3, 1.50, 1E+3, 1.50]"));
 
     /** A fraction read as the decimal it was written as, which a boundary reads a Decimal from. */
     private static final JsonMapper JSON = JsonMapper.builder()
@@ -129,25 +143,28 @@ public final class IssueMetaContract {
         return lines.toString();
     }
 
-    private static String read(ClassLoader jvm, Row row) {
+    private static Result<?> decoded(ClassLoader jvm, Row row) {
         try {
             @SuppressWarnings("unchecked")
             Decoder<JsonNode, ?> decoder = (Decoder<JsonNode, ?>) jvm.loadClass("meta." + row.type())
                     .getMethod("jsonDecoder").invoke(null);
-            Result<?> result = decoder.decode(JSON.readTree(row.document()), net.unit8.raoh.Path.ROOT);
-            if (!(result instanceof Err<?> refused)) {
-                return "ok";
-            }
-            StringJoiner issues = new StringJoiner(" ");
-            for (Issue issue : refused.issues().asList()) {
-                String key = issue.messageKey().equals(issue.code()) ? "" : " key=" + issue.messageKey();
-                issues.add("[" + issue.path().toJsonPointer() + " " + issue.code() + key + " "
-                        + entries(issue.meta()) + "]");
-            }
-            return issues.toString();
+            return decoder.decode(JSON.readTree(row.document()), net.unit8.raoh.Path.ROOT);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    private static String read(ClassLoader jvm, Row row) {
+        if (!(decoded(jvm, row) instanceof Err<?> refused)) {
+            return "ok";
+        }
+        StringJoiner issues = new StringJoiner(" ");
+        for (Issue issue : refused.issues().asList()) {
+            String key = issue.messageKey().equals(issue.code()) ? "" : " key=" + issue.messageKey();
+            issues.add("[" + issue.path().toJsonPointer() + " " + issue.code() + key + " "
+                    + entries(issue.meta()) + "]");
+        }
+        return issues.toString();
     }
 
     private static String entries(Map<String, Object> meta) {
@@ -188,6 +205,81 @@ public final class IssueMetaContract {
         };
     }
 
+    /** How a host's Raoh writes a decimal of an issue's metadata into JSON, which is its own to say. */
+    public enum DecimalWritten {
+        /** As the JSON number of its text, as raoh-go and raoh-java write one. */
+        NUMBER,
+        /** As the JSON string of its text, as raoh-rust and raoh-php write one. */
+        STRING
+    }
+
+    /**
+     * What the JVM's decoder answers for each of {@link #ROWS} as a host's Raoh writes the issues to
+     * JSON: each issue {@code [path code {meta}]}, the metadata with its entries by name, a date,
+     * a time, a date-time and an instant as the JSON string of its text, as Raoh observes one, and a
+     * decimal as {@code decimals} says the host's Raoh writes one. A host's value made of a type the
+     * library writes is held to that, so one its Raoh writes otherwise than its own is found.
+     */
+    public static String observed(DecimalWritten decimals) {
+        ClassLoader jvm = new MemoryClassLoader(Compiler.compile(MODULE),
+                IssueMetaContract.class.getClassLoader());
+        StringBuilder lines = new StringBuilder();
+        for (Row row : ROWS) {
+            Result<?> result = decoded(jvm, row);
+            StringJoiner issues = new StringJoiner(" ");
+            if (result instanceof Err<?> refused) {
+                for (Issue issue : refused.issues().asList()) {
+                    StringJoiner entries = new StringJoiner(",", "{", "}");
+                    new TreeMap<>(issue.meta()).forEach((name, value) ->
+                            entries.add(JSON.writeValueAsString(name) + ":" + json(value, decimals)));
+                    issues.add("[" + issue.path().toJsonPointer() + " " + issue.code() + " " + entries + "]");
+                }
+            } else {
+                issues.add("ok");
+            }
+            lines.append(row.label()).append(": ").append(issues).append('\n');
+        }
+        return lines.toString();
+    }
+
+    private static String json(Object said, DecimalWritten decimals) {
+        return switch (said) {
+            case Integer number -> number.toString();
+            case Long number -> number.toString();
+            case BigInteger number -> number.toString();
+            case BigDecimal number -> decimals == DecimalWritten.NUMBER ? number.toString()
+                    : JSON.writeValueAsString(number.toString());
+            case String text -> JSON.writeValueAsString(text);
+            case Boolean truth -> truth.toString();
+            case java.time.LocalDate date -> JSON.writeValueAsString(date.toString());
+            case java.time.LocalTime time -> JSON.writeValueAsString(time.toString());
+            case java.time.LocalDateTime dateTime -> JSON.writeValueAsString(dateTime.toString());
+            case java.time.Instant instant -> JSON.writeValueAsString(instant.toString());
+            case List<?> list -> {
+                StringJoiner items = new StringJoiner(",", "[", "]");
+                list.forEach(item -> items.add(json(item, decimals)));
+                yield items.toString();
+            }
+            case Record value when value.getClass().getRecordComponents().length == 1 -> {
+                try {
+                    yield json(value.getClass().getRecordComponents()[0].getAccessor().invoke(value), decimals);
+                } catch (ReflectiveOperationException e) {
+                    throw new IllegalStateException(e);
+                }
+            }
+            default -> throw new IllegalArgumentException(
+                    "metadata this contract has no JSON for: " + said.getClass());
+        };
+    }
+
+    /**
+     * What a host's test prints: {@link #expected} as the host reads each value off its Raoh, a line
+     * of {@code --}, and {@link #observed} as its Raoh writes the issues to JSON.
+     */
+    public static String answered(DecimalWritten decimals) {
+        return expected() + "--\n" + observed(decimals);
+    }
+
     /** The types of metadata the library writes, as the record of this generation says them. */
     public static Set<String> metaTypes() throws IOException {
         Set<String> types = new TreeSet<>();
@@ -200,10 +292,11 @@ public final class IssueMetaContract {
         return types;
     }
 
-    /** The types a written answer holds values of: each line's answer, after its label. */
+    /** The types a written answer holds values of: each line's answer, after its label, up to the
+     *  line of {@code --} after which the JSON a host's Raoh writes follows. */
     public static Set<String> typesIn(String written) {
         Set<String> types = new TreeSet<>();
-        for (String line : written.split("\n")) {
+        for (String line : written.split("\n--\n")[0].split("\n")) {
             String answer = line.substring(line.indexOf(": ") + 2);
             Matcher type = TYPE.matcher(answer.replaceAll("\"(?:[^\"\\\\]|\\\\.)*\"", "\"\""));
             while (type.find()) {

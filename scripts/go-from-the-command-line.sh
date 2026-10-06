@@ -41,7 +41,8 @@ LINES
     --go "$app/go" --package example.com/shop "$app/model"
 
 runtime="github.com/souther-lang/souther-native-compiler/bindings/go/runtime"
-raoh="$(sed -nE 's#^require (github.com/raoh-project/raoh-go) (.+)$#\1 \2#p' bindings/go/runtime/go.mod)"
+# Raoh as the runtime requires it, asked of Go, which reads go.mod however it is laid out.
+raoh="$(cd bindings/go/runtime && go list -m -f '{{.Path}} {{.Version}}' github.com/raoh-project/raoh-go)"
 # The version the binding requires of the runtime, which a build from a clone leaves for a replace.
 required="$(sed -nE "s#^[[:space:]]*$runtime (v[^[:space:]]+)\$#\1#p" "$app/go/go.mod")"
 
