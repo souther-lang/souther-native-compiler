@@ -816,17 +816,21 @@ public final class RustBindings {
         String function = symbol(construct.function());
         StringBuilder body = new StringBuilder("        let library = run.library();\n");
         List<String> handed = given(body, "        ", names, takes);
-        body.append("        let mut made: rt::Word = std::ptr::null();\n");
-        handed.add("&mut made");
-        body.append("        let called = run.call(|| unsafe { (library.symbols.").append(function)
-                .append(")(").append(String.join(", ", handed)).append(") });\n");
-        body.append("        // SAFETY: the library answered the value in this run.\n");
-        body.append("        crate::Construction::of(called, || unsafe { Self::__held(library,"
-                + " made) })\n");
+        body.append("        let mut reading: rt::Word = std::ptr::null();\n");
+        handed.add("&mut reading");
+        body.append("        run.call(|| unsafe { (library.symbols.").append(function)
+                .append(")(").append(String.join(", ", handed)).append(") })?;\n");
+        body.append("        // SAFETY: the library answered the reading, and the value it built, in"
+                + " this run.\n");
+        body.append("        Ok(crate::Construction::of(unsafe {\n");
+        body.append("            library.words.reading(reading, |value| {\n");
+        body.append("                Self::__held(library, value.as_ptr().cast_const())\n");
+        body.append("            })\n");
+        body.append("        }))\n");
         at.items.append("""
 
-                    /// A value of `%s`, or an `invariant_violation` where what is handed over does
-                    /// not hold what the type states.
+                    /// A value of `%s`, or the issue where what is handed over does not hold what
+                    /// the type states: the one [`Self::decode`] answers for the same value.
                     ///
                     /// # Errors
                     ///

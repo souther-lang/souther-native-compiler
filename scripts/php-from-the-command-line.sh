@@ -41,7 +41,7 @@ EOF
 # The binding's namespace is mapped by the application, as it would map its own classes. raoh-php is
 # the version the runtime's composer.lock fixes, so this run installs what every other run does and
 # not whichever release is newest today. A branch the lock holds is held to the commit it fixed.
-raoh="$(php -r 'foreach (json_decode(file_get_contents($argv[1]), true)["packages"] as $p) {
+raoh="$(php -d display_errors=stderr -r 'foreach (json_decode(file_get_contents($argv[1]), true)["packages"] as $p) {
     if ($p["name"] === "raoh/raoh") {
         echo str_starts_with($p["version"], "dev-")
             ? $p["version"] . "#" . $p["source"]["reference"] : $p["version"]; } }' \

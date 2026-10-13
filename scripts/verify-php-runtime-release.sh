@@ -94,7 +94,7 @@ cat > "$work/host/composer.json" <<JSON
 }
 JSON
 (cd "$work/host" && COMPOSER_HOME="$work/composer" composer install --quiet --no-interaction)
-said="$(cd "$work/host" && php -r 'require "vendor/autoload.php"; echo \Souther\Runtime\Binding::PROTOCOL;')"
+said="$(cd "$work/host" && php -d display_errors=stderr -r 'require "vendor/autoload.php"; echo \Souther\Runtime\Binding::PROTOCOL;')"
 [ "$said" = "$protocol" ] || fail "the host printed '$said', not the protocol '$protocol' of the runtime it required"
 echo "a host that requires souther-lang/php-runtime $version from the mirror loads it"
 

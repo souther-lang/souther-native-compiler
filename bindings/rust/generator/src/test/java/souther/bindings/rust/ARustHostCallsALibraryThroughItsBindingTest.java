@@ -154,7 +154,7 @@ class ARustHostCallsALibraryThroughItsBindingTest {
             line: 3 x 2, Some("gift")
             plain: None
             none: invariant_violation
-            negative: invariant_violation
+            negative: out_of_range
             settle 0: owed 6 overdue true, owing 6
             settle 2: owed 4 overdue false, owing 4
             settle 6: paid 6, owing 0

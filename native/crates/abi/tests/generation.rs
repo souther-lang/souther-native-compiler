@@ -8,7 +8,8 @@
 //! through room).
 //!
 //! So each generation has a record of its contract in `generations/<n>.txt`, one line for each
-//! function either side calls, each case a host reads and each number the two sides share. An object
+//! function either side calls, each kind of function generated for a host, each case a host reads
+//! and each number the two sides share. An object
 //! or a host can be built on any day of a generation's life, against anything the generation offered
 //! that day, so the record is a ledger of everything the generation has ever offered, and only grows.
 //! A line gone or changed is a contract that moved and needs the next generation, which records the
@@ -74,6 +75,12 @@ fn surface() -> BTreeSet<String> {
     }
     for function in HOST_RUNTIME {
         lines.insert(format!("host {function:?}"));
+    }
+    for entry in HOST_ENTRIES {
+        lines.insert(format!(
+            "entry {} {:?} -> {:?}",
+            entry.spelt, entry.takes, entry.answers
+        ));
     }
     for case in HOST_CASES {
         lines.insert(format!("case {case:?}"));

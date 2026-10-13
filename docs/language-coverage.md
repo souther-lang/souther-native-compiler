@@ -195,16 +195,16 @@ described in [host-abi.md](host-abi.md).
 
 The constructor is one reading of a function under it that decides the construction and answers
 which clause did not hold, as its place among the type's, beside the status. The constructor turns
-that place into `InvariantNotHeld`, a reader into an issue at the value's path, and an attempted
-construction into the arm naming the clause: `guard PendingItem { ... } as pending else |
-withinCapacity -> CartFull` builds the value and goes on where every clause holds, and answers
-`CartFull` where `withinCapacity` does not. `else e` on its own answers every clause; beside arms
-naming clauses, `| _ ->` answers the clauses that have no name and no other, as the checker holds
-it. A clause that itself ends without a value still ends the run. The deciding function is the
-declaring build's too, reached from another build under `souther<n>.<module>$checked$<Name>`, so an
-attempt of a type another build declares runs that build's clauses and takes its arm here. What
-crosses to the attempting build is what each clause is answered under, in the order the clauses
-run, and nothing of what they say.
+that place into `InvariantNotHeld`, a reader and a host's construction into an issue at the value's
+path, and an attempted construction into the arm naming the clause:
+`guard PendingItem { ... } as pending else | withinCapacity -> CartFull` builds the value and goes
+on where every clause holds, and answers `CartFull` where `withinCapacity` does not. `else e` on its
+own answers every clause; beside arms naming clauses, `| _ ->` answers the clauses that have no name
+and no other, as the checker holds it. A clause that itself ends without a value still ends the run.
+The deciding function is the declaring build's too, reached from another build under
+`souther<n>.<module>$checked$<Name>`, so an attempt of a type another build declares runs that
+build's clauses and takes its arm here. What crosses to the attempting build is what each clause is
+answered under, in the order the clauses run, and nothing of what they say.
 
 A clause of a type the module keeps and nothing here builds or reads, or one whose fields have no
 representation here, is read, and refused if the two halves disagree about it, and is not run: no
@@ -266,9 +266,15 @@ holds the address of and never reads behind. What a member hashes to and what it
 handed to the runtime by the site that asks, for the type it asks at, so a set of a sum's case read
 as a set of the sum is asked of under the sum. Two sets are equal where their members are, whatever
 order each keeps them in, which is no order the language says anything of. At a boundary a set is
-an array of its members and a map an object, each written in ascending order of what it holds, as
-the language fixes (spec §collections); a map's key is read as the key's own type, and two keys
-that are one once read are refused at the second as `duplicate_key`.
+an array of its members, written in ascending order of what each is written as, as the language
+fixes (spec §collections), and a map an object, written here with its keys ascending, though the
+language makes an object's member order no part of what it says (spec §an-object-is-a-mapping); a
+map's key is read as the key's own type, and two keys
+that are one once read are refused at the second as `duplicate_key`. To a host a set crosses as the
+list of its members and a map as the list of its entries, each a pair of the key and the value
+([`native/crates/compiler/src/host_form.rs`](../native/crates/compiler/src/host_form.rs)), in the
+order the trie holds them, which the language says nothing of (spec §stdlib-set): only the external
+form is ordered.
 
 ## Where a value lives
 

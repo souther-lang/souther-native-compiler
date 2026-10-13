@@ -65,8 +65,8 @@ guard PendingItem { cart = c, item = CartItem { productId = productId, quantity 
     else | withinCapacity -> CartFull
 ```
 
-The binding's `NewPendingItem` refuses the value with an `invariant_violation` issue, its
-`DecodePendingItem` reports the same at the value's path, and the behavior answers `CartFull`. None
+The binding's `NewPendingItem` refuses the value with an `invariant_violation` issue naming the
+clause, `withinCapacity`, its `DecodePendingItem` reports the same at the value's path, and the behavior answers `CartFull`. None
 of that is written in Go. `saveItem` is handed a `PendingItem`, and a `PendingItem` exists only
 where the capacity holds, so the SQL that saves it checks nothing again.
 

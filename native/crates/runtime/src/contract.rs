@@ -428,6 +428,10 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_decode_host_begin as unsafe extern "C" fn(*const u8, Count) -> D),
         ),
         (
+            "souther_construct_begin",
+            shape_of(souther_construct_begin as extern "C" fn() -> D),
+        ),
+        (
             "souther_decode_root",
             shape_of(souther_decode_root as unsafe extern "C" fn(C) -> *const Node),
         ),

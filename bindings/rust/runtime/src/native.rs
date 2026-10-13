@@ -13,7 +13,7 @@ use std::sync::{Mutex, PoisonError};
 /// The ABI generation this crate calls a library as, which [`NativeLibrary::load`] asks a library
 /// for before anything else and refuses any other of. The rooms `bound.rs` lays out are this
 /// generation's.
-pub const ABI_GENERATION: u32 = 11;
+pub const ABI_GENERATION: u32 = 12;
 
 /// The one function every generation has and none changes, asked before any other.
 const GENERATION_QUERY: &str = "souther_abi_generation";
@@ -723,8 +723,9 @@ impl<T> Reading<T> {
     }
 }
 
-/// What constructing a value came to: the value, or an `invariant_violation` where what was handed
-/// over does not hold what the type states.
+/// What constructing a value came to: the value, or the issue where what was handed over does not
+/// hold what the type states, the one the type's decoder answers for the same value: the
+/// constraint the clause is, or the type and the clause.
 #[derive(Debug)]
 pub enum Construction<T> {
     Value(T),
@@ -732,19 +733,22 @@ pub enum Construction<T> {
 }
 
 impl<T> Construction<T> {
-    /// What a constructor's call came to: `made` where it answered, rejected where the library
-    /// says the invariant was not held, and the failure otherwise.
+    /// What the reading a constructor answered came to: the value, or the issue of the one clause
+    /// that did not hold, which stops a construction where it stands.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// The call's failure, where it is not that the invariant was not held.
-    pub fn of(called: Result<(), Failure>, made: impl FnOnce() -> T) -> Result<Self, Failure> {
-        match called {
-            Ok(()) => Ok(Construction::Value(made())),
-            Err(Failure::Abort(abort)) if abort.name() == Some("INVARIANT_NOT_HELD") => Ok(
-                Construction::Rejected(raoh::Issue::new("invariant_violation")),
-            ),
-            Err(failure) => Err(failure),
+    /// Where the reading holds other than one issue, which no construction answers.
+    pub fn of(reading: Reading<T>) -> Self {
+        match reading {
+            Reading::Value(value) => Construction::Value(value),
+            Reading::Issues(issues) => {
+                let mut issues = issues.into_iter();
+                let (Some(issue), None) = (issues.next(), issues.next()) else {
+                    panic!("a construction is refused by the one clause that did not hold")
+                };
+                Construction::Rejected(issue)
+            }
         }
     }
 

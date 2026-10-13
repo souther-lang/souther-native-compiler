@@ -171,7 +171,7 @@ public final class Main {
     /** A command line that is not a command, and why. */
     static final class NotACommand extends Exception {
         NotACommand(String why) {
-            super(why);
+            super(java.util.Objects.requireNonNull(why, "a command refused says why"));
         }
     }
 
@@ -200,9 +200,7 @@ public final class Main {
         try {
             command = read(args);
         } catch (NotACommand e) {
-            if (e.getMessage() != null) {
-                problems.println(e.getMessage());
-            }
+            problems.println(e.getMessage());
             problems.print(USAGE);
             return WRONG_COMMAND;
         }
@@ -496,7 +494,7 @@ public final class Main {
             return new Command(new Output.Fetch(), List.of(), List.of(), false);
         }
         if (sources.isEmpty()) {
-            throw new NotACommand(null);
+            throw new NotACommand("name the sources to compile");
         }
         if (object != null && library != null) {
             throw new NotACommand("-o and --library are two commands; name one");
@@ -519,7 +517,7 @@ public final class Main {
                 }
             }
             if (object == null) {
-                throw new NotACommand(null);
+                throw new NotACommand("-o <object> or --library <dir> says what to write; name one");
             }
             return new Command(new Output.ObjectFile(object), List.copyOf(sources),
                     List.copyOf(classPath), offline);

@@ -148,17 +148,19 @@ own tag type, so a run of another generated binding is another type and does not
 
 ## How the model's types are held
 
-A product, a newtype and a unit are each a struct holding the value and the run it was made in,
-with a method for each field. `New<Type>` answers the value, or an `invariant_violation` Raoh issue
-as an error where what is handed over does not hold what the type states. `Decode<Type>` answers
-the value read out of its external form, or Raoh's issues (`*raoh.Issues`), or `invalid_format`
-where the text is not JSON. `Encode` answers the value's external form. `<Type>Decoder(r)` is
-`Decode<Type>` as a raoh-go decoder of what a host decoded, reading in `r`, which a host composes
-with its own decoders the way a JVM host composes a type's `decoder()`: the value it is handed is
-written back as the JSON it is, in the order of an object's members, and what the library finds
-wrong is an issue at the path it is reached at. A member that is not there is raoh's to report, as
-for any field. A decoder holds `r`, so it is made for one decode inside the run and not kept past
-it.
+A product, a newtype and a unit are each a struct holding the value and the run it was made in, with
+a method for each field. `New<Type>` answers the value, or the Raoh issue as an error
+(`*raoh.Issues`) where what is handed over does not hold what the type states: the one
+`Decode<Type>` answers for the same value, `invalid_format` with its `pattern` for a clause that is
+a pattern and `invariant_violation` naming the `module`, the `type` and the `clause` for one no
+constraint states. `Decode<Type>` answers the value read out of its external form, or Raoh's issues
+(`*raoh.Issues`), or `invalid_format` where the text is not JSON. `Encode` answers the value's
+external form. `<Type>Decoder(r)` is `Decode<Type>` as a raoh-go decoder of what a host decoded,
+reading in `r`, which a host composes with its own decoders the way a JVM host composes a type's
+`decoder()`: the value it is handed is written back as the JSON it is, in the order of an object's
+members, and what the library finds wrong is an issue at the path it is reached at. A member that is
+not there is raoh's to report, as for any field. A decoder holds `r`, so it is made for one decode
+inside the run and not kept past it.
 
 A sum has `Case`, answering the value as the type of its case (`Owed`), which is marked as one of
 the sum's cases; a case the model keeps is `<Sum>Kept`, and there is a `<Sum>From<Type>` for each
@@ -191,9 +193,14 @@ observes one, so an issue whose metadata holds one (an element `duplicates` list
 raoh-go's `Issues.Render` as raoh-go writes its own.
 
 An optional is a `souther.Option`, at every depth, since a pointer cannot tell an optional of
-nothing from nothing. A tuple is a `souther.Tuple2` and its like up to eight members. A list, a set
-and a map are slices, a map's entries being tuples in the order the library has them, which the
-language says nothing of.
+nothing from nothing. A tuple is a `souther.Tuple2` and its like up to eight members. A list is a
+slice. A set is the slice of its members and a map the slice of its entries, each a `souther.Tuple2`
+of the key and the value, not a Go map: a `Map<String, Int>` is a `[]souther.Tuple2[string, int64]`.
+The library makes a set of what it is handed, two members that are one being one, and a map of the
+entries, the later of two under one key winning. What it hands back is in the order it holds them,
+which the language says nothing of; written in the external form (`Encode`), a set's members and a
+map's keys are in ascending order, as [the coverage document](../../../docs/language-coverage.md)
+says.
 
 A union no declaration names is an interface named after its members in the manifest's order
 (`FreeOrInt`), handed over as one of them and handed back where the library says which case it is.
@@ -262,7 +269,7 @@ not an edit of one.
 That is separate from the library's ABI generation. This module calls a library of one generation
 (`souther.ABIGeneration`) and asks each library for its generation before anything else, as above.
 A function generated for a behavior or a type also carries the generation in its name
-(`souther11_m_shop_b_quote`), so a binding generated against another generation finds none of its
+(`souther12_m_shop_b_quote`), so a binding generated against another generation finds none of its
 functions.
 
 ## Platforms and versions

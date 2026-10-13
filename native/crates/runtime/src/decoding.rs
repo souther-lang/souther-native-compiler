@@ -325,6 +325,22 @@ pub unsafe extern "C" fn souther_decode_host_begin(
     unsafe { begun(bytes, length, Form::HostValue) }
 }
 
+/// Begins a reading of no document, for a host's construction of a value: nothing is read, and
+/// what a clause that did not hold says is recorded at the value's own place, as a reader of the
+/// type records it (`souther_native_abi::CONSTRUCT_BEGIN`).
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_construct_begin() -> *mut Decoding {
+    held(Decoding {
+        document: ptr::null_mut(),
+        malformed_at: -1,
+        first: ptr::null_mut(),
+        last: ptr::null_mut(),
+        count: 0,
+        issues: ptr::null(),
+        value: ptr::null(),
+    })
+}
+
 /// # Safety
 /// As [`souther_decode_begin`].
 unsafe fn begun(bytes: *const u8, length: Count, form: Form) -> *mut Decoding {

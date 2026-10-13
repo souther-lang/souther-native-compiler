@@ -30,7 +30,8 @@ use cranelift::object::ObjectModule;
 use object::{Object, ObjectSection};
 use souther_native_abi::{
     ABI_GENERATION, ANSWERED, DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, HOST_CASES,
-    HOST_RUNTIME, HOST_STATUSES, HostLeaf, HostParameter, HostShape, HostWord, Representation,
+    HOST_RUNTIME, HOST_STATUSES, HostEntry, HostLeaf, HostParameter, HostShape, HostWord,
+    Representation,
 };
 use std::collections::BTreeMap;
 use target_lexicon::BinaryFormat;
@@ -45,6 +46,21 @@ pub(crate) struct HostFunction {
 }
 
 impl HostFunction {
+    /// A function of the kind `entry` is, under `symbol`: over what crosses as `over` and answering
+    /// what crosses as `answered`, where the kind is over or answers anything.
+    pub(crate) fn of(
+        entry: &HostEntry,
+        symbol: String,
+        over: &[HostShape],
+        answered: Option<&HostShape>,
+    ) -> Self {
+        HostFunction {
+            symbol,
+            takes: entry.takes(over, answered),
+            answers: entry.answers,
+        }
+    }
+
     /// The signature the function is emitted under, read off what a host is told it takes and
     /// answers, so the two cannot differ.
     pub(crate) fn signature(&self, call_conv: CallConv) -> ir::Signature {
