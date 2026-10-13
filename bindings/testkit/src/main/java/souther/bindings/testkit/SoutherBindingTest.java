@@ -7,12 +7,14 @@ import souther.compiler.program.CheckedProgram;
 import souther.nativecode.ManifestReader;
 import souther.nativecode.NativeCompiler;
 import souther.nativecode.NotLowered;
+import souther.nativecode.Refusal;
 
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
 
 /**
  * Souther sources built into a library, for a test of a binding generator: the input the command
@@ -87,8 +89,12 @@ public final class SoutherBindingTest {
         try {
             checked = CheckedProgram.of(sources);
         } catch (CompileException e) {
-            throw new IllegalArgumentException("the sources are not a program the language takes: "
-                    + e.getMessage(), e);
+            // A source handed over here has no file name, so it is named by its position among
+            // the sources, which is how the test that wrote it can find it.
+            List<String> names = IntStream.rangeClosed(1, sources.size())
+                    .mapToObj(at -> "source " + at).toList();
+            throw new IllegalArgumentException("the sources are not a program the language takes:\n"
+                    + String.join("\n", Refusal.lines(e, names, sources)), e);
         }
         synchronized (CHECKED) {
             CHECKED.put(sources, checked);

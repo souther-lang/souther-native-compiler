@@ -6,6 +6,7 @@ import souther.bindings.Declarations;
 import souther.bindings.Manifest;
 import souther.bindings.NotBindable;
 import souther.compiler.diag.CompileException;
+import souther.compiler.diag.SourceNames;
 import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
 
@@ -208,8 +209,8 @@ public final class Main {
             return WRONG_COMMAND;
         }
 
+        List<String> read = new ArrayList<>(files.size());
         try {
-            List<String> read = new ArrayList<>(files.size());
             for (Path file : files) {
                 read.add(Files.readString(file, StandardCharsets.UTF_8));
             }
@@ -235,7 +236,8 @@ public final class Main {
             problems.println(e.getMessage());
             return REFUSED;
         } catch (CompileException e) {
-            problems.println(e.getMessage());
+            List<String> names = SourceNames.of(files.stream().map(Path::toString).toList());
+            Refusal.lines(e, names, read).forEach(problems::println);
             return REFUSED;
         } catch (NotLowered e) {
             // What this backend has not got round to, which is a different thing from a program
