@@ -70,9 +70,11 @@ public final class Main {
                 + "           [--binding <generator> <dir> [--binding-option <key>=<value>]...]...\n"
                 + "           <source>...\n"
                 + "       souther compile --target native --fetch\n"
+                + "       souther compile --target native --help\n"
                 + "\n"
                 + "  --offline           fetch nothing: use only the driver and the generators already kept\n"
                 + "  --fetch             fetch the driver and every generator this does not have, and end\n"
+                + "  --help, -h          write this, and end\n"
                 + "  -cp <path>          the class path of other builds the program imports, as the souther\n"
                 + "                      command takes it (also --class-path)\n"
                 + "  -o <object>         where to write the object file\n"
@@ -90,17 +92,28 @@ public final class Main {
     /** What a command asks to be written, each of which is a whole command. */
     sealed interface Output {
 
+        /** What is built from the sources: the only outputs that read them, or a driver. */
+        sealed interface Build extends Output {
+        }
+
         /** One object file. */
-        record ObjectFile(Path into) implements Output {
+        record ObjectFile(Path into) implements Build {
         }
 
         /** What this needs and does not have, fetched: a command of its own, and writes no build. */
         record Fetch() implements Output {
         }
 
+        /**
+         * The usage, asked for with {@code --help} or {@code -h}: written and nothing else, since a
+         * command line that asks how it is written is one that did what it asked.
+         */
+        record Usage() implements Output {
+        }
+
         /** A library, reaching {@code alongside}, and each binding of it asked for. */
         record Library(Path into, List<Path> alongside, List<HostBinding> bindings)
-                implements Output {
+                implements Build {
 
             public Library {
                 alongside = List.copyOf(alongside);
@@ -170,17 +183,19 @@ public final class Main {
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems) {
-        Fetching fetching;
-        try {
-            fetching = Fetching.standard();
-        } catch (NotFetched e) {
-            problems.println(e.getMessage());
-            return WRONG_COMMAND;
-        }
-        return run(args, out, problems, fetching);
+        return run(args, out, problems, Fetching::standard);
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems, Fetching allowed) {
+        return run(args, out, problems, () -> allowed);
+    }
+
+    /** Where what a command may fetch is read from, asked only once there is a command to run. */
+    private interface Allowed {
+        Fetching fetching() throws NotFetched;
+    }
+
+    private static int run(String[] args, PrintStream out, PrintStream problems, Allowed allowed) {
         Command command;
         try {
             command = read(args);
@@ -191,11 +206,33 @@ public final class Main {
             problems.print(USAGE);
             return WRONG_COMMAND;
         }
-        Fetching fetching = allowed.withOffline(command.offline()).saying(problems);
-        if (command.output() instanceof Output.Fetch) {
-            return fetched(out, problems, fetching);
+        try {
+            return switch (command.output()) {
+                // Before anything is read of where this fetches from: how the command is written is
+                // the same whatever is installed beside it.
+                case Output.Usage usage -> {
+                    out.print(USAGE);
+                    yield WROTE_IT;
+                }
+                case Output.Fetch fetch -> fetched(out, problems,
+                        fetching(allowed, command, problems));
+                case Output.Build build -> built(command, build,
+                        fetching(allowed, command, problems), out, problems);
+            };
+        } catch (NotFetched e) {
+            problems.println(e.getMessage());
+            return WRONG_COMMAND;
         }
+    }
 
+    private static Fetching fetching(Allowed allowed, Command command, PrintStream problems)
+            throws NotFetched {
+        return allowed.fetching().withOffline(command.offline()).saying(problems);
+    }
+
+    /** What {@code build} asks for, built from the sources the command named. */
+    private static int built(Command command, Output.Build build, Fetching fetching,
+                             PrintStream out, PrintStream problems) {
         CompilationSources read;
         try {
             read = readSources(command.sources());
@@ -209,8 +246,7 @@ public final class Main {
         }
 
         try {
-            switch (command.output()) {
-                case Output.Fetch fetch -> throw new IllegalStateException("handled above");
+            switch (build) {
                 case Output.ObjectFile object -> {
                     byte[] written;
                     try (Holding held = new Holding()) {
@@ -386,6 +422,9 @@ public final class Main {
             switch (held) {
                 case "--offline" -> offline = true;
                 case "--fetch" -> fetch = true;
+                case "--help", "-h" -> {
+                    return new Command(new Output.Usage(), List.of(), List.of(), false);
+                }
                 case "-o" -> object = once(held, object, Path.of(valueOf(args, ++at, held)));
                 case "--library" -> library = once(held, library, Path.of(valueOf(args, ++at, held)));
                 case "-cp", "--class-path" -> {

@@ -59,6 +59,7 @@ it, which the CLI needs anyway.
         [--with <object>]... [--php <dir> --namespace <ns>] [--rust <dir> --crate <name>]
         [--go <dir> --package <import path>] <source>...
     souther compile --target native --fetch
+    souther compile --target native --help
 
 The backend is the jar `souther-native-compiler-<version>-backend.jar`, released on Maven Central
 beside the compiler at this repository's own version. Its descriptor,
@@ -68,7 +69,9 @@ released again for each Souther. A package manager installs it where its `southe
 it goes into `$SOUTHER_HOME/backends`, which the CLI searches first. Jars built against different
 Souther versions can sit there side by side, and the CLI chooses the one built against itself.
 
-A source is a `.sou` file or a directory holding some. `-o` writes one object file. `--library`
+A source is a `.sou` file or a directory holding some. A lone file may leave out its `module`
+header and is then named after its file, as `souther compile` names it, and a link found under a
+directory is refused rather than followed. `--help` writes the usage and ends with 0. `-o` writes one object file. `--library`
 writes what a host is handed into its directory ([docs/host-abi.md](docs/host-abi.md)), and `--php`,
 `--rust` and `--go` each write that binding of it, from the library's model. A program importing
 another build reads that build's modules from `-cp`, the class path the `souther` command takes, and
