@@ -71,7 +71,8 @@ Souther versions can sit there side by side, and the CLI chooses the one built a
 
 A source is a `.sou` file or a directory holding some. A lone file may leave out its `module`
 header and is then named after its file, as `souther compile` names it, and a link found under a
-directory is refused rather than followed. `--help` writes the usage and ends with 0. `-o` writes one object file. `--library`
+directory is refused rather than followed, as is a directory under it that cannot be read, rather
+than left out. `--help` writes the usage and ends with 0. `-o` writes one object file. `--library`
 writes what a host is handed into its directory ([docs/host-abi.md](docs/host-abi.md)), and `--php`,
 `--rust` and `--go` each write that binding of it, from the library's model. A program importing
 another build reads that build's modules from `-cp`, the class path the `souther` command takes, and
