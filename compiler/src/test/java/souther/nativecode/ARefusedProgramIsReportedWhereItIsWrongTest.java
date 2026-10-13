@@ -81,6 +81,67 @@ class ARefusedProgramIsReportedWhereItIsWrongTest {
         assertThat(room.resolve("native")).doesNotExist();
     }
 
+    @Test
+    void sourcesOfOneNameAreToldApartAndEachIsQuotedForWhatIsWrongInIt(@TempDir Path room)
+            throws Exception {
+        Files.createDirectories(room.resolve("a"));
+        Files.createDirectories(room.resolve("b"));
+        Files.writeString(room.resolve("a/model.sou"), """
+                module a
+
+                behavior f : (n: Int) -> String
+
+                let f (n) = n
+                """);
+        Files.writeString(room.resolve("b/model.sou"), """
+                module b
+
+                behavior g : (n: Int) -> String
+
+                let g (n) = n
+                """);
+
+        // One refusal with a diagnostic in each source: each is said, under enough of its path to
+        // tell it from the other, quoting the line of its own.
+        Ran ran = run("-o", room.resolve("model.o").toString(), room.toString());
+
+        assertThat(ran.ended()).isEqualTo(1);
+        assertThat(ran.said()).contains("a/model.sou:5:13").contains("let f (n) = n")
+                .contains("b/model.sou:5:13").contains("let g (n) = n");
+    }
+
+    @Test
+    void aLoneFileWithNoHeaderIsTheModuleItsFileNames(@TempDir Path room) throws Exception {
+        // As souther compile takes it (spec #modules): a header is optional in a lone file.
+        Path source = Files.writeString(room.resolve("counting.sou"), """
+                behavior next : (n: Int) -> Int
+
+                let next (n) = n + 1
+                """);
+        Path into = room.resolve("counting.o");
+
+        Ran ran = run("-o", into.toString(), source.toString());
+
+        assertThat(ran.ended()).as(ran.said()).isZero();
+        assertThat(into).isNotEmptyFile();
+    }
+
+    @Test
+    void aLinkUnderADirectoryIsNotReadAsASource(@TempDir Path room) throws Exception {
+        Path elsewhere = Files.writeString(room.resolve("elsewhere.txt"), """
+                module elsewhere
+                """);
+        Path tree = Files.createDirectories(room.resolve("tree"));
+        Files.createSymbolicLink(tree.resolve("linked.sou"), elsewhere);
+
+        // A report quotes the source it is about, so what is read under a directory is what is
+        // there, and a link to something that was never meant to be a source is refused.
+        Ran ran = run("-o", room.resolve("tree.o").toString(), tree.toString());
+
+        assertThat(ran.ended()).isEqualTo(2);
+        assertThat(room.resolve("tree.o")).doesNotExist();
+    }
+
     private record Ran(int ended, String printed, String said) {
     }
 

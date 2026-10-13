@@ -5,15 +5,15 @@ import souther.bindings.BindingInput;
 import souther.bindings.Declarations;
 import souther.bindings.Manifest;
 import souther.bindings.NotBindable;
+import souther.compiler.CompilationSources;
+import souther.compiler.CompilationSources.SourceFile;
 import souther.compiler.diag.CompileException;
-import souther.compiler.diag.SourceNames;
 import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -23,7 +23,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 /**
  * Compiles the sources named on the command line into one object file, or builds them into a
@@ -150,9 +149,9 @@ public final class Main {
      */
     record Command(Output output, List<Path> sources, List<Path> classPath, boolean offline) {
 
-        CheckedProgram checked(List<String> read) {
-            return classPath.isEmpty() ? CheckedProgram.of(read)
-                    : CheckedProgram.of(read, ModulePath.ofClassPath(classPath));
+        CheckedProgram checked(CompilationSources read) {
+            return CheckedProgram.of(read, classPath.isEmpty() ? ModulePath.EMPTY
+                    : ModulePath.ofClassPath(classPath));
         }
     }
 
@@ -197,23 +196,19 @@ public final class Main {
             return fetched(out, problems, fetching);
         }
 
-        List<Path> files;
+        CompilationSources read;
         try {
-            files = under(command.sources());
-        } catch (IOException | UncheckedIOException e) {
+            read = readSources(command.sources());
+        } catch (IOException e) {
             problems.println(e.getMessage());
             return WRONG_COMMAND;
         }
-        if (files.isEmpty()) {
+        if (read.texts().isEmpty()) {
             problems.println("nothing to compile: no .sou file among what was named");
             return WRONG_COMMAND;
         }
 
-        List<String> read = new ArrayList<>(files.size());
         try {
-            for (Path file : files) {
-                read.add(Files.readString(file, StandardCharsets.UTF_8));
-            }
             switch (command.output()) {
                 case Output.Fetch fetch -> throw new IllegalStateException("handled above");
                 case Output.ObjectFile object -> {
@@ -226,18 +221,17 @@ public final class Main {
                         Files.createDirectories(object.into().getParent());
                     }
                     Files.write(object.into(), written);
-                    out.println("wrote " + object.into() + " from " + sources(files));
+                    out.println("wrote " + object.into() + " from " + sources(read));
                 }
                 case Output.Library library -> {
-                    return written(command, library, files, read, fetching, out, problems);
+                    return written(command, library, read, fetching, out, problems);
                 }
             }
         } catch (GeneratorFailed e) {
             problems.println(e.getMessage());
             return REFUSED;
         } catch (CompileException e) {
-            List<String> names = SourceNames.of(files.stream().map(Path::toString).toList());
-            Refusal.lines(e, names, read).forEach(problems::println);
+            Refusal.lines(e, read).forEach(problems::println);
             return REFUSED;
         } catch (NotLowered e) {
             // What this backend has not got round to, which is a different thing from a program
@@ -263,9 +257,8 @@ public final class Main {
      * go of on every way out, whatever was thrown: a generator closed, and a directory not put in
      * place dropped.
      */
-    private static int written(Command command, Output.Library library, List<Path> files,
-                               List<String> read, Fetching fetching, PrintStream out,
-                               PrintStream problems)
+    private static int written(Command command, Output.Library library, CompilationSources read,
+                               Fetching fetching, PrintStream out, PrintStream problems)
             throws IOException, GeneratorFailed, InterruptedException {
         try (Holding held = new Holding()) {
             List<Bindings.Generator> generators = new ArrayList<>();
@@ -289,7 +282,7 @@ public final class Main {
             }
             NativeCompiler.Library built = NativeCompiler.library(
                     command.checked(read), alongside, library.into(), driver);
-            out.println("wrote the library " + library.into() + " from " + sources(files));
+            out.println("wrote the library " + library.into() + " from " + sources(read));
             BindingInput input = new BindingInput(ManifestReader.read(built.manifest()),
                     Declarations.at(built.declarations()));
             List<BindingDirectory> staged = new ArrayList<>();
@@ -551,21 +544,29 @@ public final class Main {
         return inner.toAbsolutePath().normalize().startsWith(outer.toAbsolutePath().normalize());
     }
 
-    private static String sources(List<Path> files) {
-        return files.size() + (files.size() == 1 ? " source" : " sources");
+    private static String sources(CompilationSources read) {
+        int count = read.texts().size();
+        return count + (count == 1 ? " source" : " sources");
     }
 
-    private static List<Path> under(List<Path> named) throws IOException {
-        List<Path> files = new ArrayList<>();
+    /**
+     * The sources a command line named, read: a file as itself, and a directory as every
+     * {@code .sou} under it, read the way Souther reads a tree of sources.
+     *
+     * <p>Held as one value from here on, because what the program is checked from, what a lone file
+     * with no header is called, and what a refusal is quoted from are one list of texts in one
+     * order, and the compile is the one that says which id each gets.
+     */
+    private static CompilationSources readSources(List<Path> named) throws IOException {
+        List<SourceFile> files = new ArrayList<>();
         for (Path path : named) {
             if (Files.isDirectory(path)) {
-                try (Stream<Path> walked = Files.walk(path)) {
-                    walked.filter(it -> it.toString().endsWith(".sou")).sorted().forEach(files::add);
-                }
+                files.addAll(CompilationSources.readTree(path));
             } else {
-                files.add(path);
+                files.add(new SourceFile(path.toString(),
+                        Files.readString(path, StandardCharsets.UTF_8)));
             }
         }
-        return files;
+        return CompilationSources.files(files);
     }
 }

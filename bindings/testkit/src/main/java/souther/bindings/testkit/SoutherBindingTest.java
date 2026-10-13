@@ -2,7 +2,10 @@ package souther.bindings.testkit;
 
 import souther.bindings.BindingInput;
 import souther.bindings.Declarations;
+import souther.compiler.CompilationSources;
+import souther.compiler.CompilationSources.SourceFile;
 import souther.compiler.diag.CompileException;
+import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
 import souther.nativecode.ManifestReader;
 import souther.nativecode.NativeCompiler;
@@ -11,10 +14,10 @@ import souther.nativecode.Refusal;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.IntStream;
 
 /**
  * Souther sources built into a library, for a test of a binding generator: the input the command
@@ -85,16 +88,19 @@ public final class SoutherBindingTest {
                 return kept;
             }
         }
+        // A source handed over here has no file, so it is named by its position among the sources,
+        // which is how the test that wrote it can find it in a report.
+        List<SourceFile> files = new ArrayList<>(sources.size());
+        for (int at = 0; at < sources.size(); at++) {
+            files.add(new SourceFile("source " + (at + 1), sources.get(at)));
+        }
+        CompilationSources read = CompilationSources.files(files);
         CheckedProgram checked;
         try {
-            checked = CheckedProgram.of(sources);
+            checked = CheckedProgram.of(read, ModulePath.EMPTY);
         } catch (CompileException e) {
-            // A source handed over here has no file name, so it is named by its position among
-            // the sources, which is how the test that wrote it can find it.
-            List<String> names = IntStream.rangeClosed(1, sources.size())
-                    .mapToObj(at -> "source " + at).toList();
             throw new IllegalArgumentException("the sources are not a program the language takes:\n"
-                    + String.join("\n", Refusal.lines(e, names, sources)), e);
+                    + String.join("\n", Refusal.lines(e, read)), e);
         }
         synchronized (CHECKED) {
             CHECKED.put(sources, checked);
