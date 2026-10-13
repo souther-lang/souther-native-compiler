@@ -8,8 +8,12 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * A program the language refuses is said as the language's human report, as {@code souther compile}
@@ -106,8 +110,18 @@ class ARefusedProgramIsReportedWhereItIsWrongTest {
         Ran ran = run("-o", room.resolve("model.o").toString(), room.toString());
 
         assertThat(ran.ended()).isEqualTo(1);
-        assertThat(ran.said()).contains("a/model.sou:5:13").contains("let f (n) = n")
-                .contains("b/model.sou:5:13").contains("let g (n) = n");
+        assertThat(quotedUnder(ran.said(), "a/model.sou:5:13")).contains("let f (n) = n")
+                .doesNotContain("let g (n) = n");
+        assertThat(quotedUnder(ran.said(), "b/model.sou:5:13")).contains("let g (n) = n")
+                .doesNotContain("let f (n) = n");
+    }
+
+    /** What a report says from the header naming {@code place} up to the next report's header. */
+    private static String quotedUnder(String said, String place) {
+        int at = said.indexOf(place);
+        assertThat(at).as("a report at " + place + " in\n" + said).isNotNegative();
+        int next = said.indexOf("\n-- ", at);
+        return said.substring(at, next < 0 ? said.length() : next);
     }
 
     @Test
@@ -140,6 +154,50 @@ class ARefusedProgramIsReportedWhereItIsWrongTest {
 
         assertThat(ran.ended()).isEqualTo(2);
         assertThat(room.resolve("tree.o")).doesNotExist();
+    }
+
+    @Test
+    void aDirectoryThatCannotAllBeReadIsRefusedRatherThanBuiltFromWhatCould(@TempDir Path room)
+            throws Exception {
+        Path tree = Files.createDirectories(room.resolve("project"));
+        Files.createDirectories(tree.resolve("public"));
+        Files.writeString(tree.resolve("public/counting.sou"), """
+                module counting
+
+                behavior doubled : (n: Int) -> Int
+
+                let doubled (n) = n + n
+                """);
+        Path closed = Files.createDirectories(tree.resolve("private"));
+        Files.writeString(closed.resolve("hidden.sou"), """
+                module hidden
+
+                behavior one : (n: Int) -> Int
+
+                let one (n) = 1
+                """);
+        Path into = room.resolve("project.o");
+        Set<PosixFilePermission> had;
+        try {
+            had = Files.getPosixFilePermissions(closed);
+        } catch (UnsupportedOperationException e) {
+            assumeTrue(false, "permissions cannot be taken away here: " + e);
+            return;
+        }
+        Files.setPosixFilePermissions(closed, Set.of());
+        Ran ran;
+        try {
+            assumeFalse(Files.isReadable(closed), "this process reads a directory with no permissions");
+            ran = run("-o", into.toString(), tree.toString());
+        } finally {
+            Files.setPosixFilePermissions(closed, had);
+        }
+
+        // Nothing need import hidden, so what could be read compiles. An object file built from it
+        // is a program nobody named.
+        assertThat(ran.ended()).isEqualTo(2);
+        assertThat(ran.said()).contains("private");
+        assertThat(into).doesNotExist();
     }
 
     private record Ran(int ended, String printed, String said) {
