@@ -307,7 +307,7 @@ class APhpHostCallsALibraryThroughItsBindingTest {
 
     private static final String ANSWERED = """
             money: 3, standard 3
-            below: [/ invariant_violation]
+            below: [/ out_of_range]
             none: [/ invariant_violation]
             line: 2 at 3, gift wrap
             bare: NULL

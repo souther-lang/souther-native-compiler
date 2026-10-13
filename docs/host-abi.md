@@ -41,7 +41,10 @@ a generator. What it says is described with its types in
 Everything a host calls of a library belongs to one ABI generation, and the generation moves when
 any of it changes. It is `ABI_GENERATION` in the `abi` crate, and the file of its number under
 `generations/` records every contract the generation has offered: every function a host calls and
-every function generated code calls in the runtime, with what each takes and answers; every word
+every function generated code calls in the runtime, with what each takes and answers; each kind of
+function generated for a host, a constructor, a decoder or a list's reader, with what it takes and
+answers whatever the model it is over (`HOST_ENTRIES`), which every such function is made from;
+every word
 and what it is on the machine; the storage a host lays out; the scope contract; the input contract;
 the statuses and the range reserved for a host; how a value is hashed; and the constants generated
 code and the runtime agree on. The record only grows: a host or an object can be built on any day of a
@@ -142,8 +145,8 @@ spelt apart: `souther<n>`, `<n>` being the ABI generation, then the module as `_
 segment of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape
 a list's element crosses in, or `_fn_` and the shape of a function value, and then what is done with
 it. A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther11_m_shop_b_quote` at generation
-10, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther12_m_shop_b_quote` at generation
+12, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
 `_` or `u`, which keeps every spelling readable back to the names it was made from. The functions
 that spell each name are in [`native/crates/abi/src/lib.rs`](../native/crates/abi/src/lib.rs), each
 with what the function it names takes and answers.
@@ -153,10 +156,13 @@ own for a host, which converts what a host hands over and calls the symbol anoth
 the day one of them takes a value in a form a host does not hand one over in, a host's entry still
 takes what a host hands over.
 
-For a published type, `_t_<Name>_construct` takes the fields and answers a status the way the type's
-own constructor does, since it is that constructor it runs: a value whose clauses do not hold is
-answered `InvariantNotHeld` and nothing is written. A type with no clause answers a status too, so a
-clause added later does not change how a host calls it. `_f_<field>` writes a field through room and
+For a published type, `_t_<Name>_construct` takes the fields and runs the type's clauses, as its
+own constructor does, and answers as the type's `_decode` does: a status, which is not `ANSWERED`
+only where a clause ended without a value, and otherwise a reading through room. The reading holds
+the value, or the issue the first clause that does not hold is, at the value's own place: the one
+`_decode` records for the same value, so a host is told which constraint or which clause, of which
+type, whichever way it built the value. A type with no clause answers a reading too, so a clause
+added later does not change how a host calls it. `_f_<field>` writes a field through room and
 answers nothing. A sum has `_case`, answering which of the cases the sum descends to the value is,
 as its place among them counted from nought. `_decode` reads a value out of its external form as
 bytes, and `_decode_host` out of a value a host built of ordered maps and wrote with every container

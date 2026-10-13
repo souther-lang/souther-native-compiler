@@ -464,25 +464,10 @@ final class Session
     }
 
     /**
-     * @internal What a constructor answered: the value, or an `invariant_violation` where it does
-     * not hold what its type states. Any other status is thrown.
-     *
-     * @template T
-     * @param \Closure(): T $made
-     * @return Result<T>
-     */
-    public function constructed(int $status, \Closure $made): Result
-    {
-        if ($status === $this->library->status('INVARIANT_NOT_HELD')) {
-            return Result::fail(Path::root(), 'invariant_violation', 'invariant_violation');
-        }
-        $this->answered($status);
-        return Result::ok($made());
-    }
-
-    /**
-     * @internal What a reading of external text came to: the value, the issues it found, or an
-     * `invalid_format` where the text is not JSON at all.
+     * @internal What a reading of external text, or a construction, came to: the value, the issues
+     * it found, or an `invalid_format` where the text is not JSON at all. A construction refused is
+     * refused for the one clause that did not hold, the issue the type's decoder answers for the
+     * same value.
      *
      * @template T
      * @param \Closure(CData): T $made

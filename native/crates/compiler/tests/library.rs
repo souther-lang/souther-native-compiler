@@ -189,8 +189,9 @@ static void said(souther_string text) {
 
 int main(void) {
     int64_t scope = souther_scope_open();
-    souther_value built = NULL;
-    souther_status status = souther@_m_m_t_P_construct(7, &built);
+    souther_decoded constructed = NULL;
+    souther_status status = souther@_m_m_t_P_construct(7, &constructed);
+    souther_value built = souther_decoded_value(constructed);
     int64_t n = 0;
     souther@_m_m_t_P_f_n(built, &n);
     printf("%u %" PRId64 "\n", status, n);

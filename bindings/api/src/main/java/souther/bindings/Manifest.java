@@ -262,9 +262,16 @@ public final class Manifest {
          */
         private void takes(List<Parameter> first, List<Shape> given, List<Shape> rooms,
                    @Nullable Word answers) {
+            takes(first, given, rooms, List.of(), answers);
+        }
+
+        /** As {@link #takes(List, List, List, Word)}, and then {@code last}. */
+        private void takes(List<Parameter> first, List<Shape> given, List<Shape> rooms,
+                   List<Parameter> last, @Nullable Word answers) {
             List<Parameter> expected = new ArrayList<>(first);
             Shape.words(given).forEach(word -> expected.add(Parameter.given(word)));
             Shape.words(rooms).forEach(word -> expected.add(Parameter.room(word)));
+            expected.addAll(last);
             if (!expected.equals(takes) || answers != this.answers) {
                 throw new IllegalArgumentException(name + " takes " + takes + " and answers "
                         + this.answers + ", where what is said beside it crosses as " + expected
@@ -417,13 +424,16 @@ public final class Manifest {
         }
     }
 
-    /** A declared type's constructor, and how each field is handed over. */
+    /**
+     * A declared type's constructor, and how each field is handed over. It writes a reading, as a
+     * decoder does: the value, or the issue of the clause the value does not hold.
+     */
     public record Construct(Function function, List<ValueCrossing> takes) {
 
         public Construct {
             takes = List.copyOf(takes);
-            function.takes(List.of(), ValueCrossing.shapes(takes),
-                    List.of(new Shape.Leaf(Word.VALUE)), Word.STATUS);
+            function.takes(List.of(), ValueCrossing.shapes(takes), List.of(),
+                    List.of(Parameter.room(Word.DECODED)), Word.STATUS);
         }
     }
 

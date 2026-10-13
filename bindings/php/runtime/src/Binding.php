@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 11;
+    public const PROTOCOL = 12;
 
     /**
      * What each version of the protocol moved, by its number, oldest first. The versions before the
@@ -61,6 +61,10 @@ abstract class Binding
             . '(NativeLibrary::ABI_GENERATION, UnsupportedGeneration); a primitive a union carries '
             . 'is read through Session::carried, which the library answers whether the value is that '
             . 'case for',
+        12 => 'a construction answers a reading, as a decoder does, and is read through '
+            . 'Session::decoded: the value, or the issue of the clause that did not hold, named as '
+            . 'the type\'s decoder names it, in place of Session::constructed, which answered a '
+            . 'bare invariant_violation (NativeLibrary::ABI_GENERATION)',
     ];
 
     /**

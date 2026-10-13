@@ -66,15 +66,24 @@ class ALibraryHoldsTheBuildsItReachesTest {
                        (const char *) souther_string_bytes(said));
             }
 
+            /* The value a construction's reading holds. */
+            static souther_value built(souther_decoded reading) {
+                return souther_decoded_value(reading);
+            }
+
             int main(void) {
                 int64_t scope = souther_scope_open();
 
-                souther_value three = NULL, price = NULL, closed = NULL, order = NULL;
-                souther@_m_lib_m_money_t_Money_construct(3, &three);
-                souther@_m_lib_m_money_t_Price_construct(three, &price);
-                souther@_m_lib_m_money_t_Closed_construct(&closed);
+                souther_decoded made = NULL;
+                souther@_m_lib_m_money_t_Money_construct(3, &made);
+                souther_value three = built(made);
+                souther@_m_lib_m_money_t_Price_construct(three, &made);
+                souther_value price = built(made);
+                souther@_m_lib_m_money_t_Closed_construct(&made);
+                souther_value closed = built(made);
                 souther_status status =
-                        souther@_m_app_m_order_t_Order_construct(price, closed, closed, 2, &order);
+                        souther@_m_app_m_order_t_Order_construct(price, closed, closed, 2, &made);
+                souther_value order = built(made);
                 int64_t total = -1;
                 souther_status totalled = souther@_m_app_m_order_b_total(NULL, order, &total);
                 souther_value door = NULL;

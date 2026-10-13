@@ -65,8 +65,8 @@ guard PendingItem { cart = c, item = CartItem { productId = productId, quantity 
 In Rust by hand, that is a constructor answering an error of its own, a decoder that calls the
 constructor and reports its error as an issue at the right path, and a `match` in the service
 mapping that error to `CartFull`: three places that have to agree on one rule, and a test for each.
-Here the binding's `PendingItem::new` refuses the value with an `invariant_violation`, its `decode`
-reports the same at the value's path, and the behavior answers `CartFull`, all from the two lines
+Here the binding's `PendingItem::new` refuses the value with an `invariant_violation` naming the
+clause, `withinCapacity`, its `decode` reports the same at the value's path, and the behavior answers `CartFull`, all from the two lines
 above.
 
 The rules are checked without a database. `fake loadCart` and the other fakes in `cart.sou` stand

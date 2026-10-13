@@ -69,10 +69,10 @@ class AHostReachesAValueWithoutItsLayoutTest {
         assertThat(process.waitFor()).as(said).isZero();
 
         assertThat(said).isEqualTo("""
-                money 3: status 0, value 3
-                money -1: status 1, untouched 1
-                line: status 0
-                line of none: status 1, untouched 1
+                money 3: built, value 3
+                money -1: refused out_of_range, untouched 1
+                line: built
+                line of none: refused invariant_violation, untouched 1
                 quantity 2, price 3
                 note: present 1, text gift wrap
                 gift: present 0, untouched 1
@@ -80,7 +80,7 @@ class AHostReachesAValueWithoutItsLayoutTest {
                 paid nothing: status 0, case 3, amount 6, overdue 1, owing 6
                 paid some: status 0, case 3, amount 4, overdue 0, owing 4
                 priced at nought: status 0, case 0, settled 0
-                free from here: status 0, case 0, owing 0
+                free from here: built, case 0, owing 0
                 gift given: present 1, gift 1
                 """);
     }
@@ -116,6 +116,7 @@ class AHostReachesAValueWithoutItsLayoutTest {
                 #include <stdint.h>
                 #include <stdio.h>
                 #include <string.h>
+                """ + Running.BUILT + """
 
                 typedef const void *Value;
 
@@ -125,15 +126,15 @@ class AHostReachesAValueWithoutItsLayoutTest {
                 extern int64_t souther_string_length(Value);
                 extern const uint8_t *souther_string_bytes(Value);
 
-                extern uint32_t money(int64_t, Value *) __asm__("%1$s");
+                extern uint32_t moneyReading(int64_t, const void **) __asm__("%1$s");
                 extern void moneyValueInto(Value, int64_t *) __asm__("%2$s");
-                extern uint32_t line(Value, int64_t, uint8_t, Value, uint8_t, uint8_t, Value *)
-                        __asm__("%3$s");
+                extern uint32_t lineReading(Value, int64_t, uint8_t, Value, uint8_t, uint8_t,
+                        const void **) __asm__("%3$s");
                 extern void linePriceInto(Value, Value *) __asm__("%4$s");
                 extern void lineQuantityInto(Value, int64_t *) __asm__("%5$s");
                 extern void lineNoteInto(Value, uint8_t *, Value *) __asm__("%6$s");
                 extern void lineGiftInto(Value, uint8_t *, uint8_t *) __asm__("%7$s");
-                extern uint32_t free_(Value *) __asm__("%8$s");
+                extern uint32_t freeReading(const void **) __asm__("%8$s");
                 extern void paidAmountInto(Value, Value *) __asm__("%9$s");
                 extern void owedAmountInto(Value, Value *) __asm__("%10$s");
                 extern void owedOverdueInto(Value, uint8_t *) __asm__("%11$s");
@@ -143,6 +144,21 @@ class AHostReachesAValueWithoutItsLayoutTest {
                 extern uint32_t owing(const void *, Value, int64_t *) __asm__("%15$s");
 
                 static Value untouched = (Value) &untouched;
+
+                static const char *money(int64_t cents, Value *into) {
+                    const void *reading = 0;
+                    return built(moneyReading(cents, &reading), reading, into);
+                }
+                static const char *line(Value price, int64_t quantity, uint8_t noted, Value note,
+                                        uint8_t gifted, uint8_t gift, Value *into) {
+                    const void *reading = 0;
+                    return built(lineReading(price, quantity, noted, note, gifted, gift, &reading),
+                                 reading, into);
+                }
+                static const char *free_(Value *into) {
+                    const void *reading = 0;
+                    return built(freeReading(&reading), reading, into);
+                }
 
                 /* A field is written through room: each of these reads one into its own. */
                 static int64_t moneyValue(Value of) { int64_t it = -1; moneyValueInto(of, &it); return it; }
@@ -189,21 +205,21 @@ class AHostReachesAValueWithoutItsLayoutTest {
                     int64_t scope = souther_scope_open();
 
                     Value three = untouched;
-                    uint32_t status = money(3, &three);
-                    printf("money 3: status %%u, value %%lld\\n", status, (long long) moneyValue(three));
+                    const char *made = money(3, &three);
+                    printf("money 3: %%s, value %%lld\\n", made, (long long) moneyValue(three));
                     Value below = untouched;
-                    status = money(-1, &below);
-                    printf("money -1: status %%u, untouched %%d\\n", status, below == untouched);
+                    made = money(-1, &below);
+                    printf("money -1: %%s, untouched %%d\\n", made, below == untouched);
 
                     const char *wrap = "gift wrap";
                     Value note = untouched;
                     souther_string_of_utf8((const uint8_t *) wrap, (int64_t) strlen(wrap), &note);
                     Value bought = untouched;
-                    status = line(three, 2, 1, note, 0, 0, &bought);
-                    printf("line: status %%u\\n", status);
+                    made = line(three, 2, 1, note, 0, 0, &bought);
+                    printf("line: %%s\\n", made);
                     Value none = untouched;
-                    status = line(three, 0, 0, 0, 0, 0, &none);
-                    printf("line of none: status %%u, untouched %%d\\n", status, none == untouched);
+                    made = line(three, 0, 0, 0, 0, 0, &none);
+                    printf("line of none: %%s, untouched %%d\\n", made, none == untouched);
 
                     printf("quantity %%lld, price %%lld\\n", (long long) lineQuantity(bought),
                            (long long) moneyValue(linePrice(bought)));
@@ -226,10 +242,10 @@ class AHostReachesAValueWithoutItsLayoutTest {
                     settled("priced at nought", given, 0);
 
                     Value free = untouched;
-                    status = free_(&free);
+                    made = free_(&free);
                     int64_t owed = -1;
                     owing(NULL, free, &owed);
-                    printf("free from here: status %%u, case %%u, owing %%lld\\n", status,
+                    printf("free from here: %%s, case %%u, owing %%lld\\n", made,
                            outcomeCase(free), (long long) owed);
 
                     gift = 7;

@@ -329,9 +329,8 @@ mod tests {
     /// injected behavior's own answer has no place as a `String`, most concretely — crosses the
     /// callback boundary boxed as `CallbackFailure::Crossing`. `answered` unwraps it back to the
     /// original `Failure` rather than wrapping it again as `Failure::Host`: the crossing failed,
-    /// not the implementation, and a caller matching on `Failure::Abort` (as `Construction::of`
-    /// already does for `INVARIANT_NOT_HELD`) has to see the same shape here as it would calling
-    /// directly (souther-native-compiler#109).
+    /// not the implementation, and a caller matching on `Failure::Abort` has to see the same shape
+    /// here as it would calling directly (souther-native-compiler#109).
     #[test]
     fn a_crossing_failure_caught_across_a_callback_is_unwrapped_and_not_doubly_wrapped() {
         let statuses = Statuses::new(WITH_NO_PLACE).unwrap();

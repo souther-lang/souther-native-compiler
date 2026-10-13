@@ -121,10 +121,16 @@ an array with a key out of order is an `\InvalidArgumentException` and an elemen
 read, each element held as a field's value is. A list is built and read through the functions the
 module offers for a list of its element, and a function handing a list that the module offers no way
 to build or read is not written. A tuple is a PHP list of its members, typed `array` for PHP and
-`array{0: T0, 1: T1}` in the docblock. An optional is null where it holds nothing and what it holds
-where it holds something, except where what it holds may itself be null: an optional of an optional
-holds its value in a `Souther\Runtime\Some`, so `Int??` is null, `Some(null)` or `Some(1)`, and
-holding nothing is told apart at each depth.
+`array{0: T0, 1: T1}` in the docblock. A set is the list of its members and a map the list of its
+entries, each a tuple of the key and the value: a `Map<String, Int>` is
+`[['classic', 1], ['sf', 1]]` both ways, not an array keyed by the map's keys. The library makes a
+set of what it is handed, two members that are one being one, and a map of the entries, the later of
+two under one key winning. What it hands back is in the order it holds them, which the language says
+nothing of; written in the external form (`encode`), a set's members and a map's keys are in
+ascending order, as [the coverage document](../../../docs/language-coverage.md) says. An optional is
+null where it holds nothing and what it holds where it holds something, except where what it holds
+may itself be null: an optional of an optional holds its value in a `Souther\Runtime\Some`, so
+`Int??` is null, `Some(null)` or `Some(1)`, and holding nothing is told apart at each depth.
 
 A function value is a `Closure`, typed `\Closure(T): R` in the docblock. One the library answered is
 called in the innermost run going when it is called, and is refused, as any value is, once the run it
@@ -190,13 +196,15 @@ no longer than it lives.
 
 ## Failures
 
-A construction that does not hold its type's invariants is an `Err` with `invariant_violation`, and
-a reading answers the issues the library found, their codes being Raoh's already, or
-`invalid_format` where the text is not JSON. A Souther computation that ends without a value throws
-`SoutherAbort`, naming the status. What the runtime throws about runs, handles and the library's
-statuses implements `Souther\Runtime\SoutherFailure`; a host's own exception coming back out of a
-call does not, and neither do the refusals of a value PHP made (`\InvalidArgumentException`,
-`TypeError`) or of a library at loading, described below.
+A construction that does not hold its type's invariants is an `Err` with the issue the type's
+`decode` answers for the same value: `invalid_format` with its `pattern` for a clause that is a
+pattern, and `invariant_violation` naming the `module`, the `type` and the `clause` for one no
+constraint states. A reading answers the issues the library found, their codes being Raoh's already,
+or `invalid_format` where the text is not JSON. A Souther computation that ends without a value
+throws `SoutherAbort`, naming the status. What the runtime throws about runs, handles and the
+library's statuses implements `Souther\Runtime\SoutherFailure`; a host's own exception coming back
+out of a call does not, and neither do the refusals of a value PHP made
+(`\InvalidArgumentException`, `TypeError`) or of a library at loading, described below.
 
 A behavior a host implements is handed to a run as its module's `Injections::of(name: fn (...) =>
 ...)`, which is what a behavior called through `Behaviors` in that run is constructed from, or bound

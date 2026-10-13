@@ -199,6 +199,15 @@ pub const GENERATIONS: &[(u32, &str)] = &[
          the elements, which the compiler gives from the list's declaration \
          (souther-native-compiler#153)",
     ),
+    (
+        12,
+        "a host's construction of a value (`_t_<type>_construct`) writes a reading through room in \
+         place of the value, as the type's decoder does: the value, or the issue a clause that did \
+         not hold is, named as the decoder names it, where a host was answered \
+         `INVARIANT_NOT_HELD` and told nothing of which clause; a reading of no document is begun \
+         by `souther_construct_begin`; and how a host calls each function generated for it is \
+         recorded by kind (`HOST_ENTRIES`) (souther-native-compiler#157)",
+    ),
 ];
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
@@ -510,10 +519,17 @@ pub fn host_value_symbol(module: &str, value: &str) -> String {
     host_under(module, 'v', value)
 }
 
-/// Where a host builds a value of a declared type: the fields as a host hands them over, and
-/// `status + out`, the way a call to the type's own constructor answers — which is what this runs.
+/// Where a host builds a value of a declared type: the fields as a host hands them over, and room
+/// for a reading, `(fields, out) -> status` ([`CONSTRUCT_ENTRY`]).
 ///
-/// A type with no clause answers a status too, so a clause added to it later is not a change to
+/// It runs the type's clauses as its own constructor does, and answers as the type's decoder
+/// ([`host_decode_symbol`]) does: a status where a clause itself ended without a value, and
+/// otherwise a reading through `out`, holding the value or the issue a clause that did not hold is
+/// at the value's own place — the issue the decoder records for the same value, naming the
+/// constraint the clause is, or the type and the clause. A host that built a value is told which
+/// rule it broke, whichever way it built it.
+///
+/// A type with no clause answers a reading too, so a clause added to it later is not a change to
 /// how a host calls it.
 pub fn host_constructor_symbol(module: &str, name: &str) -> String {
     format!("{}_construct", host_under(module, 't', name))
@@ -1739,6 +1755,11 @@ pub const DECODE_BEGIN: &str = "souther_decode_begin";
 /// maps and wrote with every container as an object ([`host_decode_host_value_symbol`]): a map
 /// keyed by its indices is read as an array wherever the reader takes one.
 pub const DECODE_HOST_BEGIN: &str = "souther_decode_host_begin";
+/// `() -> reading`: a reading of no document, for a host's construction of a value
+/// ([`host_constructor_symbol`]), which reads nothing and records what a clause that did not hold
+/// says at the value's own place, the way a reader of the type records it. Ended and abandoned as
+/// any other reading is; its root is never asked for.
+pub const CONSTRUCT_BEGIN: &str = "souther_construct_begin";
 /// `(reading) -> node`.
 pub const DECODE_ROOT: &str = "souther_decode_root";
 /// `(reading, value)`.
@@ -2349,6 +2370,287 @@ pub struct RuntimeFunction {
     /// What it answers, where it answers anything.
     pub answers: Option<HostWord>,
 }
+
+/// One part of what a function this compiler generates for a host takes, as [`HostEntry`] lists
+/// them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EntryPart {
+    /// One word, handed over or written through.
+    Word(HostParameter),
+    /// What the function is over, handed over each as the words of the shape it crosses in: a
+    /// type's fields, or what a behavior or a function value takes.
+    Over,
+    /// Room for each word of the shape what the function answers crosses in, written as every
+    /// value a host is handed is.
+    Answered,
+    /// A list's elements, as one [`HostParameter::Slice`] of each word the element crosses as.
+    Columns,
+    /// An address whose layout a contract of its own states, named for what it is: room a host lays
+    /// a hosted implementation out in ([`HOSTED_IMPLEMENTATION`]), or the implementation itself.
+    Address(&'static str),
+}
+
+/// A function this compiler generates for a host, of which a library holds one for each thing of
+/// the model it is over: what it takes and answers, with what varies from one model to another
+/// named ([`EntryPart::Over`], [`EntryPart::Answered`]) and not spelt out.
+///
+/// What a model has is the model's, but how a host calls what it has is this, and a host's binding
+/// is written against it. So it is part of the contract a generation records, and every function of
+/// the kind is made from its entry here, which is what keeps the record and the functions one fact.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HostEntry {
+    /// The symbol, with what varies in angle brackets, after `souther<n>_m_<module>`.
+    pub spelt: &'static str,
+    /// What it takes, in order.
+    pub takes: &'static [EntryPart],
+    /// What it answers, where it answers anything.
+    pub answers: Option<HostWord>,
+}
+
+impl HostEntry {
+    /// What a function of this entry takes, `over` being the shapes of what it is over and
+    /// `answered` the shape of what it answers.
+    ///
+    /// # Panics
+    ///
+    /// Where the entry takes a part `over` and `answered` do not give, or is handed one it takes
+    /// no part of, or takes an address, which is not a word a host's parameter is.
+    pub fn takes(&self, over: &[HostShape], answered: Option<&HostShape>) -> Vec<HostParameter> {
+        let taken = |wanted: fn(&EntryPart) -> bool| self.takes.iter().any(wanted);
+        assert!(
+            over.is_empty() || taken(|it| matches!(it, EntryPart::Over | EntryPart::Columns)),
+            "{} is over nothing, and was handed {over:?}",
+            self.spelt
+        );
+        assert!(
+            answered.is_none() || taken(|it| matches!(it, EntryPart::Answered)),
+            "{} writes no answer through room, and was handed {answered:?}",
+            self.spelt
+        );
+        let mut takes = Vec::new();
+        for part in self.takes {
+            match part {
+                EntryPart::Word(parameter) => takes.push(*parameter),
+                EntryPart::Over => takes.extend(
+                    over.iter()
+                        .flat_map(HostShape::words)
+                        .map(HostParameter::Given),
+                ),
+                EntryPart::Answered => takes.extend(
+                    answered
+                        .unwrap_or_else(|| panic!("{} answers something", self.spelt))
+                        .words()
+                        .into_iter()
+                        .map(HostParameter::Room),
+                ),
+                EntryPart::Columns => {
+                    let [element] = over else {
+                        panic!(
+                            "{} is over the one shape a list's element crosses in",
+                            self.spelt
+                        )
+                    };
+                    takes.extend(element.words().into_iter().map(HostParameter::Slice));
+                }
+                EntryPart::Address(named) => {
+                    panic!("{} takes {named}, an address and not a word", self.spelt)
+                }
+            }
+        }
+        takes
+    }
+}
+
+/// `_b_<behavior>`: [`host_behavior_symbol`].
+pub const BEHAVIOR_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Requirements)),
+        EntryPart::Over,
+        EntryPart::Answered,
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_b_<behavior>_bind`: [`host_bind_symbol`].
+pub const BIND_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>_bind",
+    takes: &[
+        EntryPart::Word(HostParameter::Room(HostWord::Capability)),
+        EntryPart::Word(HostParameter::Given(HostWord::Requirements)),
+    ],
+    answers: None,
+};
+
+/// `_b_<behavior>_implement`: [`host_implement_symbol`].
+pub const IMPLEMENT_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>_implement",
+    takes: &[
+        EntryPart::Word(HostParameter::Room(HostWord::Capability)),
+        EntryPart::Address("room for a hosted implementation"),
+        EntryPart::Address("the implementation"),
+        EntryPart::Word(HostParameter::Given(HostWord::Userdata)),
+    ],
+    answers: None,
+};
+
+/// `_b_<behavior>_implementation`, the function a host writes: [`host_implementation_type`].
+pub const IMPLEMENTATION_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>_implementation",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Userdata)),
+        EntryPart::Over,
+        EntryPart::Answered,
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_b_<behavior>_answer_case`: [`host_behavior_answer_case_symbol`].
+pub const ANSWER_CASE_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>_answer_case",
+    takes: &[EntryPart::Word(HostParameter::Given(HostWord::Value))],
+    answers: Some(HostWord::Case),
+};
+
+/// `_v_<value>`: [`host_value_symbol`].
+pub const VALUE_ENTRY: HostEntry = HostEntry {
+    spelt: "_v_<value>",
+    takes: &[EntryPart::Answered],
+    answers: Some(HostWord::Status),
+};
+
+/// `_t_<type>_construct`: [`host_constructor_symbol`].
+pub const CONSTRUCT_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_construct",
+    takes: &[
+        EntryPart::Over,
+        EntryPart::Word(HostParameter::Room(HostWord::Decoded)),
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_t_<type>_f_<field>`: [`host_field_symbol`].
+pub const FIELD_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_f_<field>",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Value)),
+        EntryPart::Answered,
+    ],
+    answers: None,
+};
+
+/// `_t_<type>_case`: [`host_case_symbol`].
+pub const CASE_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_case",
+    takes: &[EntryPart::Word(HostParameter::Given(HostWord::Value))],
+    answers: Some(HostWord::Case),
+};
+
+/// `_t_<type>_decode`: [`host_decode_symbol`].
+pub const DECODE_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_decode",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Bytes)),
+        EntryPart::Word(HostParameter::Given(HostWord::Count)),
+        EntryPart::Word(HostParameter::Room(HostWord::Decoded)),
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_t_<type>_decode_host`: [`host_decode_host_value_symbol`].
+pub const DECODE_HOST_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_decode_host",
+    takes: DECODE_ENTRY.takes,
+    answers: DECODE_ENTRY.answers,
+};
+
+/// `_t_<type>_encode`: [`host_encode_symbol`].
+pub const ENCODE_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_encode",
+    takes: &[EntryPart::Word(HostParameter::Given(HostWord::Value))],
+    answers: Some(HostWord::String),
+};
+
+/// `_l_<shape>_construct`: [`HostListOperation::Construct`].
+pub const LIST_CONSTRUCT_ENTRY: HostEntry = HostEntry {
+    spelt: "_l_<shape>_construct",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Count)),
+        EntryPart::Columns,
+        EntryPart::Word(HostParameter::Room(HostWord::List)),
+    ],
+    answers: Some(HostWord::Bool),
+};
+
+/// `_l_<shape>_length`: [`HostListOperation::Length`].
+pub const LIST_LENGTH_ENTRY: HostEntry = HostEntry {
+    spelt: "_l_<shape>_length",
+    takes: &[EntryPart::Word(HostParameter::Given(HostWord::List))],
+    answers: Some(HostWord::Count),
+};
+
+/// `_l_<shape>_at`: [`HostListOperation::At`].
+pub const LIST_AT_ENTRY: HostEntry = HostEntry {
+    spelt: "_l_<shape>_at",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::List)),
+        EntryPart::Word(HostParameter::Given(HostWord::Count)),
+        EntryPart::Answered,
+    ],
+    answers: Some(HostWord::Bool),
+};
+
+/// `_fn_<shape>_call`: [`HostFunctionOperation::Call`].
+pub const FUNCTION_CALL_ENTRY: HostEntry = HostEntry {
+    spelt: "_fn_<shape>_call",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Function)),
+        EntryPart::Over,
+        EntryPart::Answered,
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_fn_<shape>_implement`: [`HostFunctionOperation::Implement`].
+pub const FUNCTION_IMPLEMENT_ENTRY: HostEntry = HostEntry {
+    spelt: "_fn_<shape>_implement",
+    takes: &[
+        EntryPart::Address("room for a hosted function"),
+        EntryPart::Address("the implementation"),
+        EntryPart::Word(HostParameter::Given(HostWord::Userdata)),
+    ],
+    answers: Some(HostWord::Function),
+};
+
+/// `_fn_<shape>_implementation`, the function a host writes:
+/// [`HostFunctionOperation::Implementation`].
+pub const FUNCTION_IMPLEMENTATION_ENTRY: HostEntry = HostEntry {
+    spelt: "_fn_<shape>_implementation",
+    takes: IMPLEMENTATION_ENTRY.takes,
+    answers: IMPLEMENTATION_ENTRY.answers,
+};
+
+/// Every function this compiler generates for a host, by kind.
+pub const HOST_ENTRIES: &[HostEntry] = &[
+    BEHAVIOR_ENTRY,
+    BIND_ENTRY,
+    IMPLEMENT_ENTRY,
+    IMPLEMENTATION_ENTRY,
+    ANSWER_CASE_ENTRY,
+    VALUE_ENTRY,
+    CONSTRUCT_ENTRY,
+    FIELD_ENTRY,
+    CASE_ENTRY,
+    DECODE_ENTRY,
+    DECODE_HOST_ENTRY,
+    ENCODE_ENTRY,
+    LIST_CONSTRUCT_ENTRY,
+    LIST_LENGTH_ENTRY,
+    LIST_AT_ENTRY,
+    FUNCTION_CALL_ENTRY,
+    FUNCTION_IMPLEMENT_ENTRY,
+    FUNCTION_IMPLEMENTATION_ENTRY,
+];
 
 /// Every function of the runtime's a host calls, and nothing else of the runtime's.
 ///
@@ -3308,6 +3610,11 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             answers: Some(Host(Decoded)),
         },
         GeneratedCall {
+            name: CONSTRUCT_BEGIN,
+            takes: &[],
+            answers: Some(Host(Decoded)),
+        },
+        GeneratedCall {
             name: DECODE_ROOT,
             takes: &[Given(Host(Decoded))],
             answers: Some(Node),
@@ -4035,13 +4342,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther11.calculation.add"
+            "souther12.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther11.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther12.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -4081,7 +4388,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther11.calculation.add$example$0"
+            "souther12.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -4096,7 +4403,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther11.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther12.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -4167,7 +4474,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther11.pricing$value$standard"
+            "souther12.pricing$value$standard"
         );
     }
 
@@ -4205,7 +4512,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther11.pricing$construct$Amount"
+            "souther12.pricing$construct$Amount"
         );
     }
 
@@ -4225,7 +4532,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther11.pricing$checked$Amount"
+            "souther12.pricing$checked$Amount"
         );
     }
 
@@ -4255,23 +4562,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther11_m_pricing_t_Amount_construct"
+            "souther12_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther11_m_pricing_t_Amount_f_value"
+            "souther12_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther11_m_pricing_t_Result_case"
+            "souther12_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther11_m_pricing_t_Amount_decode"
+            "souther12_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther11_m_pricing_t_Amount_encode"
+            "souther12_m_pricing_t_Amount_encode"
         );
     }
 
@@ -4279,15 +4586,15 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther11_m_lib_m_shop_b_quote"
+            "souther12_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther11_m_lib_m_shop_v_standard"
+            "souther12_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther11_m_lib_m_shop_b_find_answer_case"
+            "souther12_m_lib_m_shop_b_find_answer_case"
         );
     }
 
@@ -4300,7 +4607,7 @@ mod tests {
                 &HostShape::Leaf(Value),
                 HostListOperation::Construct
             ),
-            "souther11_m_shop_l_value_construct"
+            "souther12_m_shop_l_value_construct"
         );
         assert_eq!(
             host_list_symbol(
@@ -4308,7 +4615,7 @@ mod tests {
                 &HostShape::Option(Box::new(HostShape::Leaf(Int))),
                 HostListOperation::At
             ),
-            "souther11_m_lib_m_shop_l_o_int_at"
+            "souther12_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
             host_list_symbol(
@@ -4319,7 +4626,7 @@ mod tests {
                 ]))),
                 HostListOperation::Length
             ),
-            "souther11_m_shop_l_l_t2_int_o_bool_length"
+            "souther12_m_shop_l_l_t2_int_o_bool_length"
         );
     }
 
@@ -4332,11 +4639,11 @@ mod tests {
         };
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Call),
-            "souther11_m_shop_fn_f2_int_string_o_int_call"
+            "souther12_m_shop_fn_f2_int_string_o_int_call"
         );
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Implement),
-            "souther11_m_shop_fn_f2_int_string_o_int_implement"
+            "souther12_m_shop_fn_f2_int_string_o_int_implement"
         );
     }
 
@@ -4420,11 +4727,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther11_m_shop_b_foo__bar"
+            "souther12_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther11_m_shop_b__u6570__u91cf_"
+            "souther12_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -4434,7 +4741,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther11.pricing$read$Amount"
+            "souther12.pricing$read$Amount"
         );
     }
 

@@ -110,16 +110,18 @@ a run inside it is opened from it with `scope`.
 
 A product, a newtype and a unit are each a `Copy` handle, whose native value is not public either,
 with a reader for each field. `new` takes the run and the fields and answers a `Construction` (the
-value, or an `invariant_violation` Raoh issue where what is handed over does not hold what the type
-states), and `decode` takes the run and the JSON text and answers a `Reading` (the value, or Raoh's
-issues, or `invalid_format` where the text is not JSON); each answers a `Failure` outside that where
-the call ended for another reason. `encode` writes the value in its external form, and `decoder` is
-`decode` as a raoh decoder of a `serde_json::Value`, which a host composes with its own the way a JVM
-host composes a type's `decoder()`. It reads in the run a `Decoding` lends the decoders of one decode
-(`Decoding::read`), which also makes a constructor into a decoder (`decoding.of`), and what the
-library finds wrong is an issue at the path it is reached at. A raoh decoder answers issues or a
-value and nothing else, so a step that ends the run for a reason of its own answers no issue, and the
-failure is what `Decoding::read` comes to.
+value, or the Raoh issue where what is handed over does not hold what the type states, the one
+`decode` answers for the same value: `invalid_format` with its `pattern` for a clause that is a
+pattern, `invariant_violation` naming the `module`, the `type` and the `clause` for one no
+constraint states), and `decode` takes the run and the JSON text and answers a `Reading` (the value,
+or Raoh's issues, or `invalid_format` where the text is not JSON); each answers a `Failure` outside
+that where the call ended for another reason. `encode` writes the value in its external form, and
+`decoder` is `decode` as a raoh decoder of a `serde_json::Value`, which a host composes with its own
+the way a JVM host composes a type's `decoder()`. It reads in the run a `Decoding` lends the
+decoders of one decode (`Decoding::read`), which also makes a constructor into a decoder
+(`decoding.of`), and what the library finds wrong is an issue at the path it is reached at. A raoh
+decoder answers issues or a value and nothing else, so a step that ends the run for a reason of its
+own answers no issue, and the failure is what `Decoding::read` comes to.
 
 A sum is a handle too, with `decode`, `decoder`, `encode` and `case`, which answers an enum of its
 cases, a case the model keeps being `Kept`, and `From` each of its cases and each narrower sum.
@@ -143,9 +145,16 @@ is this crate and the library disagreeing, which comes back as `Failure::Protoco
 An optional is an `Option` at every depth, a tuple a Rust tuple, a list a slice handed over and a
 `Vec` handed back. A list is built by the library of the slice's elements, and where the library
 answers that it could not build it, the call comes to `Failure::ProtocolViolation` rather than
-handing over a list that is not one. A union no declaration names is an enum with a variant for each
-member, named after them in the manifest's order (`FreeOrInt`), handed over by reference and handed
-back where the library says its case, as a behavior's answer.
+handing over a list that is not one. A set is the list of its members and a map the list of its
+entries, each a tuple of the key and the value: a `Map<String, Int>` is handed over as
+`&[(String, i64)]` and handed back as `Vec<(String, i64)>`, not as a `HashMap`. The library makes a
+set of what it is handed, two members that are one being one, and a map of the entries, the later of
+two under one key winning. What it hands back is in the order it holds them, which the language says
+nothing of; written in the external form (`encode`), a set's members and a map's keys are in
+ascending order, as [the coverage document](../../../docs/language-coverage.md) says. A union no
+declaration names is an enum with a variant for each member, named after them in the manifest's
+order (`FreeOrInt`), handed over by reference and handed back where the library says its case, as a
+behavior's answer.
 
 A function value is a type of its own (`FnIntToInt`), made by the library or by `FnIntToInt::host`
 of a `'static` Rust closure, which is handed the run and what the function takes and answers a

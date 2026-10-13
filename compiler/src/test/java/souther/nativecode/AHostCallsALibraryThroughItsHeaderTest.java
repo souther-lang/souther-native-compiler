@@ -177,19 +177,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
             int main(void) {
                 int64_t scope = souther_scope_open();
 
-                souther_value three = NULL;
-                souther_status status = souther@_m_shop_t_Money_construct(3, &three);
+                souther_decoded made = NULL;
+                souther_status status = souther@_m_shop_t_Money_construct(3, &made);
+                souther_value three = souther_decoded_value(made);
                 printf("money: status %u, value %" PRId64 "\\n", status,
                        value_of(three));
-                souther_value below = NULL;
+                souther_decoded below = NULL;
                 status = souther@_m_shop_t_Money_construct(-1, &below);
-                printf("below: %d\\n", status == SOUTHER_INVARIANT_NOT_HELD && below == NULL);
+                printf("below: %d\\n", status == SOUTHER_ANSWERED
+                       && souther_decoded_outcome(below) == SOUTHER_DECODED_ISSUES);
 
                 const char *wrap = "gift wrap";
                 souther_string note = NULL;
                 souther_string_of_utf8((const uint8_t *) wrap, (int64_t) strlen(wrap), &note);
-                souther_value line = NULL;
-                status = souther@_m_shop_t_Line_construct(three, 2, 1, note, &line);
+                status = souther@_m_shop_t_Line_construct(three, 2, 1, note, &made);
+                souther_value line = souther_decoded_value(made);
                 souther_string noted = NULL;
                 uint8_t present = 9;
                 souther@_m_shop_t_Line_f_note(line, &present, &noted);
@@ -218,16 +220,16 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 status = souther@_m_shop_b_quantityOf(NULL, 5, &counted_five);
                 souther_value none_counted = NULL;
                 souther_status nothing = souther@_m_shop_b_quantityOf(NULL, 0, &none_counted);
-                souther_value made = souther_case_int_make(7);
+                souther_value seven_made = souther_case_int_make(7);
                 int64_t five = 0, seven = 0, none = 9;
                 souther_case_int_read(counted_five, &five);
-                souther_case_int_read(made, &seven);
+                souther_case_int_read(seven_made, &seven);
                 uint8_t read_none = souther_case_int_read(none_counted, &none);
                 printf("counted: status %u, case %u, quantity %" PRId64 ", status %u, case %u,"
                        " made case %u quantity %" PRId64 ", none read %u %" PRId64 "\\n", status,
                        souther@_m_shop_b_quantityOf_answer_case(counted_five), five, nothing,
                        souther@_m_shop_b_quantityOf_answer_case(none_counted),
-                       souther@_m_shop_b_quantityOf_answer_case(made), seven, read_none, none);
+                       souther@_m_shop_b_quantityOf_answer_case(seven_made), seven, read_none, none);
 
                 const souther_value both[2] = {line, line};
                 souther_list lines = NULL;
@@ -260,8 +262,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
                 souther@_m_shop_l_int_construct(0, NULL, &rows[1]);
                 souther_list groups = NULL;
                 souther@_m_shop_l_l_int_construct(2, rows, &groups);
-                souther_value basket = NULL;
-                status = souther@_m_shop_t_Basket_construct(lines, notes, groups, &basket);
+                status = souther@_m_shop_t_Basket_construct(lines, notes, groups, &made);
+                souther_value basket = souther_decoded_value(made);
                 uint8_t first_there = 9;
                 souther_string first = NULL;
                 souther@_m_shop_l_o_string_at(notes_of(basket), 0,
@@ -389,20 +391,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
 
             $scope = $ffi->souther_scope_open();
 
-            $three = $ffi->new("souther_value");
-            $status = $ffi->souther@_m_shop_t_Money_construct(3, FFI::addr($three));
+            $made = $ffi->new("souther_decoded");
+            $status = $ffi->souther@_m_shop_t_Money_construct(3, FFI::addr($made));
+            $three = $ffi->souther_decoded_value($made);
             echo "money: status $status, value ",
                     field($ffi, "souther@_m_shop_t_Money_f_value", $three, "int64_t")->cdata, "\n";
-            $below = $ffi->new("souther_value");
+            $below = $ffi->new("souther_decoded");
             $status = $ffi->souther@_m_shop_t_Money_construct(-1, FFI::addr($below));
-            echo "below: ", (int) ($status === $ffi->SOUTHER_INVARIANT_NOT_HELD && FFI::isNull($below)),
-                    "\n";
+            echo "below: ", (int) ($status === $ffi->SOUTHER_ANSWERED
+                    && $ffi->souther_decoded_outcome($below) === $ffi->SOUTHER_DECODED_ISSUES), "\n";
 
             $wrap = "gift wrap";
             $note = $ffi->new("souther_string");
             $ffi->souther_string_of_utf8(bytes($ffi, $wrap), strlen($wrap), FFI::addr($note));
-            $line = $ffi->new("souther_value");
-            $status = $ffi->souther@_m_shop_t_Line_construct($three, 2, 1, $note, FFI::addr($line));
+            $status = $ffi->souther@_m_shop_t_Line_construct($three, 2, 1, $note, FFI::addr($made));
+            $line = $ffi->souther_decoded_value($made);
             $noted = $ffi->new("souther_string");
             $noteThere = $ffi->new("uint8_t");
             $ffi->souther@_m_shop_t_Line_f_note($line, FFI::addr($noteThere), FFI::addr($noted));
@@ -430,18 +433,18 @@ class AHostCallsALibraryThroughItsHeaderTest {
             $status = $ffi->souther@_m_shop_b_quantityOf(null, 5, FFI::addr($countedFive));
             $noneCounted = $ffi->new("souther_value");
             $nothing = $ffi->souther@_m_shop_b_quantityOf(null, 0, FFI::addr($noneCounted));
-            $made = $ffi->souther_case_int_make(7);
+            $sevenMade = $ffi->souther_case_int_make(7);
             $five = $ffi->new("int64_t");
             $ffi->souther_case_int_read($countedFive, FFI::addr($five));
             $seven = $ffi->new("int64_t");
-            $ffi->souther_case_int_read($made, FFI::addr($seven));
+            $ffi->souther_case_int_read($sevenMade, FFI::addr($seven));
             $none = $ffi->new("int64_t");
             $none->cdata = 9;
             $readNone = $ffi->souther_case_int_read($noneCounted, FFI::addr($none));
             echo "counted: status $status, case ", $ffi->souther@_m_shop_b_quantityOf_answer_case($countedFive),
                     ", quantity ", $five->cdata, ", status $nothing, case ",
                     $ffi->souther@_m_shop_b_quantityOf_answer_case($noneCounted), ", made case ",
-                    $ffi->souther@_m_shop_b_quantityOf_answer_case($made), " quantity ",
+                    $ffi->souther@_m_shop_b_quantityOf_answer_case($sevenMade), " quantity ",
                     $seven->cdata, ", none read $readNone ", $none->cdata, "\n";
 
             $both = $ffi->new("souther_value[2]");
@@ -482,8 +485,8 @@ class AHostCallsALibraryThroughItsHeaderTest {
             $ffi->souther@_m_shop_l_int_construct(0, null, FFI::addr($rows[1]));
             $groups = $ffi->new("souther_list");
             $ffi->souther@_m_shop_l_l_int_construct(2, $rows, FFI::addr($groups));
-            $basket = $ffi->new("souther_value");
-            $status = $ffi->souther@_m_shop_t_Basket_construct($lines, $notes, $groups, FFI::addr($basket));
+            $status = $ffi->souther@_m_shop_t_Basket_construct($lines, $notes, $groups, FFI::addr($made));
+            $basket = $ffi->souther_decoded_value($made);
             $firstThere = $ffi->new("uint8_t");
             $first = $ffi->new("souther_string");
             $ffi->souther@_m_shop_l_o_string_at(

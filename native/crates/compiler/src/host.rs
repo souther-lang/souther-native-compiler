@@ -49,6 +49,7 @@ use super::{
     Declared, Emitting, Lowered, NO_ARM, POINTER, Runs, TRUSTED, Tagged, accepted, into_slot,
     invocation_signature, machine_type, not_lowered, out_of_slot, out_slot, token_of,
 };
+use crate::codec::read::{Reached, constructed};
 use crate::codec::write::Writing;
 use crate::codec::{Codecs, Runtime};
 use crate::host_form::{self, Turning};
@@ -61,9 +62,17 @@ use crate::transport::{
 };
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, InstBuilder, TrapCode, types};
+use cranelift::codegen::isa::CallConv;
 use cranelift::frontend::FunctionBuilder;
 use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
+use souther_native_abi::{
+    ANSWER_CASE_ENTRY, BEHAVIOR_ENTRY, BIND_ENTRY, CASE_ENTRY, CONSTRUCT_ENTRY, DECODE_ENTRY,
+    DECODE_HOST_ENTRY, ENCODE_ENTRY, EntryPart, FIELD_ENTRY, FUNCTION_CALL_ENTRY,
+    FUNCTION_IMPLEMENT_ENTRY, FUNCTION_IMPLEMENTATION_ENTRY, HostEntry, IMPLEMENT_ENTRY,
+    IMPLEMENTATION_ENTRY, LIST_AT_ENTRY, LIST_CONSTRUCT_ENTRY, LIST_LENGTH_ENTRY, Representation,
+    VALUE_ENTRY,
+};
 use souther_native_abi::{
     ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, FUNCTION_INVOKE, HELD,
     HOSTED_FUNCTION_HOSTED, HOSTED_IMPLEMENTATION, HOSTED_USERDATA, HostFunctionOperation,
@@ -530,18 +539,6 @@ fn expose(
     Ok(function)
 }
 
-/// Every word of `shapes`, one after another, each as `parameter` makes a parameter of it.
-fn parameters(
-    shapes: &[HostShape],
-    parameter: fn(HostWord) -> HostParameter,
-) -> Vec<HostParameter> {
-    shapes
-        .iter()
-        .flat_map(HostShape::words)
-        .map(parameter)
-        .collect()
-}
-
 /// Defines what a host reaches every type a module of this build declares and publishes through,
 /// and puts each type and what reaches it on `surface`, and every list and function value a field
 /// crosses as on `crossings`.
@@ -568,15 +565,12 @@ pub(crate) fn define(
         let name = declaration.name();
         let mut described = DeclarationSurface::of(declaration, declared);
         if runs.carries(&key) {
-            let decoding = HostFunction {
-                symbol: host_decode_symbol(module_name, name),
-                takes: vec![
-                    HostParameter::Given(HostWord::Bytes),
-                    HostParameter::Given(HostWord::Count),
-                    HostParameter::Room(HostWord::Decoded),
-                ],
-                answers: Some(HostWord::Status),
-            };
+            let decoding = HostFunction::of(
+                &DECODE_ENTRY,
+                host_decode_symbol(module_name, name),
+                &[],
+                None,
+            );
             described.decoded_by(&expose(
                 emitting,
                 decoding,
@@ -593,15 +587,12 @@ pub(crate) fn define(
                     Ok(())
                 },
             )?);
-            let decoding_a_host_value = HostFunction {
-                symbol: host_decode_host_value_symbol(module_name, name),
-                takes: vec![
-                    HostParameter::Given(HostWord::Bytes),
-                    HostParameter::Given(HostWord::Count),
-                    HostParameter::Room(HostWord::Decoded),
-                ],
-                answers: Some(HostWord::Status),
-            };
+            let decoding_a_host_value = HostFunction::of(
+                &DECODE_HOST_ENTRY,
+                host_decode_host_value_symbol(module_name, name),
+                &[],
+                None,
+            );
             described.host_value_decoded_by(&expose(
                 emitting,
                 decoding_a_host_value,
@@ -618,11 +609,12 @@ pub(crate) fn define(
                     Ok(())
                 },
             )?);
-            let encoding = HostFunction {
-                symbol: host_encode_symbol(module_name, name),
-                takes: vec![HostParameter::Given(HostWord::Value)],
-                answers: Some(HostWord::String),
-            };
+            let encoding = HostFunction::of(
+                &ENCODE_ENTRY,
+                host_encode_symbol(module_name, name),
+                &[],
+                None,
+            );
             let literals = emitting.literals;
             described.encoded_by(&expose(
                 emitting,
@@ -656,7 +648,7 @@ pub(crate) fn define(
             .is_ok();
             if crosses {
                 let symbol = host_case_symbol(module_name, name);
-                let casing = expose_case(emitting, symbol, &sum, cases)?;
+                let casing = expose_case(emitting, (&CASE_ENTRY, symbol), &sum, cases)?;
                 described.cased_by(&casing);
             }
             surface.declaration(module_name, described);
@@ -678,17 +670,16 @@ pub(crate) fn define(
                     crossings.need(module_name, it);
                     handed.push(it.shape.clone());
                 }
-                let constructor = emitting.constructors.of(&key)?;
                 let field_types: Vec<Ty> = fields.iter().map(|it| it.codec.ty()).collect();
                 let value_ops = emitting.value_ops;
                 let call_conv = emitting.call_conv;
-                let mut takes = parameters(&handed, HostParameter::Given);
-                takes.push(HostParameter::Room(HostWord::Value));
-                let constructing = HostFunction {
-                    symbol: host_constructor_symbol(module_name, name),
-                    takes,
-                    answers: Some(HostWord::Status),
-                };
+                let reached = Reached::of(emitting);
+                let constructing = HostFunction::of(
+                    &CONSTRUCT_ENTRY,
+                    host_constructor_symbol(module_name, name),
+                    &handed,
+                    None,
+                );
                 let function = expose(emitting, constructing, &mut |builder, module, given| {
                     let mut turning = Turning {
                         module,
@@ -696,13 +687,9 @@ pub(crate) fn define(
                         value_ops,
                         call_conv,
                     };
-                    build(
-                        builder,
-                        &mut turning,
-                        constructor,
-                        (&handed, &field_types),
-                        given,
-                    )
+                    let (fields, out) =
+                        build(builder, &mut turning, (&handed, &field_types), given)?;
+                    constructed(reached, builder, module, codecs, (&key, &fields), out)
                 })?;
                 described.constructed_by(function, handed.clone());
             }
@@ -719,16 +706,12 @@ pub(crate) fn define(
             holds(&crossed.shape, &field.codec.ty())?;
             crossings.need(module_name, &crossed);
             let shape = crossed.shape;
-            let mut takes = vec![HostParameter::Given(HostWord::Value)];
-            takes.extend(parameters(
-                std::slice::from_ref(&shape),
-                HostParameter::Room,
-            ));
-            let reading = HostFunction {
-                symbol: host_field_symbol(module_name, name, &field.name),
-                takes,
-                answers: None,
-            };
+            let reading = HostFunction::of(
+                &FIELD_ENTRY,
+                host_field_symbol(module_name, name, &field.name),
+                &[],
+                Some(&shape),
+            );
             let ty = field.codec.ty();
             let value_ops = emitting.value_ops;
             let call_conv = emitting.call_conv;
@@ -758,15 +741,11 @@ pub(crate) fn define(
 /// through room.
 fn expose_case(
     emitting: &mut Emitting,
-    symbol: String,
+    (entry, symbol): (&HostEntry, String),
     ty: &Ty,
     cases: &[Case],
 ) -> Lowered<HostFunction> {
-    let casing = HostFunction {
-        symbol,
-        takes: vec![HostParameter::Given(HostWord::Value)],
-        answers: Some(HostWord::Case),
-    };
+    let casing = HostFunction::of(entry, symbol, &[], None);
     let declared = emitting.declared;
     expose(emitting, casing, &mut |builder, module, given| {
         let value = Tagged::of(given[0], ty);
@@ -850,7 +829,10 @@ pub(crate) fn define_behaviors(
                 let case = match call {
                     Ok(_) => Some(expose_case(
                         emitting,
-                        host_behavior_answer_case_symbol(behavior.module, behavior.name),
+                        (
+                            &ANSWER_CASE_ENTRY,
+                            host_behavior_answer_case_symbol(behavior.module, behavior.name),
+                        ),
                         &behavior.answers,
                         cases,
                     )?),
@@ -880,14 +862,12 @@ pub(crate) fn define_behaviors(
 /// the code is handed first. Nothing is copied, so what a host hands over is read where the
 /// behavior runs.
 fn bind(emitting: &mut Emitting, behavior: &Construction) -> Lowered<HostFunction> {
-    let function = HostFunction {
-        symbol: host_bind_symbol(behavior.module, behavior.name),
-        takes: vec![
-            HostParameter::Room(HostWord::Capability),
-            HostParameter::Given(HostWord::Requirements),
-        ],
-        answers: None,
-    };
+    let function = HostFunction::of(
+        &BIND_ENTRY,
+        host_bind_symbol(behavior.module, behavior.name),
+        &[],
+        None,
+    );
     let runs = behavior.runs;
     expose(emitting, function, &mut |builder, module, given| {
         let [into, requirements] = given else {
@@ -976,21 +956,13 @@ fn forward(
     crossings.need(entry.module, &answering);
     let answered = answering.shape;
     // What a behavior was constructed with, which a host hands first, as the behavior's symbol
-    // takes it.
-    let mut parameters_taken: Vec<HostParameter> = Vec::new();
-    if entry.constructed {
-        parameters_taken.push(HostParameter::Given(HostWord::Requirements));
-    }
-    parameters_taken.extend(parameters(&handed, HostParameter::Given));
-    parameters_taken.extend(parameters(
-        std::slice::from_ref(&answered),
-        HostParameter::Room,
-    ));
-    let function = HostFunction {
-        symbol,
-        takes: parameters_taken,
-        answers: Some(HostWord::Status),
+    // takes it; a value is constructed with nothing and takes nothing.
+    let kind = if entry.constructed {
+        &BEHAVIOR_ENTRY
+    } else {
+        &VALUE_ENTRY
     };
+    let function = HostFunction::of(kind, symbol, &handed, Some(&answered));
     let runs = entry.runs;
     let constructed = entry.constructed;
     let allocate = emitting.allocate;
@@ -1137,7 +1109,10 @@ pub(crate) fn define_injections(
         crossings.need(behavior.module, &answering);
         let answered = answering.shape;
         let implementation = hosted(
-            host_implementation_type(behavior.module, behavior.name),
+            (
+                &IMPLEMENTATION_ENTRY,
+                host_implementation_type(behavior.module, behavior.name),
+            ),
             &handed,
             &answered,
         );
@@ -1194,10 +1169,7 @@ pub(crate) fn define_injections(
         // laid out in `hosted`, and a capability of the code above over `hosted` written into
         // `into`.
         let implement = host_implement_symbol(behavior.module, behavior.name);
-        let mut implementing = ir::Signature::new(emitting.call_conv);
-        for _ in 0..4 {
-            implementing.params.push(ir::AbiParam::new(POINTER));
-        }
+        let implementing = addressed(&IMPLEMENT_ENTRY, emitting.call_conv);
         let id = accepted(emitting.module.declare_function(
             &implement,
             Linkage::Export,
@@ -1238,18 +1210,46 @@ pub(crate) fn define_injections(
 /// The function a host writes to answer what takes `takes` and answers `answers`, named `type_name`:
 /// handed what it was handed first where it was laid out, then each of `takes` as a host is handed
 /// it, then room for each word of what it answers, answering a status.
-fn hosted(type_name: String, takes: &[HostShape], answers: &HostShape) -> HostImplementation {
-    let mut given = vec![HostParameter::Given(HostWord::Userdata)];
-    given.extend(parameters(takes, HostParameter::Given));
-    given.extend(parameters(
-        std::slice::from_ref(answers),
-        HostParameter::Room,
-    ));
+fn hosted(
+    (entry, type_name): (&HostEntry, String),
+    takes: &[HostShape],
+    answers: &HostShape,
+) -> HostImplementation {
     HostImplementation {
         type_name,
-        takes: given,
-        answers: HostWord::Status,
+        takes: entry.takes(takes, Some(answers)),
+        answers: entry
+            .answers
+            .expect("what a host writes to answer a call answers a status"),
     }
+}
+
+/// The signature of what a host makes a hosted implementation through, `entry`, every part of which
+/// is an address: room, the implementation, a word as wide as one.
+fn addressed(entry: &HostEntry, call_conv: CallConv) -> ir::Signature {
+    let address = |word: HostWord| {
+        assert_eq!(
+            word.representation(),
+            Representation::Address,
+            "{} takes and answers addresses only",
+            entry.spelt
+        );
+        ir::AbiParam::new(POINTER)
+    };
+    let mut signature = ir::Signature::new(call_conv);
+    for part in entry.takes {
+        signature.params.push(match part {
+            EntryPart::Address(_) => ir::AbiParam::new(POINTER),
+            EntryPart::Word(HostParameter::Given(word)) => address(*word),
+            // Room is an address whatever it is room for.
+            EntryPart::Word(HostParameter::Room(_)) => ir::AbiParam::new(POINTER),
+            other => unreachable!("{} takes {other:?}, which is not one address", entry.spelt),
+        });
+    }
+    if let Some(word) = entry.answers {
+        signature.returns.push(address(word));
+    }
+    signature
 }
 
 /// Lays out, in the room a host handed at `hosted`, the function it wrote and what that function is
@@ -1420,17 +1420,12 @@ fn define_list(
 ) -> Lowered<()> {
     let allocate = emitting.allocate;
     let symbol = |operation| host_list_symbol(module_name, element, operation);
-    let mut takes = vec![HostParameter::Given(HostWord::Count)];
-    takes.extend(parameters(
+    let constructing = HostFunction::of(
+        &LIST_CONSTRUCT_ENTRY,
+        symbol(HostListOperation::Construct),
         std::slice::from_ref(element),
-        HostParameter::Slice,
-    ));
-    takes.push(HostParameter::Room(HostWord::List));
-    let constructing = HostFunction {
-        symbol: symbol(HostListOperation::Construct),
-        takes,
-        answers: Some(HostWord::Bool),
-    };
+        None,
+    );
     let construct = if built {
         Some(expose(
             emitting,
@@ -1460,11 +1455,12 @@ fn list_reading(
     element: &HostShape,
 ) -> Lowered<(HostFunction, HostFunction)> {
     let symbol = |operation| host_list_symbol(module_name, element, operation);
-    let measuring = HostFunction {
-        symbol: symbol(HostListOperation::Length),
-        takes: vec![HostParameter::Given(HostWord::List)],
-        answers: Some(HostWord::Count),
-    };
+    let measuring = HostFunction::of(
+        &LIST_LENGTH_ENTRY,
+        symbol(HostListOperation::Length),
+        &[],
+        None,
+    );
     let length = expose(emitting, measuring, &mut |builder, _, given| {
         let length = builder
             .ins()
@@ -1472,19 +1468,12 @@ fn list_reading(
         builder.ins().return_(&[length]);
         Ok(())
     })?;
-    let mut takes = vec![
-        HostParameter::Given(HostWord::List),
-        HostParameter::Given(HostWord::Count),
-    ];
-    takes.extend(parameters(
-        std::slice::from_ref(element),
-        HostParameter::Room,
-    ));
-    let indexing = HostFunction {
-        symbol: symbol(HostListOperation::At),
-        takes,
-        answers: Some(HostWord::Bool),
-    };
+    let indexing = HostFunction::of(
+        &LIST_AT_ENTRY,
+        symbol(HostListOperation::At),
+        &[],
+        Some(element),
+    );
     let at = expose(emitting, indexing, &mut |builder, _, given| {
         element_at(builder, element, given);
         Ok(())
@@ -1550,17 +1539,12 @@ fn function_call(
     let held: Vec<types::Type> = takes.iter().map(held_as).collect();
     let invocation = invocation_signature(&held, emitting.call_conv);
 
-    let mut given = vec![HostParameter::Given(HostWord::Function)];
-    given.extend(parameters(takes, HostParameter::Given));
-    given.extend(parameters(
-        std::slice::from_ref(answers),
-        HostParameter::Room,
-    ));
-    let calling = HostFunction {
-        symbol: host_function_symbol(module_name, function, HostFunctionOperation::Call),
-        takes: given,
-        answers: Some(HostWord::Status),
-    };
+    let calling = HostFunction::of(
+        &FUNCTION_CALL_ENTRY,
+        host_function_symbol(module_name, function, HostFunctionOperation::Call),
+        takes,
+        Some(answers),
+    );
     expose(emitting, calling, &mut |builder, module, params| {
         let (value, rest) = params.split_first().expect("the function value first");
         let mut given = rest.iter().copied();
@@ -1604,7 +1588,10 @@ fn function_making(
     let held: Vec<types::Type> = takes.iter().map(held_as).collect();
     let invocation = invocation_signature(&held, emitting.call_conv);
     let implementation = hosted(
-        host_function_symbol(module_name, function, HostFunctionOperation::Implementation),
+        (
+            &FUNCTION_IMPLEMENTATION_ENTRY,
+            host_function_symbol(module_name, function, HostFunctionOperation::Implementation),
+        ),
         takes,
         answers,
     );
@@ -1642,11 +1629,7 @@ fn function_making(
 
     // `(into, implementation, userdata) -> function`: the code above at the head of `into`, and the
     // host's function and what it is handed beside it, `into` being the value.
-    let mut implementing = ir::Signature::new(emitting.call_conv);
-    for _ in 0..3 {
-        implementing.params.push(ir::AbiParam::new(POINTER));
-    }
-    implementing.returns.push(ir::AbiParam::new(POINTER));
+    let implementing = addressed(&FUNCTION_IMPLEMENT_ENTRY, emitting.call_conv);
     let id = accepted(
         emitting
             .module
@@ -1856,21 +1839,16 @@ fn decode(
     builder.ins().return_(&[ok]);
 }
 
-/// A host's constructor: what it was handed, taken into what the declaration's own constructor
-/// takes, and that constructor called with the host's own room for the answer.
-///
-/// The status is the constructor's, and so is whether anything is written through the room: it
-/// writes the value there only once every clause has held, and a host that was answered
-/// `InvariantNotHeld` was handed nothing.
+/// What a host's constructor was handed, taken into the fields the declaration is built of, and
+/// the host's room for the reading the construction comes to ([`constructed`]).
 fn build(
     builder: &mut FunctionBuilder,
     turning: &mut Turning,
-    constructor: FuncId,
     (handed, types): (&[HostShape], &[Ty]),
     params: &[ir::Value],
-) -> Lowered<()> {
+) -> Lowered<(Vec<ir::Value>, ir::Value)> {
     let mut given = params.iter().copied();
-    let mut fields = Vec::with_capacity(handed.len() + 1);
+    let mut fields = Vec::with_capacity(handed.len());
     for (shape, ty) in handed.iter().zip(types) {
         let mut making = Making {
             module: turning.module,
@@ -1879,15 +1857,8 @@ fn build(
         let taken = take(builder, &mut making, shape, &mut given);
         fields.push(turning.taken(builder, ty, taken)?);
     }
-    let out = given.next().expect("room for the answer after the fields");
-    fields.push(out);
-    let reaching = turning
-        .module
-        .declare_func_in_func(constructor, builder.func);
-    let called = builder.ins().call(reaching, &fields);
-    let status = builder.inst_results(called)[0];
-    builder.ins().return_(&[status]);
-    Ok(())
+    let out = given.next().expect("room for the reading after the fields");
+    Ok((fields, out))
 }
 
 /// A host's reader of the field at `at`: the field written through the host's room, as every value

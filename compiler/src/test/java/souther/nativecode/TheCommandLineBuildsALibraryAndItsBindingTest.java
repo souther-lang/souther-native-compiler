@@ -79,6 +79,16 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
     }
 
     @Test
+    void aCommandSaysWhatItLacks() {
+        refused("nothing at all");
+        refused("no source", "--library", "out");
+        refused("neither -o nor --library", "m.sou");
+        assertThat(run("m.sou").said()).startsWith("-o <object> or --library <dir> says what to"
+                + " write; name one\n");
+        assertThat(run("--library", "out").said()).startsWith("name the sources to compile\n");
+    }
+
+    @Test
     void aCommandIsOneOutput() {
         refused("options for two outputs", "-o", "a.o", "--library", "out", "m.sou");
         refused("--with without a library", "-o", "a.o", "--with", "b.o", "m.sou");
@@ -187,9 +197,12 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
                 Map.of(option, value));
     }
 
+    /** Refused, and told why before the usage: a refusal that says only the usage says nothing. */
     private static void refused(String what, String... args) {
         assertThatThrownBy(() -> Main.read(args)).as(what).isInstanceOf(Main.NotACommand.class);
-        assertThat(run(args).ended()).as(what).isEqualTo(2);
+        Ran ran = run(args);
+        assertThat(ran.ended()).as(what).isEqualTo(2);
+        assertThat(ran.said()).as(what).doesNotStartWith("usage:").contains("\nusage: ");
     }
 
     private static Path sources(Path into, Map<String, String> files) throws Exception {

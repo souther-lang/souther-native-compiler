@@ -254,20 +254,10 @@ func library[T any](value T, err error) T {
 	return value
 }
 
-// Constructed is what a constructor's call came to: err where it answered, an
-// invariant_violation issue where the library says the invariant was not held, and the failure
-// otherwise.
-func Constructed(err error) error {
-	var abort *Abort
-	if errors.As(err, &abort) && abort.Name == "INVARIANT_NOT_HELD" {
-		return raoh.Invalid(raoh.NewIssue("invariant_violation"))
-	}
-	return err
-}
-
-// Reading is what reading a value out of its external form came to: the address of the value the
-// library read, or the issues found in it as a [*raoh.Issues] error, or an invalid_format issue
-// where the text is not JSON.
+// Reading is what reading a value out of its external form, or constructing one, came to: the
+// address of the value the library read or built, or the issues found in it as a [*raoh.Issues]
+// error, or an invalid_format issue where the text is not JSON. A construction refused is refused
+// for the one clause that did not hold, the issue the type's decoder answers for the same value.
 func Reading[B any](r *Run[B], decoded unsafe.Pointer) (unsafe.Pointer, error) {
 	r.checkReading()
 	lib := r.lib
