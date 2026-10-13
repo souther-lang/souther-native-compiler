@@ -57,6 +57,28 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
     }
 
     @Test
+    void helpWritesTheUsageAndNothingElse(@TempDir Path into) {
+        String out = into.resolve("out").toString();
+        // Asked for on its own, or among what would be a command: what it asks is how the command is
+        // written, which is answered and is not a refusal, and nothing is built or fetched for it.
+        for (String[] args : new String[][] {
+            {"--help"},
+            {"-h"},
+            {"--library", out, "m.sou", "--help"},
+            {"--help", "--fetch", "--offline"},
+        }) {
+            Ran ran = run(args);
+
+            assertThat(ran.ended()).as(String.join(" ", args)).isZero();
+            assertThat(ran.printed()).as(String.join(" ", args))
+                    .startsWith("usage: souther compile --target native")
+                    .contains("--help, -h");
+            assertThat(ran.said()).as(String.join(" ", args)).isEmpty();
+        }
+        assertThat(into.resolve("out")).doesNotExist();
+    }
+
+    @Test
     void aCommandIsOneOutput() {
         refused("options for two outputs", "-o", "a.o", "--library", "out", "m.sou");
         refused("--with without a library", "-o", "a.o", "--with", "b.o", "m.sou");

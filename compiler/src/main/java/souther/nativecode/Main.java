@@ -5,6 +5,8 @@ import souther.bindings.BindingInput;
 import souther.bindings.Declarations;
 import souther.bindings.Manifest;
 import souther.bindings.NotBindable;
+import souther.compiler.CompilationSources;
+import souther.compiler.CompilationSources.SourceFile;
 import souther.compiler.diag.CompileException;
 import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
@@ -12,7 +14,6 @@ import souther.compiler.program.CheckedProgram;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,7 +23,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Stream;
 
 /**
  * Compiles the sources named on the command line into one object file, or builds them into a
@@ -70,9 +70,11 @@ public final class Main {
                 + "           [--binding <generator> <dir> [--binding-option <key>=<value>]...]...\n"
                 + "           <source>...\n"
                 + "       souther compile --target native --fetch\n"
+                + "       souther compile --target native --help\n"
                 + "\n"
                 + "  --offline           fetch nothing: use only the driver and the generators already kept\n"
                 + "  --fetch             fetch the driver and every generator this does not have, and end\n"
+                + "  --help, -h          write this, and end\n"
                 + "  -cp <path>          the class path of other builds the program imports, as the souther\n"
                 + "                      command takes it (also --class-path)\n"
                 + "  -o <object>         where to write the object file\n"
@@ -90,17 +92,28 @@ public final class Main {
     /** What a command asks to be written, each of which is a whole command. */
     sealed interface Output {
 
+        /** What is built from the sources: the only outputs that read them, or a driver. */
+        sealed interface Build extends Output {
+        }
+
         /** One object file. */
-        record ObjectFile(Path into) implements Output {
+        record ObjectFile(Path into) implements Build {
         }
 
         /** What this needs and does not have, fetched: a command of its own, and writes no build. */
         record Fetch() implements Output {
         }
 
+        /**
+         * The usage, asked for with {@code --help} or {@code -h}: written and nothing else, since a
+         * command line that asks how it is written is one that did what it asked.
+         */
+        record Usage() implements Output {
+        }
+
         /** A library, reaching {@code alongside}, and each binding of it asked for. */
         record Library(Path into, List<Path> alongside, List<HostBinding> bindings)
-                implements Output {
+                implements Build {
 
             public Library {
                 alongside = List.copyOf(alongside);
@@ -149,9 +162,9 @@ public final class Main {
      */
     record Command(Output output, List<Path> sources, List<Path> classPath, boolean offline) {
 
-        CheckedProgram checked(List<String> read) {
-            return classPath.isEmpty() ? CheckedProgram.of(read)
-                    : CheckedProgram.of(read, ModulePath.ofClassPath(classPath));
+        CheckedProgram checked(CompilationSources read) {
+            return CheckedProgram.of(read, classPath.isEmpty() ? ModulePath.EMPTY
+                    : ModulePath.ofClassPath(classPath));
         }
     }
 
@@ -170,17 +183,19 @@ public final class Main {
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems) {
-        Fetching fetching;
-        try {
-            fetching = Fetching.standard();
-        } catch (NotFetched e) {
-            problems.println(e.getMessage());
-            return WRONG_COMMAND;
-        }
-        return run(args, out, problems, fetching);
+        return run(args, out, problems, Fetching::standard);
     }
 
     static int run(String[] args, PrintStream out, PrintStream problems, Fetching allowed) {
+        return run(args, out, problems, () -> allowed);
+    }
+
+    /** Where what a command may fetch is read from, asked only once there is a command to run. */
+    private interface Allowed {
+        Fetching fetching() throws NotFetched;
+    }
+
+    private static int run(String[] args, PrintStream out, PrintStream problems, Allowed allowed) {
         Command command;
         try {
             command = read(args);
@@ -191,30 +206,47 @@ public final class Main {
             problems.print(USAGE);
             return WRONG_COMMAND;
         }
-        Fetching fetching = allowed.withOffline(command.offline()).saying(problems);
-        if (command.output() instanceof Output.Fetch) {
-            return fetched(out, problems, fetching);
-        }
-
-        List<Path> files;
         try {
-            files = under(command.sources());
-        } catch (IOException | UncheckedIOException e) {
+            return switch (command.output()) {
+                // Before anything is read of where this fetches from: how the command is written is
+                // the same whatever is installed beside it.
+                case Output.Usage usage -> {
+                    out.print(USAGE);
+                    yield WROTE_IT;
+                }
+                case Output.Fetch fetch -> fetched(out, problems,
+                        fetching(allowed, command, problems));
+                case Output.Build build -> built(command, build,
+                        fetching(allowed, command, problems), out, problems);
+            };
+        } catch (NotFetched e) {
             problems.println(e.getMessage());
             return WRONG_COMMAND;
         }
-        if (files.isEmpty()) {
+    }
+
+    private static Fetching fetching(Allowed allowed, Command command, PrintStream problems)
+            throws NotFetched {
+        return allowed.fetching().withOffline(command.offline()).saying(problems);
+    }
+
+    /** What {@code build} asks for, built from the sources the command named. */
+    private static int built(Command command, Output.Build build, Fetching fetching,
+                             PrintStream out, PrintStream problems) {
+        CompilationSources read;
+        try {
+            read = readSources(command.sources());
+        } catch (IOException e) {
+            problems.println(e.getMessage());
+            return WRONG_COMMAND;
+        }
+        if (read.texts().isEmpty()) {
             problems.println("nothing to compile: no .sou file among what was named");
             return WRONG_COMMAND;
         }
 
         try {
-            List<String> read = new ArrayList<>(files.size());
-            for (Path file : files) {
-                read.add(Files.readString(file, StandardCharsets.UTF_8));
-            }
-            switch (command.output()) {
-                case Output.Fetch fetch -> throw new IllegalStateException("handled above");
+            switch (build) {
                 case Output.ObjectFile object -> {
                     byte[] written;
                     try (Holding held = new Holding()) {
@@ -225,17 +257,17 @@ public final class Main {
                         Files.createDirectories(object.into().getParent());
                     }
                     Files.write(object.into(), written);
-                    out.println("wrote " + object.into() + " from " + sources(files));
+                    out.println("wrote " + object.into() + " from " + sources(read));
                 }
                 case Output.Library library -> {
-                    return written(command, library, files, read, fetching, out, problems);
+                    return written(command, library, read, fetching, out, problems);
                 }
             }
         } catch (GeneratorFailed e) {
             problems.println(e.getMessage());
             return REFUSED;
         } catch (CompileException e) {
-            problems.println(e.getMessage());
+            Refusal.lines(e, read).forEach(problems::println);
             return REFUSED;
         } catch (NotLowered e) {
             // What this backend has not got round to, which is a different thing from a program
@@ -261,9 +293,8 @@ public final class Main {
      * go of on every way out, whatever was thrown: a generator closed, and a directory not put in
      * place dropped.
      */
-    private static int written(Command command, Output.Library library, List<Path> files,
-                               List<String> read, Fetching fetching, PrintStream out,
-                               PrintStream problems)
+    private static int written(Command command, Output.Library library, CompilationSources read,
+                               Fetching fetching, PrintStream out, PrintStream problems)
             throws IOException, GeneratorFailed, InterruptedException {
         try (Holding held = new Holding()) {
             List<Bindings.Generator> generators = new ArrayList<>();
@@ -287,7 +318,7 @@ public final class Main {
             }
             NativeCompiler.Library built = NativeCompiler.library(
                     command.checked(read), alongside, library.into(), driver);
-            out.println("wrote the library " + library.into() + " from " + sources(files));
+            out.println("wrote the library " + library.into() + " from " + sources(read));
             BindingInput input = new BindingInput(ManifestReader.read(built.manifest()),
                     Declarations.at(built.declarations()));
             List<BindingDirectory> staged = new ArrayList<>();
@@ -391,6 +422,9 @@ public final class Main {
             switch (held) {
                 case "--offline" -> offline = true;
                 case "--fetch" -> fetch = true;
+                case "--help", "-h" -> {
+                    return new Command(new Output.Usage(), List.of(), List.of(), false);
+                }
                 case "-o" -> object = once(held, object, Path.of(valueOf(args, ++at, held)));
                 case "--library" -> library = once(held, library, Path.of(valueOf(args, ++at, held)));
                 case "-cp", "--class-path" -> {
@@ -549,21 +583,29 @@ public final class Main {
         return inner.toAbsolutePath().normalize().startsWith(outer.toAbsolutePath().normalize());
     }
 
-    private static String sources(List<Path> files) {
-        return files.size() + (files.size() == 1 ? " source" : " sources");
+    private static String sources(CompilationSources read) {
+        int count = read.texts().size();
+        return count + (count == 1 ? " source" : " sources");
     }
 
-    private static List<Path> under(List<Path> named) throws IOException {
-        List<Path> files = new ArrayList<>();
+    /**
+     * The sources a command line named, read: a file as itself, and a directory as every
+     * {@code .sou} under it, read the way Souther reads a tree of sources.
+     *
+     * <p>Held as one value from here on, because what the program is checked from, what a lone file
+     * with no header is called, and what a refusal is quoted from are one list of texts in one
+     * order, and the compile is the one that says which id each gets.
+     */
+    private static CompilationSources readSources(List<Path> named) throws IOException {
+        List<SourceFile> files = new ArrayList<>();
         for (Path path : named) {
             if (Files.isDirectory(path)) {
-                try (Stream<Path> walked = Files.walk(path)) {
-                    walked.filter(it -> it.toString().endsWith(".sou")).sorted().forEach(files::add);
-                }
+                files.addAll(CompilationSources.readTree(path));
             } else {
-                files.add(path);
+                files.add(new SourceFile(path.toString(),
+                        Files.readString(path, StandardCharsets.UTF_8)));
             }
         }
-        return files;
+        return CompilationSources.files(files);
     }
 }
