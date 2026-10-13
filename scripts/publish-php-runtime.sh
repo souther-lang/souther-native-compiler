@@ -87,15 +87,16 @@ if $published; then
     exit 0
 fi
 
-# What a publication is held to: the runtime requires releases only.
+# What a publication is held to: the runtime requires releases only. PHP writes what goes wrong to
+# its standard output unless told otherwise, which the substitution would keep and say nothing of.
 if [ "$mode" = publish ]; then
-    unreleased="$(cd "$package" && php -r '
+    unreleased="$(cd "$package" && php -d display_errors=stderr -r '
         $require = json_decode(file_get_contents("composer.json"), true)["require"] ?? [];
         foreach ($require as $name => $constraint) {
             if (preg_match("/(^dev-|-dev$|@dev|@alpha|@beta|@RC)/i", $constraint)) {
                 echo "$name $constraint\n";
             }
-        }')"
+        }')" || refuse "what $directory requires could not be read out of its composer.json"
     if [ -n "$unreleased" ]; then
         refuse "the runtime requires what is not released, and is published requiring releases only:
 $unreleased"

@@ -92,19 +92,19 @@ class AValueIsWrittenHoweverDeeplyItsDeclarationsNestTest {
 
                 static void chain(int64_t n, uint8_t more, Value next, Value *into) {
                     const void *reading = 0;
-                    built(chainReading(n, more, next, &reading), reading, into);
+                    built(chainReading(n, more, next, &reading), &reading, into);
                 }
                 static void bottom(Value *into) {
                     const void *reading = 0;
-                    built(bottomReading(&reading), reading, into);
+                    built(bottomReading(&reading), &reading, into);
                 }
                 static void deeper(Value inner, Value *into) {
                     const void *reading = 0;
-                    built(deeperReading(inner, &reading), reading, into);
+                    built(deeperReading(inner, &reading), &reading, into);
                 }
                 static void held(Value inner, Value *into) {
                     const void *reading = 0;
-                    built(heldReading(inner, &reading), reading, into);
+                    built(heldReading(inner, &reading), &reading, into);
                 }
 
                 enum { DEPTH = 1000000 };

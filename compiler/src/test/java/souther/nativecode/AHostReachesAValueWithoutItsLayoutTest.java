@@ -147,17 +147,17 @@ class AHostReachesAValueWithoutItsLayoutTest {
 
                 static const char *money(int64_t cents, Value *into) {
                     const void *reading = 0;
-                    return built(moneyReading(cents, &reading), reading, into);
+                    return built(moneyReading(cents, &reading), &reading, into);
                 }
                 static const char *line(Value price, int64_t quantity, uint8_t noted, Value note,
                                         uint8_t gifted, uint8_t gift, Value *into) {
                     const void *reading = 0;
                     return built(lineReading(price, quantity, noted, note, gifted, gift, &reading),
-                                 reading, into);
+                                 &reading, into);
                 }
                 static const char *free_(Value *into) {
                     const void *reading = 0;
-                    return built(freeReading(&reading), reading, into);
+                    return built(freeReading(&reading), &reading, into);
                 }
 
                 /* A field is written through room: each of these reads one into its own. */

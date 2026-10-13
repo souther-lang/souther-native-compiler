@@ -68,10 +68,16 @@ final class Running {
     /**
      * C a harness that declares what it calls by hand puts after its includes, to build a value
      * through a host's constructor. A constructor writes a reading, as a decoder does, and
-     * {@code built} is handed what it answered and the reading: it writes the value the reading
-     * holds through {@code into} and answers {@code "built"}, or answers {@code "refused "} and the
-     * code of the issue the clause that did not hold is, writing nothing, or {@code "ended"} where a
-     * clause ended without a value. No {@code %} in it, so a harness formatted after it is whole.
+     * {@code built} is handed what it answered and where it wrote the reading: it writes the value
+     * the reading holds through {@code into} and answers {@code "built"}, or answers
+     * {@code "refused "} and the code of the issue the clause that did not hold is, writing nothing,
+     * or {@code "ended"} where a clause ended without a value.
+     *
+     * <p>The reading is handed by its address and read inside, after the constructor has written
+     * it: C evaluates a call's arguments in no order it promises, so a reading handed by value
+     * beside the call that writes it, {@code built(make(&reading), reading, into)}, is read before
+     * it is written where a compiler evaluates the arguments right to left, as GCC does. No
+     * {@code %} in it, so a harness formatted after it is whole.
      */
     static final String BUILT = """
             #include <stdint.h>
@@ -86,10 +92,12 @@ final class Running {
 
             static char builtSaid[96];
 
-            static const char *built(uint32_t status, const void *reading, const void **into) {
+            static const char *built(uint32_t status, const void *const *written,
+                                     const void **into) {
                 if (status != 0) {
                     return "ended";
                 }
+                const void *reading = *written;
                 if (souther_decoded_outcome(reading) == 0) {
                     *into = souther_decoded_value(reading);
                     return "built";
