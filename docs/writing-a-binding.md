@@ -14,16 +14,18 @@ generator knows the runtime's surface, since it writes calls to it, and the two 
 command knows neither.
 
 The command ships three generators, which its catalog names
-([`KnownBindings`](../compiler/src/main/java/souther/nativecode/KnownBindings.java)) and asks for by
-their own flags, and runs a generator of anyone else's that it is pointed at with `--binding`. Both
-are a jar, and the command runs both the same way.
+([`KnownBindings`](../compiler/src/main/java/souther/nativecode/KnownBindings.java)), and runs a
+generator of anyone else's that it is pointed at. Both are asked for with `--binding`, both are a
+jar, and the command runs both the same way.
 
 ## Pointing the command at a generator
 
-A generator of someone else's is named by its Maven coordinate and the SHA-256 of its jar:
+A generator the command ships is named by its id, `php`, `rust` or `go`. A generator of someone
+else's is named by its Maven coordinate and the SHA-256 of its jar:
 
 ```text
 souther compile --target native --library out/native \
+    --binding rust out/rust --binding-option crate=shop \
     --binding com.acme:souther-binding-kotlin:1.2.0@sha256:<64 hex> out/kotlin \
     --binding-option package=com.acme.shop \
     src/
@@ -34,11 +36,14 @@ jar from, and the digest which bytes it has to be. Other bytes under the same co
 artifact, so a fetched jar is kept under its coordinate and its digest, in
 `$SOUTHER_HOME/generators/<group>/<artifact>/<version>/<sha256>.jar`, and hashed again each time it
 is used. `--binding-option key=value` belongs to the `--binding` before it and may be repeated; the
-command splits it at the first `=`, and refuses a key named twice for one binding.
+command splits it at the first `=`, and refuses a key named twice for one binding. For a generator
+the command ships it also refuses a key that generator does not take, before anything runs; what a
+generator of someone else's takes is that generator's to say. A generator the command ships is asked
+for once in a command.
 
 An author's own build is named by the path of its jar, `--binding build/libs/generator.jar out/kotlin`,
-and no digest is asked for; a path always ends in `.jar`, and a coordinate never does, so neither is
-taken for the other. Whichever way a jar was named, the command reads it once, hashes those bytes,
+and no digest is asked for. A path always ends in `.jar`, a coordinate never does, and an id of the
+catalog does neither and holds no `:`, so none of the three is taken for another. Whichever way a jar was named, the command reads it once, hashes those bytes,
 and loads a copy it writes from them for itself: never the kept jar or the path, which another
 process could replace before a class is read, so what runs is what was hashed. The copy is deleted
 once the command is done with the generator, or at once where the jar is refused.

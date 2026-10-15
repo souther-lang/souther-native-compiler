@@ -11,4 +11,4 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 
 "${SOUTHER:-souther}" compile --target native --library "$here/build/native" \
-    --rust "$here/build/rust" --crate model "$here/../cart-model"
+    --binding rust "$here/build/rust" --binding-option crate=model "$here/../cart-model"

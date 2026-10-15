@@ -268,22 +268,26 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
         String before = System.getProperty(property);
         try {
             System.clearProperty(property);
-            Ran none = run("--library", into.resolve("native").toString(), "--php",
-                    into.resolve("out").toString(), "--namespace", "Acme", model.toString());
+            Ran none = run("--library", into.resolve("native").toString(), "--binding", "php",
+                    into.resolve("out").toString(), "--binding-option", "namespace=Acme",
+                    model.toString());
             assertThat(none.ended()).isEqualTo(2);
-            assertThat(none.said()).contains("-D" + property);
+            assertThat(none.said()).startsWith("--binding php needs the PHP generator")
+                    .contains("-D" + property);
             assertThat(into.resolve("native")).doesNotExist();
 
             System.setProperty(property, rust.toString());
-            Ran another = run("--library", into.resolve("native").toString(), "--php",
-                    into.resolve("out").toString(), "--namespace", "Acme", model.toString());
+            Ran another = run("--library", into.resolve("native").toString(), "--binding", "php",
+                    into.resolve("out").toString(), "--binding-option", "namespace=Acme",
+                    model.toString());
             assertThat(another.ended()).isEqualTo(2);
             assertThat(another.said()).contains("says it is the generator \"rust\"")
                     .contains("\"php\"");
 
             System.setProperty(property, php.toString());
-            Ran ran = run("--library", into.resolve("native").toString(), "--php",
-                    into.resolve("out").toString(), "--namespace", "Acme", model.toString());
+            Ran ran = run("--library", into.resolve("native").toString(), "--binding", "php",
+                    into.resolve("out").toString(), "--binding-option", "namespace=Acme",
+                    model.toString());
             assertThat(ran.ended()).as(ran.said()).isZero();
             assertThat(ran.printed()).contains("with the PHP generator");
             assertThat(asked()).startsWith("preflight {namespace=Acme}");
@@ -324,12 +328,12 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
         assertThat(ran.said()).contains("--binding <generator> <dir>")
                 .contains("--binding-option <key>=<value>");
         for (KnownBindings.Kind kind : KnownBindings.all()) {
-            assertThat(ran.said()).contains(kind.flag() + " <dir>");
+            assertThat(ran.said()).containsPattern("\n    " + kind.id() + " +" + kind.display()
+                    + " binding; options: ");
             for (String option : kind.options()) {
-                assertThat(ran.said()).contains("--" + option + " <value>");
-                assertThat(KnownBindings.qualifiedBy("--" + option)).contains(kind);
+                assertThat(ran.said()).contains(option + "=<value>");
             }
-            assertThat(KnownBindings.askedBy(kind.flag())).contains(kind);
+            assertThat(KnownBindings.named(kind.id())).contains(kind);
             assertThat(kind.id()).as("an id the catalog names is a reserved one")
                     .matches(IdRule.RESERVED);
         }

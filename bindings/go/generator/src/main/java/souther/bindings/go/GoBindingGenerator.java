@@ -31,8 +31,8 @@ public final class GoBindingGenerator implements BindingGenerator {
         }
         String path = options.get("package");
         if (path == null) {
-            throw new NotBindable("--go wants --package, the import path of the package the binding"
-                    + " is");
+            throw new NotBindable("the Go binding wants the option package, the import path of the"
+                    + " package the binding is");
         }
         return path;
     }

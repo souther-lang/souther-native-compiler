@@ -10,4 +10,4 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 
 "${SOUTHER:-souther}" compile --target native --library "$here/build/native" \
-    --php "$here/build/php" --namespace Model "$here/../cart-model"
+    --binding php "$here/build/php" --binding-option namespace=Model "$here/../cart-model"

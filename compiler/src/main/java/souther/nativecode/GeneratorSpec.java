@@ -41,7 +41,7 @@ record GeneratorSpec(GeneratorRef ref, IdRule rule, String display) {
             String version = fetching.version();
             String named = System.getProperty(DEVELOPMENT_PROPERTY + kind.id());
             if (named == null) {
-                throw new NotFetched(kind.flag() + " needs " + display + ", and this is not a release"
+                throw new NotFetched("--binding " + kind.id() + " needs " + display + ", and this is not a release"
                         + (version == null ? "" : " (" + version + ")") + ", so there is none to"
                         + " fetch: a clone names the jar its build made with -D"
                         + DEVELOPMENT_PROPERTY + kind.id() + ", as scripts/souther-native does");

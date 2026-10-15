@@ -82,8 +82,8 @@ Cargo, and runs it in place of an installed one.
 
 `bin/build` runs the command line:
 
-    souther compile --target native --library <here>/build/native --php <here>/build/php \
-        --namespace Model <here>/../cart-model
+    souther compile --target native --library <here>/build/native \
+        --binding php <here>/build/php --binding-option namespace=Model <here>/../cart-model
 
 It writes the library into `build/native` and its binding into `build/php`, under the namespace
 `Model`, which `composer.json` maps as it maps the application's own classes. The module is
