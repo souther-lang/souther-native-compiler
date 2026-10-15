@@ -134,9 +134,40 @@ is built, and each refusal is exercised, a publication's of a pseudo-version wit
 in a clone, so that is what holds the resolution.
 
 Nothing is published from CI. The release workflow keeps the publication and creates the GitHub
-release, and what goes to a registry is published by hand, from a clean clone at the tag, once the
-Souther the backend names is on Maven Central: the publication, which holds the backend jar, to Maven
-Central from the workflow's `maven-repository` artifact; the Rust runtime with `cargo publish` in
+release, and what goes to a registry is published by hand, once the Souther the backend names is on
+Maven Central.
+
+The version a release has is the tag's. The workflow sets every module to it
+(`versions:set`) before it builds anything, so the poms of the tagged commit keep their snapshot
+version, and nothing is committed for the release but what it is built against: `souther.version` in
+the top-level `pom.xml`, which has to name a Souther release that is already on Maven Central, since
+the backend runs only under the CLI of exactly that version and a published pom that names a snapshot
+names something Central does not hold. The publication's jars each have their sources and their
+Javadoc beside them, which Central requires: the publication step builds with the `publication`
+profile, which attaches them, and `verify-release-build.sh` refuses a jar without them.
+
+The publication reaches Maven Central from the workflow's `maven-repository` artifact, and from
+nowhere else, because it is the only copy of a compiler carrying the checksums. The owner downloads
+it and runs [`scripts/publish-to-central.sh`](../scripts/publish-to-central.sh) on it:
+
+    git tag v0.1.0 <commit> && git push origin v0.1.0
+    gh run list --workflow release.yml --limit 1
+    gh run watch <run> --exit-status
+    gh run download <run> -n maven-repository -D <directory>
+    scripts/publish-to-central.sh <directory>
+
+The script refuses a directory that does not hold one version of this repository's artifacts, a
+snapshot, and a jar without its sources and Javadoc. It holds each checksum the deploy wrote to its
+file, writes the MD5, SHA-1, SHA-256 and SHA-512 that are missing, signs every file with
+`gpg --armor --detach-sign` (gpg asks for the passphrase; `SOUTHER_GPG_KEY` chooses a key other than
+gpg's default), zips the repository's layout into a bundle, and uploads it to the Central Portal's
+Publisher API with `publishingType=AUTOMATIC`, as the user token of the server `central` in
+`~/.m2/settings.xml`, the one Souther's own release publishes with. It prints the deployment's id and
+then its state until Central says it is published or has failed; interrupting it leaves the
+deployment going. It works on a copy of the directory, so a failed upload is run again on the same
+download. `--rehearse` does everything but the upload and leaves the bundle in the current directory.
+
+The rest is published from a clean clone at the tag: the Rust runtime with `cargo publish` in
 `bindings/rust/runtime`; the Go runtime's tag with `scripts/publish-go-runtime.sh`; and the PHP
 runtime with [`scripts/publish-php-runtime.sh`](../scripts/publish-php-runtime.sh). Packagist reads
 a package from the root of a repository, so the PHP runtime is published to a mirror,

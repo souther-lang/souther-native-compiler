@@ -78,4 +78,23 @@ if [ "$expected" != "$deployed" ]; then
     printf '  %s\n' $deployed >&2
     exit 1
 fi
-echo "the publication is what was checksummed, and holds what the modules publish"
+
+# Maven Central refuses a jar without its sources and its Javadoc beside it, and it is refused there
+# only after the publication has been signed and uploaded; so it is refused here, where the workflow
+# that built it can still be run again.
+for artifact in $deployed; do
+    base="$repository/org/souther-lang/$artifact/$version/$artifact-$version"
+    if [ ! -f "$base.pom" ]; then
+        echo "no $base.pom" >&2
+        exit 1
+    fi
+    if [ -f "$base.jar" ]; then
+        for classifier in sources javadoc; do
+            if [ ! -f "$base-$classifier.jar" ]; then
+                echo "no $base-$classifier.jar, which Maven Central requires beside $base.jar" >&2
+                exit 1
+            fi
+        done
+    fi
+done
+echo "the publication is what was checksummed, and holds what the modules publish, each jar with its sources and its Javadoc"

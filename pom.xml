@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+         child.project.url.inherit.append.path="false">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org.souther-lang</groupId>
@@ -28,6 +29,17 @@
             <url>https://github.com/kawasima</url>
         </developer>
     </developers>
+
+    <!-- Every module is in this one repository, so a module's pom names the repository as it is, in
+         its scm and its url (the attribute on <project>), and not with its artifactId appended, which
+         is what Maven does to an inherited url otherwise. -->
+    <scm child.scm.connection.inherit.append.path="false"
+         child.scm.developerConnection.inherit.append.path="false"
+         child.scm.url.inherit.append.path="false">
+        <connection>scm:git:https://github.com/souther-lang/souther-native-compiler.git</connection>
+        <developerConnection>scm:git:git@github.com:souther-lang/souther-native-compiler.git</developerConnection>
+        <url>https://github.com/souther-lang/souther-native-compiler</url>
+    </scm>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -192,4 +204,49 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <!-- What Maven Central takes beside each jar, its sources and its Javadoc, attached by the
+             release workflow's publication step and by nothing else: `-Ppublication`. A build that
+             publishes nothing has no use for them, and Javadoc is the slowest of the two.
+             scripts/verify-release-build.sh refuses a publication whose jars lack either. -->
+        <profile>
+            <id>publication</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.4.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.12.0</version>
+                        <configuration>
+                            <doclint>none</doclint>
+                            <failOnError>false</failOnError>
+                            <quiet>true</quiet>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
