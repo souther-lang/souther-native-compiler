@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -116,7 +117,7 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
 
     @Test
     void aCommandIsReadAsTheOutputItNames() throws Exception {
-        Main.Command command = Main.read(new String[]{"-cp", "a" + java.io.File.pathSeparator + "b",
+        Main.Command command = Main.read(new String[]{"-cp", "a" + File.pathSeparator + "b",
                 "--library", "out", "--with", "x.o", "--with", "y.o", "--binding", "php", "php",
                 "--binding-option", "namespace=N", "m.sou"});
 
@@ -141,6 +142,20 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
                 List.of(binding("rust", "rust", "crate", "acme"),
                         binding("go", "go", "package", "example.com/shop"),
                         binding("php", "php", "namespace", "Acme\\Shop"))));
+    }
+
+    /** A generator of someone else's takes its place among the catalog's where the line names it. */
+    @Test
+    void aBindingOfSomeoneElsesKeepsItsPlaceAmongTheCatalogs() throws Exception {
+        Main.Command command = Main.read(new String[]{"--library", "out", "--binding", "go", "go",
+                "--binding-option", "package=example.com/shop", "--binding", "build/kotlin.jar",
+                "kotlin", "--binding", "php", "php", "--binding-option", "namespace=N", "m.sou"});
+
+        assertThat(command.output()).isEqualTo(new Main.Output.Library(Path.of("out"), List.of(),
+                List.of(binding("go", "go", "package", "example.com/shop"),
+                        new Main.HostBinding(new Main.Asked.External(new GeneratorRef.Local(
+                                Path.of("build/kotlin.jar"))), Path.of("kotlin"), Map.of()),
+                        binding("php", "php", "namespace", "N"))));
     }
 
     /**

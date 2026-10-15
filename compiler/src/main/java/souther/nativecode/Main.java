@@ -56,7 +56,7 @@ public final class Main {
             for (String option : kind.options()) {
                 options.append(options.isEmpty() ? "" : ", ").append(option).append("=<value>");
             }
-            catalog.append("    %-17s the %s binding, with the option %s\n"
+            catalog.append("    %-17s %s binding; options: %s\n"
                     .formatted(kind.id(), kind.display(), options));
         }
         return "usage: souther compile --target native [--offline] [-cp <path>] -o <object> <source>...\n"
@@ -83,7 +83,8 @@ public final class Main {
                 + "                      an option of the --binding before it, split at the first =\n"
                 + "  <source>            a .sou file, or a directory holding some\n"
                 + "\n"
-                + "  the generators of this compiler:\n"
+                + "  built-in generators, with the options each takes; which it needs, and what a\n"
+                + "  value may be, is the generator's to say:\n"
                 + catalog;
     }
 

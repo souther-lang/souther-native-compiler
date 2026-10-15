@@ -328,8 +328,8 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
         assertThat(ran.said()).contains("--binding <generator> <dir>")
                 .contains("--binding-option <key>=<value>");
         for (KnownBindings.Kind kind : KnownBindings.all()) {
-            assertThat(ran.said()).containsPattern("\n    " + kind.id() + " +the " + kind.display()
-                    + " binding, with the option ");
+            assertThat(ran.said()).containsPattern("\n    " + kind.id() + " +" + kind.display()
+                    + " binding; options: ");
             for (String option : kind.options()) {
                 assertThat(ran.said()).contains(option + "=<value>");
             }
