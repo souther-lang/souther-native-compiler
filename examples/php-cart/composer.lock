@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "02ddc61ce78fcd0c81c9314e2572757d",
+    "content-hash": "ad774950de51c6bdb5e20e31fc3e6e61",
     "packages": [
         {
             "name": "raoh/notation-199x",
@@ -114,10 +114,17 @@
         },
         {
             "name": "souther-lang/php-runtime",
-            "version": "dev-main",
+            "version": "v0.1.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/souther-lang/php-runtime.git",
+                "reference": "52cfa953a1ddbc5d1cffeaf94cf186a24a18f77e"
+            },
             "dist": {
-                "type": "path",
-                "url": "../../bindings/php/runtime"
+                "type": "zip",
+                "url": "https://api.github.com/repos/souther-lang/php-runtime/zipball/52cfa953a1ddbc5d1cffeaf94cf186a24a18f77e",
+                "reference": "52cfa953a1ddbc5d1cffeaf94cf186a24a18f77e",
+                "shasum": ""
             },
             "require": {
                 "ext-ffi": "*",
@@ -130,14 +137,16 @@
                     "Souther\\Runtime\\": "src/"
                 }
             },
+            "notification-url": "https://packagist.org/downloads/",
             "license": [
                 "Apache-2.0"
             ],
             "description": "What every PHP binding of a Souther library built by souther-native-compiler runs on: loading the library, a run's arena, handles, and failures",
             "homepage": "https://github.com/souther-lang/souther-native-compiler/tree/develop/bindings/php/runtime",
-            "transport-options": {
-                "relative": true
-            }
+            "support": {
+                "source": "https://github.com/souther-lang/php-runtime/tree/v0.1.0"
+            },
+            "time": "2026-10-15T14:40:26+00:00"
         }
     ],
     "packages-dev": [
@@ -1908,9 +1917,7 @@
     ],
     "aliases": [],
     "minimum-stability": "stable",
-    "stability-flags": {
-        "souther-lang/php-runtime": 20
-    },
+    "stability-flags": {},
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {

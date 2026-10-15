@@ -625,7 +625,6 @@ dependencies = [
  "raoh",
  "rusqlite",
  "serde_json",
- "souther-binding-runtime",
  "tokio",
  "tower",
  "trybuild",
@@ -749,6 +748,8 @@ dependencies = [
 [[package]]
 name = "souther-binding-runtime"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57ae5f43de7ade324edc0e13a7602a8e8350f50af53df09e0ff04c53a276f6fe"
 dependencies = [
  "libloading",
  "raoh",

@@ -108,6 +108,17 @@ against, so in a clone the examples' `bin/build` is run with `$SOUTHER` naming
 that CLI looks and runs a command with `$SOUTHER` naming it, so
 `scripts/with-the-souther-cli <souther> scripts/rust-cart-example.sh` is the example as a user runs it.
 
+The examples require each runtime as an application does, at a release from its registry:
+`souther-binding-runtime` from crates.io, the Go runtime module from the module proxy, and
+`souther-lang/php-runtime` from Packagist; their locks name that release. A binding built from a
+clone requires the runtime at the version the clone's runtime is, and between a change to a runtime
+and its publication that version is in no registry. So `scripts/<language>-cart-example.sh` asks the
+registry for the clone's version first. Where it is there, the example is built and tested as it is
+committed, its lock held to it; where it is not, the script builds a copy of the example with the
+runtime taken from the clone (a `[patch]`, a `replace`, a path repository) and leaves the committed
+example as it is. The release build is one of the latter for any runtime it changed, since a
+runtime is published after the release.
+
 The Go runtime is a module of its own in a directory of this repository, and its version is its own:
 the file `bindings/go/runtime/VERSION`, beside its `go.mod`, which the Go generator is built with
 and requires. It is not the compiler's, which has no reason to move when the runtime does not, and
