@@ -14,11 +14,12 @@ answers in. How the library itself is called, function by function, is in
 A binding is written by the same command that builds the library, and the namespace it is written
 under is the caller's to name:
 
-    souther compile --target native --library build/native --php build/php --namespace 'Acme\Shop' model
+    souther compile --target native --library build/native \
+        --binding php build/php --binding-option 'namespace=Acme\Shop' model
 
 `--library` writes the shared library, its C declarations and its manifest into `build/native`, and
-`--php` writes the binding into `build/php`, with a copy of those declarations as `souther.ffi.h`
-beside it. The [top-level README](../../../README.md) says how the command is installed, and how a
+`--binding php` writes the binding into `build/php`, under the namespace its option `namespace`
+names, with a copy of those declarations as `souther.ffi.h` beside it. The [top-level README](../../../README.md) says how the command is installed, and how a
 clone runs it. A namespace PHP will not take is refused before the library is built.
 
 The runtime is the Composer package `souther-lang/php-runtime` on Packagist, which an application

@@ -31,7 +31,8 @@ public final class RustBindingGenerator implements BindingGenerator {
         }
         String crate = options.get("crate");
         if (crate == null) {
-            throw new NotBindable("--rust wants --crate, the name of the crate the binding is");
+            throw new NotBindable("the Rust binding wants the option crate, the name of the crate"
+                    + " the binding is");
         }
         return crate;
     }

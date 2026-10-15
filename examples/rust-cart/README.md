@@ -203,8 +203,8 @@ bin/build` builds the backend from the clone and runs it in place of an installe
 
 `bin/build` runs the command line:
 
-    souther compile --target native --library <here>/build/native --rust <here>/build/rust \
-        --crate model <here>/../cart-model
+    souther compile --target native --library <here>/build/native \
+        --binding rust <here>/build/rust --binding-option crate=model <here>/../cart-model
 
 It writes the library into `build/native` and its binding into `build/rust`, as the crate `model`,
 which `Cargo.toml` depends on by path. The module is `com.example.cart.domain`, so its types are

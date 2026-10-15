@@ -18,22 +18,22 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
  * Compiles the sources named on the command line into one object file, or builds them into a
- * library for a host and, if asked, the PHP and the Rust binding of it.
+ * library for a host and, if asked, the bindings of it.
  *
  * <p>Nothing here decides what a library or a binding is. The program is checked once, the driver
  * writes the library from it ({@link NativeCompiler#library}), and each binding is generated from
  * the manifest the driver wrote ({@link BindingGenerator#generate}), never from the program a
- * second time. A binding is written by a generator's jar: one the catalog names
- * ({@link KnownBindings}), or one named with {@code --binding} by its coordinate and digest or its
- * path. Both come to one {@link GeneratorSpec}, and are run the one way {@link Bindings} runs a jar.
+ * second time. A binding is written by a generator's jar, which {@code --binding} names: by an id
+ * of the catalog ({@link KnownBindings}), or by its coordinate and digest or its path. Both come to
+ * one {@link GeneratorSpec}, and are run the one way {@link Bindings} runs a jar.
  *
  * <p>Each directory is replaced whole by what writes it, and each is a directory of its own: a
  * binding refused after its library was written leaves the new library and the binding that was
@@ -50,23 +50,18 @@ public final class Main {
     private static final String USAGE = usage();
 
     private static String usage() {
-        StringBuilder asked = new StringBuilder();
-        StringBuilder described = new StringBuilder();
+        StringBuilder catalog = new StringBuilder();
         for (KnownBindings.Kind kind : KnownBindings.all()) {
-            asked.append(asked.isEmpty() ? "" : " ").append("[").append(kind.flag())
-                    .append(" <dir>");
-            described.append("  %-19s where to write the %s binding of the library\n"
-                    .formatted(kind.flag() + " <dir>", kind.display()));
+            StringBuilder options = new StringBuilder();
             for (String option : kind.options()) {
-                asked.append(" --").append(option).append(" <value>");
-                described.append("  %-19s an option of the %s binding\n"
-                        .formatted("--" + option + " <value>", kind.display()));
+                options.append(options.isEmpty() ? "" : ", ").append(option).append("=<value>");
             }
-            asked.append("]");
+            catalog.append("    %-17s the %s binding, with the option %s\n"
+                    .formatted(kind.id(), kind.display(), options));
         }
         return "usage: souther compile --target native [--offline] [-cp <path>] -o <object> <source>...\n"
                 + "       souther compile --target native [--offline] [-cp <path>] --library <dir>\n"
-                + "           [--with <object>]... " + asked + "\n"
+                + "           [--with <object>]...\n"
                 + "           [--binding <generator> <dir> [--binding-option <key>=<value>]...]...\n"
                 + "           <source>...\n"
                 + "       souther compile --target native --fetch\n"
@@ -80,13 +75,16 @@ public final class Main {
                 + "  -o <object>         where to write the object file\n"
                 + "  --library <dir>     where to write the library: object, headers, manifest, shared library\n"
                 + "  --with <object>     the object another build the program reaches was compiled to\n"
-                + described
                 + "  --binding <generator> <dir>\n"
-                + "                      where to write the binding a generator of someone else's writes; the\n"
-                + "                      generator is groupId:artifactId:version@sha256:<hex>, or a path to a jar\n"
+                + "                      where to write the binding the generator writes; the generator is\n"
+                + "                      one of this compiler's, by its id, or one of someone else's, as\n"
+                + "                      groupId:artifactId:version@sha256:<hex> or a path to a jar\n"
                 + "  --binding-option <key>=<value>\n"
                 + "                      an option of the --binding before it, split at the first =\n"
-                + "  <source>            a .sou file, or a directory holding some\n";
+                + "  <source>            a .sou file, or a directory holding some\n"
+                + "\n"
+                + "  the generators of this compiler:\n"
+                + catalog;
     }
 
     /** What a command asks to be written, each of which is a whole command. */
@@ -123,17 +121,30 @@ public final class Main {
     }
 
     /**
-     * The generator a binding was asked for with: a flag of the catalog, or {@code --binding} and a
-     * jar. What the command reads and nothing more; which jar that is, is {@link GeneratorSpec#of}.
+     * The generator a binding was asked for with: an id of the catalog, or a jar. What the command
+     * reads and nothing more; which jar that is, is {@link GeneratorSpec#of}.
      */
     sealed interface Asked {
 
-        /** A binding of the catalog, by its flag. */
+        /** A binding of the catalog, by its id. */
         record Standard(KnownBindings.Kind kind) implements Asked {
         }
 
-        /** A generator named with {@code --binding}. */
+        /** A generator of someone else's, by its coordinate and digest or its path. */
         record External(GeneratorRef ref) implements Asked {
+        }
+
+        /**
+         * What {@code --binding} names: an id of the catalog, or else what {@link GeneratorRef#parse}
+         * reads. An id holds neither a {@code :} nor ends in {@code .jar}, so none is taken for a
+         * jar's coordinate or path.
+         */
+        static Asked of(String generator) {
+            Optional<KnownBindings.Kind> kind = KnownBindings.named(generator);
+            if (kind.isPresent()) {
+                return new Standard(kind.get());
+            }
+            return new External(GeneratorRef.parse(generator));
         }
     }
 
@@ -149,9 +160,9 @@ public final class Main {
 
         /** The option that asked for it, as a refusal of the command line names it. */
         String option() {
-            return switch (asked) {
-                case Asked.Standard standard -> standard.kind().flag();
-                case Asked.External external -> "--binding " + external.ref();
+            return "--binding " + switch (asked) {
+                case Asked.Standard standard -> standard.kind().id();
+                case Asked.External external -> external.ref().toString();
             };
         }
     }
@@ -171,7 +182,7 @@ public final class Main {
     /** A command line that is not a command, and why. */
     static final class NotACommand extends Exception {
         NotACommand(String why) {
-            super(java.util.Objects.requireNonNull(why, "a command refused says why"));
+            super(Objects.requireNonNull(why, "a command refused says why"));
         }
     }
 
@@ -407,10 +418,7 @@ public final class Main {
         Path object = null;
         Path library = null;
         List<Path> alongside = new ArrayList<>();
-        Map<KnownBindings.Kind, Path> asked = new HashMap<>();
-        Map<KnownBindings.Kind, Map<String, String>> qualified = new HashMap<>();
-        List<Named> external = new ArrayList<>();
-        Map<String, String> externalOptions = null;
+        List<Named> named = new ArrayList<>();
         List<Path> sources = new ArrayList<>();
         List<Path> classPath = new ArrayList<>();
         boolean offline = false;
@@ -434,19 +442,23 @@ public final class Main {
                 }
                 case "--with" -> alongside.add(Path.of(valueOf(args, ++at, held)));
                 case "--binding" -> {
-                    GeneratorRef ref;
+                    String generator = valueOf(args, ++at, held);
+                    Asked asking;
                     try {
-                        ref = GeneratorRef.parse(valueOf(args, ++at, held));
+                        asking = Asked.of(generator);
                     } catch (IllegalArgumentException e) {
                         throw new NotACommand(held + ": " + e.getMessage());
                     }
-                    externalOptions = new LinkedHashMap<>();
-                    external.add(new Named(ref, Path.of(valueOf(args, ++at, held + " <generator>")),
-                            externalOptions));
+                    if (asking instanceof Asked.Standard standard && named.stream()
+                            .anyMatch(before -> before.asked().equals(standard))) {
+                        throw new NotACommand(held + " " + generator + " is named twice");
+                    }
+                    named.add(new Named(asking, Path.of(valueOf(args, ++at, held + " " + generator)),
+                            new LinkedHashMap<>()));
                 }
                 case "--binding-option" -> {
                     String option = valueOf(args, ++at, held);
-                    if (externalOptions == null) {
+                    if (named.isEmpty()) {
                         throw new NotACommand(held + " qualifies the --binding before it, and"
                                 + " there is none");
                     }
@@ -456,25 +468,19 @@ public final class Main {
                                 + "\" is not");
                     }
                     String key = option.substring(0, equals);
-                    if (externalOptions.put(key, option.substring(equals + 1)) != null) {
+                    Named binding = named.getLast();
+                    if (binding.asked() instanceof Asked.Standard standard
+                            && !standard.kind().options().contains(key)) {
+                        throw new NotACommand("--binding " + standard.kind().id()
+                                + " takes no option \"" + key + "\"; it takes "
+                                + String.join(", ", standard.kind().options()));
+                    }
+                    if (binding.options().put(key, option.substring(equals + 1)) != null) {
                         throw new NotACommand(held + " names " + key + " twice for one binding");
                     }
                 }
                 default -> {
-                    Optional<KnownBindings.Kind> asks = KnownBindings.askedBy(held);
-                    Optional<KnownBindings.Kind> qualifies = KnownBindings.qualifiedBy(held);
-                    if (asks.isPresent()) {
-                        // A --binding-option after a flag of the catalog would read as the
-                        // flag's, and belongs to no --binding before it.
-                        externalOptions = null;
-                        asked.put(asks.get(),
-                                once(held, asked.get(asks.get()), Path.of(valueOf(args, ++at, held))));
-                    } else if (qualifies.isPresent()) {
-                        Map<String, String> options = qualified.computeIfAbsent(qualifies.get(),
-                                kind -> new HashMap<>());
-                        options.put(held.substring(2),
-                                once(held, options.get(held.substring(2)), valueOf(args, ++at, held)));
-                    } else if (held.startsWith("-")) {
+                    if (held.startsWith("-")) {
                         throw new NotACommand("no such option: " + held);
                     } else {
                         sources.add(Path.of(held));
@@ -487,8 +493,7 @@ public final class Main {
                 throw new NotACommand("--fetch and --offline ask for opposite things");
             }
             if (object != null || library != null || !sources.isEmpty() || !alongside.isEmpty()
-                    || !classPath.isEmpty() || !asked.isEmpty() || !qualified.isEmpty()
-                    || !external.isEmpty()) {
+                    || !classPath.isEmpty() || !named.isEmpty()) {
                 throw new NotACommand("--fetch is a command of its own, and takes nothing else");
             }
             return new Command(new Output.Fetch(), List.of(), List.of(), false);
@@ -503,18 +508,8 @@ public final class Main {
             if (!alongside.isEmpty()) {
                 throw new NotACommand("--with goes with --library");
             }
-            if (!external.isEmpty()) {
+            if (!named.isEmpty()) {
                 throw new NotACommand("--binding goes with --library");
-            }
-            for (KnownBindings.Kind kind : KnownBindings.all()) {
-                if (asked.containsKey(kind)) {
-                    throw new NotACommand(kind.flag() + " goes with --library");
-                }
-                for (String option : kind.options()) {
-                    if (qualified.getOrDefault(kind, Map.of()).containsKey(option)) {
-                        throw new NotACommand("--" + option + " goes with --library");
-                    }
-                }
             }
             if (object == null) {
                 throw new NotACommand("-o <object> or --library <dir> says what to write; name one");
@@ -522,24 +517,11 @@ public final class Main {
             return new Command(new Output.ObjectFile(object), List.copyOf(sources),
                     List.copyOf(classPath), offline);
         }
-        for (KnownBindings.Kind kind : KnownBindings.all()) {
-            if (!asked.containsKey(kind) && qualified.containsKey(kind)) {
-                throw new NotACommand("--" + qualified.get(kind).keySet().iterator().next()
-                        + " goes with " + kind.flag());
-            }
-        }
         List<String> directories = new ArrayList<>(List.of("--library"));
         List<Path> placed = new ArrayList<>(List.of(library));
         List<HostBinding> bindings = new ArrayList<>();
-        for (KnownBindings.Kind kind : KnownBindings.all()) {
-            if (asked.containsKey(kind)) {
-                bindings.add(new HostBinding(new Asked.Standard(kind), asked.get(kind),
-                        qualified.getOrDefault(kind, Map.of())));
-            }
-        }
-        for (Named binding : external) {
-            bindings.add(new HostBinding(new Asked.External(binding.ref()), binding.into(),
-                    binding.options()));
+        for (Named binding : named) {
+            bindings.add(new HostBinding(binding.asked(), binding.into(), binding.options()));
         }
         for (HostBinding binding : bindings) {
             directories.add(binding.option());
@@ -560,7 +542,7 @@ public final class Main {
     }
 
     /** A {@code --binding} as read so far: its options are added to as the command line goes on. */
-    private record Named(GeneratorRef ref, Path into, Map<String, String> options) {
+    private record Named(Asked asked, Path into, Map<String, String> options) {
     }
 
     private static String valueOf(String[] args, int at, String option) throws NotACommand {

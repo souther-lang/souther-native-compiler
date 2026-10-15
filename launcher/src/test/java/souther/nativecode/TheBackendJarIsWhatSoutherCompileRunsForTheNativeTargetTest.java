@@ -126,7 +126,8 @@ class TheBackendJarIsWhatSoutherCompileRunsForTheNativeTargetTest {
                 "-Dsouther.native.driver=" + System.getProperty("souther.native.driver"),
                 "-Dsouther.generator.rust=" + System.getProperty("souther.generator.rust"),
                 "-jar", jar().toString(),
-                "--library", "out/native", "--rust", "out/rust", "--crate", "shop", "src"));
+                "--library", "out/native", "--binding", "rust", "out/rust",
+                "--binding-option", "crate=shop", "src"));
         Process process = new ProcessBuilder(command).directory(directory.toFile())
                 .redirectErrorStream(true).start();
         process.getOutputStream().close();

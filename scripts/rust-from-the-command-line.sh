@@ -36,7 +36,7 @@ EOF
 # The line the README gives.
 # $SOUTHER is a CLI where scripts/with-the-souther-cli runs this, and scripts/souther otherwise.
 "${SOUTHER:-scripts/souther}" compile --target native --library "$app/native" \
-    --rust "$app/rust" --crate shop "$app/model"
+    --binding rust "$app/rust" --binding-option crate=shop "$app/model"
 
 cat > "$app/host/Cargo.toml" <<EOF
 [package]

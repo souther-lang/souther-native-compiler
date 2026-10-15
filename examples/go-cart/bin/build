@@ -10,6 +10,6 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
 
-"${SOUTHER:-souther}" compile --target native --library "$here/build/native" --go "$here/build/go" \
-    --package example.com/go-cart/model \
+"${SOUTHER:-souther}" compile --target native --library "$here/build/native" \
+    --binding go "$here/build/go" --binding-option package=example.com/go-cart/model \
     "$here/../cart-model"

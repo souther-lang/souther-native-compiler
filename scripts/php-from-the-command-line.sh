@@ -36,7 +36,7 @@ EOF
 # The line the README gives.
 # $SOUTHER is a CLI where scripts/with-the-souther-cli runs this, and scripts/souther otherwise.
 "${SOUTHER:-scripts/souther}" compile --target native --library "$app/native" \
-    --php "$app/php" --namespace Shop "$app/model"
+    --binding php "$app/php" --binding-option namespace=Shop "$app/model"
 
 # The binding's namespace is mapped by the application, as it would map its own classes. raoh-php is
 # the version the runtime's composer.lock fixes, so this run installs what every other run does and

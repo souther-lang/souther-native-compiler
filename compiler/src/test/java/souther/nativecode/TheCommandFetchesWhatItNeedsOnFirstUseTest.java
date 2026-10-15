@@ -691,8 +691,9 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
         Files.createDirectories(model);
         Files.writeString(model.resolve("money.sou"), MONEY, StandardCharsets.UTF_8);
         String[] command = Stream.concat(Stream.of(options), Stream.of("--library",
-                into.resolve(name + "/native").toString(), "--php", into.resolve(name + "/out").toString(),
-                "--namespace", "Acme", model.toString())).toArray(String[]::new);
+                into.resolve(name + "/native").toString(), "--binding", "php",
+                into.resolve(name + "/out").toString(), "--binding-option", "namespace=Acme",
+                model.toString())).toArray(String[]::new);
         return run(fetching, command);
     }
 

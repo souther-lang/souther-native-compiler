@@ -38,7 +38,7 @@ LINES
 # The line the README gives.
 # $SOUTHER is a CLI where scripts/with-the-souther-cli runs this, and scripts/souther otherwise.
 "${SOUTHER:-scripts/souther}" compile --target native --library "$app/native" \
-    --go "$app/go" --package example.com/shop "$app/model"
+    --binding go "$app/go" --binding-option package=example.com/shop "$app/model"
 
 runtime="github.com/souther-lang/souther-native-compiler/bindings/go/runtime"
 # Raoh as the runtime requires it, asked of Go, which reads go.mod however it is laid out.

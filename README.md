@@ -52,12 +52,14 @@ backend among those installed beside it, checks that it was built against the CL
 runs it as a process of its own with every argument after the target. Only a JVM is needed to run
 it, which the CLI needs anyway.
 
-    souther compile --target native --library build/native --php build/php --namespace 'Acme\Shop' model
+    souther compile --target native --library build/native \
+        --binding php build/php --binding-option 'namespace=Acme\Shop' model
 
     souther compile --target native [--offline] [-cp <path>] -o <object> <source>...
     souther compile --target native [--offline] [-cp <path>] --library <dir>
-        [--with <object>]... [--php <dir> --namespace <ns>] [--rust <dir> --crate <name>]
-        [--go <dir> --package <import path>] <source>...
+        [--with <object>]...
+        [--binding <generator> <dir> [--binding-option <key>=<value>]...]...
+        <source>...
     souther compile --target native --fetch
     souther compile --target native --help
 
@@ -73,10 +75,14 @@ A source is a `.sou` file or a directory holding some. A lone file may leave out
 header and is then named after its file, as `souther compile` names it, and a link found under a
 directory is refused rather than followed, as is a directory under it that cannot be read, rather
 than left out. `--help` writes the usage and ends with 0. `-o` writes one object file. `--library`
-writes what a host is handed into its directory ([docs/host-abi.md](docs/host-abi.md)), and `--php`,
-`--rust` and `--go` each write that binding of it, from the library's model. A program importing
-another build reads that build's modules from `-cp`, the class path the `souther` command takes, and
-has its object linked in with `--with`, one for each build. The command ends with 0 where it wrote
+writes what a host is handed into its directory ([docs/host-abi.md](docs/host-abi.md)), and each
+`--binding` writes a binding of it, from the library's model, into the directory after the
+generator. The generator is `php`, `rust` or `go` for the bindings this compiler ships, which take
+the option `namespace`, `crate` and `package` respectively, each as `--binding-option <key>=<value>`
+after its `--binding`; a generator of anyone else's is named by its coordinate and digest or the path
+of its jar ([docs/writing-a-binding.md](docs/writing-a-binding.md)). A program importing another
+build reads that build's modules from `-cp`, the class path the `souther` command takes, and has its
+object linked in with `--with`, one for each build. The command ends with 0 where it wrote
 everything, 1 where the build is refused (a compile error, what this backend does not write yet, a
 name from the model a binding's language will not take, or a generator that failed), and 2 where the
 command is refused.
@@ -90,9 +96,9 @@ directory holding what no binding of that language wrote, is refused before the 
 The compiler is one artifact, and what a command needs beyond it is fetched the first time it needs
 it and kept in `~/.souther` (`$SOUTHER_HOME` where it is set): the driver for the platform it runs
 on, from the GitHub release of its own version, and the generator of each binding that is asked for,
-from Maven Central at that version. Nothing else is fetched unless the command line names it: a
-flag of the catalog brings what the catalog names, and nobody who does not use the Rust binding has
-the Rust generator.
+from Maven Central at that version. Nothing else is fetched unless the command line names it: an id
+of the catalog brings what the catalog names, and nobody who does not use the Rust binding has the
+Rust generator.
 
 A binding of someone else's is written by their generator's jar, named by its coordinate and the
 SHA-256 of the jar, or by a path to a jar for its author's own build:
@@ -124,7 +130,8 @@ compiler does not look in the directory it is run in, where a project of somebod
 an executable of the same name. In a clone, the script stands where `souther compile --target native`
 stands:
 
-    scripts/souther-native --library build/native --php build/php --namespace 'Acme\Shop' model
+    scripts/souther-native --library build/native \
+        --binding php build/php --binding-option 'namespace=Acme\Shop' model
 
 The script builds what the command needs and runs it in the directory it was started in, so the
 paths are read from there. The jar is also run directly with `java -jar`, which is how the CLI starts

@@ -250,8 +250,9 @@ place of an installed one.
 
 `bin/build` runs the command line:
 
-    souther compile --target native --library <here>/build/native --go <here>/build/go \
-        --package example.com/go-cart/model <here>/../cart-model
+    souther compile --target native --library <here>/build/native \
+        --binding go <here>/build/go --binding-option package=example.com/go-cart/model \
+        <here>/../cart-model
 
 It writes the library into `build/native` and its binding into `build/go`, as the module
 `example.com/go-cart/model`, which `go.mod` replaces with that directory. The module is

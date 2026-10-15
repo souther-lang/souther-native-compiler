@@ -83,8 +83,8 @@ class TheLauncherWritesTheBindingsItFindsTest {
         Path model = sources(into, Map.of("money.sou", MONEY, "lines.sou", LINES));
 
         Ran ran = run("--library", into.resolve("native").toString(),
-                "--php", into.resolve("php").toString(), "--namespace", "Acme\\Shop",
-                model.toString());
+                "--binding", "php", into.resolve("php").toString(),
+                "--binding-option", "namespace=Acme\\Shop", model.toString());
 
         assertThat(ran.ended()).as(ran.said()).isZero();
         assertThat(into.resolve("native").resolve("souther.json")).exists();
@@ -112,8 +112,8 @@ class TheLauncherWritesTheBindingsItFindsTest {
         Path building = sources(into.resolve("building"), Map.of("lines.sou", LINES));
 
         Ran ran = run("-cp", classes.toString(), "--library", into.resolve("native").toString(),
-                "--with", object.toString(), "--php", into.resolve("php").toString(),
-                "--namespace", "Acme", building.toString());
+                "--with", object.toString(), "--binding", "php", into.resolve("php").toString(),
+                "--binding-option", "namespace=Acme", building.toString());
 
         assertThat(ran.ended()).as(ran.said()).isZero();
         assertThat(into.resolve("php").resolve("Shop").resolve("Money").resolve("Money.php"))
@@ -127,8 +127,8 @@ class TheLauncherWritesTheBindingsItFindsTest {
         Path model = sources(into, Map.of("money.sou", MONEY));
 
         Ran ran = run("--library", into.resolve("native").toString(),
-                "--php", into.resolve("php").toString(), "--namespace", "class",
-                model.toString());
+                "--binding", "php", into.resolve("php").toString(),
+                "--binding-option", "namespace=class", model.toString());
 
         assertThat(ran.ended()).isEqualTo(2);
         assertThat(ran.said()).contains("class");
@@ -145,14 +145,18 @@ class TheLauncherWritesTheBindingsItFindsTest {
         Path model = sources(into, Map.of("money.sou", MONEY));
 
         Ran php = run("--library", into.resolve("native").toString(),
-                "--php", into.resolve("php").toString(), model.toString());
+                "--binding", "php", into.resolve("php").toString(), model.toString());
         Ran rust = run("--library", into.resolve("native").toString(),
-                "--rust", into.resolve("rust").toString(), model.toString());
+                "--binding", "rust", into.resolve("rust").toString(), model.toString());
+        Ran go = run("--library", into.resolve("native").toString(),
+                "--binding", "go", into.resolve("go").toString(), model.toString());
 
         assertThat(php.ended()).isEqualTo(2);
-        assertThat(php.said()).contains("--php wants --namespace");
+        assertThat(php.said()).contains("the PHP binding wants the option namespace");
         assertThat(rust.ended()).isEqualTo(2);
-        assertThat(rust.said()).contains("--rust wants --crate");
+        assertThat(rust.said()).contains("the Rust binding wants the option crate");
+        assertThat(go.ended()).isEqualTo(2);
+        assertThat(go.said()).contains("the Go binding wants the option package");
         assertThat(into.resolve("native")).doesNotExist();
     }
 
@@ -161,8 +165,8 @@ class TheLauncherWritesTheBindingsItFindsTest {
         Path model = sources(into, Map.of("lines.sou", LINES));
 
         Ran ran = run("--library", into.resolve("native").toString(),
-                "--php", into.resolve("php").toString(), "--namespace", "Acme",
-                model.toString());
+                "--binding", "php", into.resolve("php").toString(),
+                "--binding-option", "namespace=Acme", model.toString());
 
         assertThat(ran.ended()).isEqualTo(1);
         assertThat(into.resolve("native")).doesNotExist();
