@@ -14,7 +14,7 @@ answers in. How the library itself is called, function by function, is in
 A binding is written by the same command that builds the library, and the namespace it is written
 under is the caller's to name:
 
-    souther compile --target native --library build/native --php build/php --namespace Acme\Shop model
+    souther compile --target native --library build/native --php build/php --namespace 'Acme\Shop' model
 
 `--library` writes the shared library, its C declarations and its manifest into `build/native`, and
 `--php` writes the binding into `build/php`, with a copy of those declarations as `souther.ffi.h`

@@ -52,7 +52,7 @@ backend among those installed beside it, checks that it was built against the CL
 runs it as a process of its own with every argument after the target. Only a JVM is needed to run
 it, which the CLI needs anyway.
 
-    souther compile --target native --library build/native --php build/php --namespace Acme\Shop model
+    souther compile --target native --library build/native --php build/php --namespace 'Acme\Shop' model
 
     souther compile --target native [--offline] [-cp <path>] -o <object> <source>...
     souther compile --target native [--offline] [-cp <path>] --library <dir>
@@ -124,7 +124,7 @@ compiler does not look in the directory it is run in, where a project of somebod
 an executable of the same name. In a clone, the script stands where `souther compile --target native`
 stands:
 
-    scripts/souther-native --library build/native --php build/php --namespace Acme\Shop model
+    scripts/souther-native --library build/native --php build/php --namespace 'Acme\Shop' model
 
 The script builds what the command needs and runs it in the directory it was started in, so the
 paths are read from there. The jar is also run directly with `java -jar`, which is how the CLI starts
