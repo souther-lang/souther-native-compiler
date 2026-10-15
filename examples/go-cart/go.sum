@@ -16,6 +16,8 @@ github.com/raoh-project/raoh-go v0.9.0 h1:2PUPFbVmPXsaCn1ZyiMLRNVfkChzsJvgDnePTN
 github.com/raoh-project/raoh-go v0.9.0/go.mod h1:AeW+oAqE8+oiGSrTo5oOB5GlMyFrYD2pPqM/sNqnmnw=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
+github.com/souther-lang/souther-native-compiler/bindings/go/runtime v0.1.0 h1:RoEw7tEfYFowzizdEbpy3YoaHcRRvaQRMZI9qrR/0fE=
+github.com/souther-lang/souther-native-compiler/bindings/go/runtime v0.1.0/go.mod h1:o0UKipX/I7z1hmrJDMgvUeoj4boi2Qj+Wdj8CE0ICSw=
 golang.org/x/mod v0.41.0 h1:qJmnOUb4YB+FsEuM3HcWucdZASCPGhsX6uljO6pog0c=
 golang.org/x/mod v0.41.0/go.mod h1:Ek9pY8RKWXwsWvd3rQiHYtMqkjSUV+s1Rj7j4H5Ur6o=
 golang.org/x/sync v0.23.0 h1:KameEIfc1IkluZyXWLn39Wd4tURc6GbCiISGiZm2bQk=

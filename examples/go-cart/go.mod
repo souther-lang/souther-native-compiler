@@ -24,6 +24,3 @@ require (
 
 // The binding bin/build writes from cart.sou: a package per module of the model, and Load.
 replace example.com/go-cart/model => ./build/go
-
-// Until the runtime is published, a binding reaches it from the clone.
-replace github.com/souther-lang/souther-native-compiler/bindings/go/runtime => ../../bindings/go/runtime

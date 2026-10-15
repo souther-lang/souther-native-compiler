@@ -10,7 +10,7 @@ error[E0277]: `NonNull<u8>` cannot be sent between threads safely
    |
    = help: within `{closure@$DIR/tests/ui/a_value_sent_to_another_thread.rs:11:31: 11:38}`, the trait `Send` is not implemented for `NonNull<u8>`
 note: required because it appears within the type `souther_binding_runtime::run::Held<'_, Library>`
-  --> $SOUTHER_BINDING_RUNTIME/src/run.rs
+  --> $CARGO/souther-binding-runtime-$VERSION/src/run.rs
    |
    | pub struct Held<'run, L> {
    |            ^^^^

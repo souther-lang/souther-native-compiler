@@ -115,6 +115,10 @@ jobs:
       # runtime that leaves its version alone is found here and not by the release that would have
       # failed on it. Then the same cart over raoh-go and SQLite, and what the Go runtime refuses
       # where Rust's types do.
+      #
+      # Each cart example requires its runtime from the registry, at the release its lock names, and
+      # is built that way where the clone's runtime is at a published version; where it is not, its
+      # script builds a copy of the example over the clone's runtime (docs/development.md).
       - run: >-
           scripts/in-parallel.sh
           'scripts/php-from-the-command-line.sh

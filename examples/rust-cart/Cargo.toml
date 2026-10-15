@@ -7,12 +7,9 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
-# The binding bin/build writes from cart.sou: a module per module of the model, and Library.
+# The binding bin/build writes from cart.sou: a module per module of the model, and Library. It
+# requires souther-binding-runtime from crates.io, which the application reaches only through it.
 model = { path = "build/rust" }
-# What the binding runs on, which the application reaches only through `model`. Named here by its
-# path, and not only patched in below, so that trybuild writes where rustc points into it as
-# $SOUTHER_BINDING_RUNTIME rather than as the path of this clone; it reads [dependencies] alone.
-souther-binding-runtime = { path = "../../bindings/rust/runtime" }
 axum = "0.8"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
 # SQLite built from source, so the example needs no SQLite installed beside it.
@@ -28,7 +25,3 @@ jiff = "0.2"
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
 trybuild = "1"
-
-# Until the runtime is published, a binding reaches it from the clone.
-[patch.crates-io]
-souther-binding-runtime = { path = "../../bindings/rust/runtime" }

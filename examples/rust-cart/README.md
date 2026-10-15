@@ -209,8 +209,8 @@ bin/build` builds the backend from the clone and runs it in place of an installe
 It writes the library into `build/native` and its binding into `build/rust`, as the crate `model`,
 which `Cargo.toml` depends on by path. The module is `com.example.cart.domain`, so its types are
 `model::com::example::cart::domain::*`, under the names the model spells them with
-(`item.productId()`). The runtime the binding calls comes from `bindings/rust/runtime`, patched in
-until it is published.
+(`item.productId()`). The runtime the binding calls is the crate `souther-binding-runtime`, which
+`model` requires and Cargo fetches from crates.io.
 
 The rows of the five injected behaviors state what an implementation should answer and are owed by
 one; nothing in the model can answer them.
