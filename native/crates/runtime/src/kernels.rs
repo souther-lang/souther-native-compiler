@@ -8,9 +8,13 @@
 //! of that is the caller's contract.
 
 use crate::{Bool, Count, List, STRING_HOLDS, Text, souther_alloc, string_of, text};
-use souther_native_abi::{LIST_LENGTH, list_at, room_for_list};
+use notation199x::Pattern;
+use souther_native_abi::{
+    LIST_LENGTH, PATTERN_IMAGE, PATTERN_LENGTH, PATTERN_READ, list_at, room_for_list,
+};
 use souther_text::Text as Held;
-use souther_text::pattern;
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 /// A list of these, each written into its slot by `slot`.
 pub(crate) fn list_of<T>(each: &[T], slot: impl Fn(&T) -> i64) -> *mut List {
@@ -131,16 +135,101 @@ pub unsafe extern "C" fn souther_string_ends_with(suffix: *const Text, s: *const
     unsafe { souther_text::ends_with(text(&suffix), text(&s)) }.into()
 }
 
-/// `String.matches`, run on the machine the pattern was compiled to.
+/// A pattern as an object carries it: room the runtime keeps the pattern it read in, how long the
+/// image is, and the image, at the places `souther_native_abi` states ([`PATTERN_READ`] and the
+/// rest).
+#[repr(C)]
+pub struct HeldPattern {
+    _opaque: [u8; 0],
+}
+
+/// Every pattern this library has read, owned here from the first match that read it until
+/// [`souther_release`], beside the room it was read for.
+///
+/// A static of the runtime, which each library links its own copy of, so it is the library's: the
+/// object's room holds only where the pattern is, and what owns it is this. The lock is taken only
+/// when a pattern is read and when the library is released, never by a match of a pattern already
+/// read.
+static KEPT: Mutex<Vec<(usize, Box<Pattern>)>> = Mutex::new(Vec::new());
+
+/// The room of a pattern the object carries, which holds where the runtime keeps what it read.
 ///
 /// # Safety
 ///
-/// As [`souther_string_trim`], and `machine` is the first of the words `souther_text::pattern`
-/// compiled, all of which may be read.
+/// `held` is a pattern an object carries, laid out as `souther_native_abi` states it, with its
+/// room writable, and the object is loaded.
+unsafe fn room<'a>(held: *const HeldPattern) -> &'a AtomicPtr<Pattern> {
+    // SAFETY: the room is a slot, aligned to one, which only this runtime writes.
+    unsafe {
+        &*held
+            .cast::<u8>()
+            .add(PATTERN_READ as usize)
+            .cast::<AtomicPtr<Pattern>>()
+    }
+}
+
+/// Whether the whole of `subject` is one of the strings the pattern `held` carries accepts, read
+/// from its image the first time it is asked for and kept in [`KEPT`] from then on, so that a
+/// pattern is read once however many times it is matched.
+///
+/// Two threads that both find the room empty both wait on [`KEPT`], and the second finds the first
+/// has read it. What the room points at is not dropped while a match may read it: only
+/// [`souther_release`] drops it, which a host calls with no call in flight.
+///
+/// # Safety
+///
+/// As [`room`].
+pub(crate) unsafe fn matched(held: *const HeldPattern, subject: &str) -> bool {
+    let room = unsafe { room(held) };
+    let mut read = room.load(Ordering::Acquire);
+    if read.is_null() {
+        let mut kept = KEPT.lock().unwrap_or_else(PoisonError::into_inner);
+        read = room.load(Ordering::Acquire);
+        if read.is_null() {
+            // SAFETY: the object wrote the image's length and the image behind it.
+            let image = unsafe {
+                let at = held.cast::<u8>();
+                let length = at.add(PATTERN_LENGTH as usize).cast::<u64>().read();
+                std::slice::from_raw_parts(at.add(PATTERN_IMAGE as usize), length as usize)
+            };
+            let image = std::str::from_utf8(image).expect("an image is written in ASCII");
+            let pattern = Box::new(
+                Pattern::from_image(image)
+                    .expect("the compiler read every image it wrote into the object"),
+            );
+            read = std::ptr::from_ref(pattern.as_ref()).cast_mut();
+            room.store(read, Ordering::Release);
+            kept.push((held as usize, pattern));
+        }
+    }
+    // SAFETY: what the room points at is in `KEPT`, and is dropped only by `souther_release`.
+    unsafe { &*read }.matches(subject)
+}
+
+/// Drops every pattern this library has read and empties the room each was read for, so a match
+/// after it reads the image again ([`souther_native_abi::RELEASE`]).
+///
+/// What the library keeps beyond any scope is what this drops; what a scope holds is untouched. A
+/// host calls it before it unloads the library, with no call into it in flight: the objects whose
+/// rooms are emptied are loaded until then.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn souther_string_matches(machine: *const u32, s: *const Text) -> Bool {
-    let words = unsafe { std::slice::from_raw_parts(machine, pattern::length(machine.read())) };
-    pattern::matches(words, unsafe { text(&s) }).into()
+pub extern "C" fn souther_release() {
+    let kept = std::mem::take(&mut *KEPT.lock().unwrap_or_else(PoisonError::into_inner));
+    for (held, pattern) in kept {
+        // SAFETY: `held` is a pattern of an object still loaded, as the host holds to.
+        unsafe { room(held as *const HeldPattern) }.store(std::ptr::null_mut(), Ordering::Release);
+        drop(pattern);
+    }
+}
+
+/// `String.matches`, run on the pattern the object carries.
+///
+/// # Safety
+///
+/// As [`souther_string_trim`], and as [`room`] for `held`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_string_matches(held: *const HeldPattern, s: *const Text) -> Bool {
+    unsafe { matched(held, text(&s).as_str()) }.into()
 }
 
 /// `String.slice`, written through `out` where the string has the code points asked for.
@@ -373,6 +462,56 @@ mod tests {
             Bool::TRUE
         );
         assert_eq!(said(joined), "a日");
+        souther_scope_close(scope);
+    }
+
+    /// A pattern's room as an object lays it out (`souther_native_abi`): nothing read yet, the
+    /// image's length, and the image, in slots so that the room is aligned as an object aligns it.
+    fn room(image: &str) -> Vec<u64> {
+        let slots = PATTERN_IMAGE as usize / 8 + image.len().div_ceil(8);
+        let mut room = vec![0u64; slots];
+        let bytes: &mut [u8] =
+            unsafe { std::slice::from_raw_parts_mut(room.as_mut_ptr().cast(), slots * 8) };
+        bytes[PATTERN_LENGTH as usize..PATTERN_IMAGE as usize]
+            .copy_from_slice(&(image.len() as u64).to_ne_bytes());
+        bytes[PATTERN_IMAGE as usize..][..image.len()].copy_from_slice(image.as_bytes());
+        room
+    }
+
+    /// A pattern is read from its image the first time it is matched, and every match after it runs
+    /// on the pattern read then, until the library is released: that drops what was read and
+    /// empties the room, and a match after it reads the image again. Releasing again drops nothing.
+    ///
+    /// One test, since a release drops every pattern the library read, and a test matching
+    /// beside it would be a call in flight, which a host never makes.
+    #[test]
+    fn a_pattern_is_read_once_and_kept_until_the_library_is_released() {
+        let scope = souther_scope_open();
+        // `a+`, as P1 writes it.
+        let mut held = room("P1,0,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0");
+        let at = held.as_mut_ptr().cast::<HeldPattern>();
+        assert_eq!(held[0], 0);
+        assert_eq!(
+            unsafe { souther_string_matches(at, made("aaa")) },
+            Bool::TRUE
+        );
+        let kept = held[0];
+        assert_ne!(kept, 0);
+        assert_eq!(unsafe { souther_string_matches(at, made("")) }, Bool::FALSE);
+        assert_eq!(
+            unsafe { souther_string_matches(at, made("ab")) },
+            Bool::FALSE
+        );
+        assert_eq!(held[0], kept);
+
+        souther_release();
+        assert_eq!(held[0], 0);
+        assert!(KEPT.lock().unwrap().is_empty());
+        assert_eq!(unsafe { souther_string_matches(at, made("a")) }, Bool::TRUE);
+        assert_ne!(held[0], 0);
+        souther_release();
+        souther_release();
+        assert_eq!(held[0], 0);
         souther_scope_close(scope);
     }
 

@@ -1,2 +1,4 @@
-github.com/raoh-project/raoh-go v0.0.0-20260929134234-af24f3ce21c6 h1:gq1CByeBHqn6YONt3ezSI+/ytIKIsxfXfSI0qF/bUDQ=
-github.com/raoh-project/raoh-go v0.0.0-20260929134234-af24f3ce21c6/go.mod h1:8q6tVhaL8wDzdPGKwyzrnf1wxUYU8lzw/5pRjU+9gLI=
+github.com/raoh-project/notation-199x/go v0.2.0 h1:eweOEJetQH7rMCFGit/4/BxD9TiFBHxr3CAMj9Ssv5s=
+github.com/raoh-project/notation-199x/go v0.2.0/go.mod h1:vloI/xY+brapB9+zHkMjUk2nfOYHhKLmq9UGlM8P6IY=
+github.com/raoh-project/raoh-go v0.9.0 h1:2PUPFbVmPXsaCn1ZyiMLRNVfkChzsJvgDnePTNmkDY4=
+github.com/raoh-project/raoh-go v0.9.0/go.mod h1:AeW+oAqE8+oiGSrTo5oOB5GlMyFrYD2pPqM/sNqnmnw=

@@ -396,7 +396,7 @@ async fn a_field_the_orderers_case_has_is_missing_is_400() {
 
     assert_eq!(answer.status, StatusCode::BAD_REQUEST);
     assert_eq!(answer.body["issues"][0]["path"], "/orderer/name");
-    assert_eq!(answer.body["issues"][0]["code"], "missing_field");
+    assert_eq!(answer.body["issues"][0]["code"], "required");
 }
 
 #[tokio::test]

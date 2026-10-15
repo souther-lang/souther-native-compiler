@@ -224,7 +224,16 @@ class AHostImplementsABehaviorWithNoBodyTest {
             static souther_status priced(void *by, souther_string sku, uint8_t gift, souther_value *out) {
                 int64_t cents = strncmp((const char *) souther_string_bytes(sku), "free", 4) == 0
                         ? -1 : souther_string_length(sku) * 100 + (gift ? 50 : 0);
-                return souther@_m_shop_t_Money_construct(cents, out);
+                souther_decoded made = NULL;
+                souther_status status = souther@_m_shop_t_Money_construct(cents, &made);
+                if (status != SOUTHER_ANSWERED) {
+                    return status;
+                }
+                if (souther_decoded_outcome(made) != SOUTHER_DECODED_VALUE) {
+                    return SOUTHER_INVARIANT_NOT_HELD;
+                }
+                *out = souther_decoded_value(made);
+                return SOUTHER_ANSWERED;
             }
 
             static souther_status judged(void *by, souther_value price, uint8_t *out) {

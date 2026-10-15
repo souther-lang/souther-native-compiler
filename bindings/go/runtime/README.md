@@ -1,8 +1,8 @@
 # The Go binding of a Souther library
 
 This module, `github.com/souther-lang/souther-native-compiler/bindings/go/runtime`, is what every Go
-binding of a Souther library runs on. A binding is written by `souther-native --go`, from the
-manifest the library was built with, as Go packages that call the library through this module. A
+binding of a Souther library runs on. A binding is written by
+`souther compile --target native --binding go`, from the manifest the library was built with, as Go packages that call the library through this module. A
 host imports the binding's packages and never calls this module itself, except for the types the
 binding hands it (`souther.Option`, the tuples, the temporals) and the errors it answers. How a
 binding is generated is in [Writing a binding](../../../docs/writing-a-binding.md), and the C ABI
@@ -10,10 +10,11 @@ the library exports is in [The host ABI](../../../docs/host-abi.md).
 
 ## Writing a binding and requiring it
 
-The command writes the library and its Go binding in one run, with `--package` naming the import
-path of the binding:
+The command writes the library and its Go binding in one run, with the option `package` naming the
+import path of the binding:
 
-    souther-native --library build/native --go build/go --package example.com/acme model
+    souther compile --target native --library build/native --binding go build/go \
+        --binding-option package=example.com/acme model
 
 A module of the model is a package of its own under that path (`cart.lines` is
 `example.com/acme/cart/lines`), which the module graph allows, since modules do not depend on one
@@ -147,17 +148,19 @@ own tag type, so a run of another generated binding is another type and does not
 
 ## How the model's types are held
 
-A product, a newtype and a unit are each a struct holding the value and the run it was made in,
-with a method for each field. `New<Type>` answers the value, or an `invariant_violation` Raoh issue
-as an error where what is handed over does not hold what the type states. `Decode<Type>` answers
-the value read out of its external form, or Raoh's issues (`*raoh.Issues`), or `invalid_format`
-where the text is not JSON. `Encode` answers the value's external form. `<Type>Decoder(r)` is
-`Decode<Type>` as a raoh-go decoder of what a host decoded, reading in `r`, which a host composes
-with its own decoders the way a JVM host composes a type's `decoder()`: the value it is handed is
-written back as the JSON it is, in the order of an object's members, and what the library finds
-wrong is an issue at the path it is reached at. A member that is not there is raoh's to report, as
-for any field. A decoder holds `r`, so it is made for one decode inside the run and not kept past
-it.
+A product, a newtype and a unit are each a struct holding the value and the run it was made in, with
+a method for each field. `New<Type>` answers the value, or the Raoh issue as an error
+(`*raoh.Issues`) where what is handed over does not hold what the type states: the one
+`Decode<Type>` answers for the same value, `invalid_format` with its `pattern` for a clause that is
+a pattern and `invariant_violation` naming the `module`, the `type` and the `clause` for one no
+constraint states. `Decode<Type>` answers the value read out of its external form, or Raoh's issues
+(`*raoh.Issues`), or `invalid_format` where the text is not JSON. `Encode` answers the value's
+external form. `<Type>Decoder(r)` is `Decode<Type>` as a raoh-go decoder of what a host decoded,
+reading in `r`, which a host composes with its own decoders the way a JVM host composes a type's
+`decoder()`: the value it is handed is written back as the JSON it is, in the order of an object's
+members, and what the library finds wrong is an issue at the path it is reached at. A member that is
+not there is raoh's to report, as for any field. A decoder holds `r`, so it is made for one decode
+inside the run and not kept past it.
 
 A sum has `Case`, answering the value as the type of its case (`Owed`), which is marked as one of
 the sum's cases; a case the model keeps is `<Sum>Kept`, and there is a `<Sum>From<Type>` for each
@@ -185,12 +188,19 @@ value a Go program has is always one, and a refusal from the library is reported
 `String` writes the text `java.time` writes for it, for a Go program to show; that text never
 crosses to the library. They are not `time.Time`, since none of them is what one is: a `Date` and
 a `Time` have no zone and no instant, and an `Instant` reaches a billion years either way.
-`InstantOf` and `Instant.Time` convert.
+`InstantOf` and `Instant.Time` convert. Each writes itself to JSON as the string of its text, as Raoh
+observes one, so an issue whose metadata holds one (an element `duplicates` lists) is written by
+raoh-go's `Issues.Render` as raoh-go writes its own.
 
 An optional is a `souther.Option`, at every depth, since a pointer cannot tell an optional of
-nothing from nothing. A tuple is a `souther.Tuple2` and its like up to eight members. A list, a set
-and a map are slices, a map's entries being tuples in the order the library has them, which the
-language says nothing of.
+nothing from nothing. A tuple is a `souther.Tuple2` and its like up to eight members. A list is a
+slice. A set is the slice of its members and a map the slice of its entries, each a `souther.Tuple2`
+of the key and the value, not a Go map: a `Map<String, Int>` is a `[]souther.Tuple2[string, int64]`.
+The library makes a set of what it is handed, two members that are one being one, and a map of the
+entries, the later of two under one key winning. What it hands back is in the order it holds them,
+which the language says nothing of; written in the external form (`Encode`), a set's members and a
+map's keys are in ascending order, as [the coverage document](../../../docs/language-coverage.md)
+says.
 
 A union no declaration names is an interface named after its members in the manifest's order
 (`FreeOrInt`), handed over as one of them and handed back where the library says which case it is.
@@ -259,7 +269,7 @@ not an edit of one.
 That is separate from the library's ABI generation. This module calls a library of one generation
 (`souther.ABIGeneration`) and asks each library for its generation before anything else, as above.
 A function generated for a behavior or a type also carries the generation in its name
-(`souther9_m_shop_b_quote`), so a binding generated against another generation finds none of its
+(`souther12_m_shop_b_quote`), so a binding generated against another generation finds none of its
 functions.
 
 ## Platforms and versions
@@ -269,8 +279,8 @@ this repository builds and tests it on Linux and macOS. Windows is not written y
 (souther-native-compiler#96).
 
 The modules a binding writes need the Go this module's `go.mod` names, which Raoh's needs are part
-of. Raoh has no release, so the version this module and a generated `go.mod` require
-([raoh-go](https://github.com/raoh-project/raoh-go)) is a commit, which a test holds to one.
+of. This module and a generated `go.mod` require one release of
+[raoh-go](https://github.com/raoh-project/raoh-go), which a test holds to one.
 
 ## The cart example
 

@@ -23,9 +23,10 @@
 use super::write::Writing;
 use super::{Codecs, Runtime};
 use crate::literals::Literals;
-use crate::patterns::{self, Machines};
+use crate::patterns::Patterns;
 use crate::transport::{
-    AlternativesForm, BoundaryConstraint, Case, CodecShape, Declaration, Field, LeafScalar, Prim,
+    AlternativesForm, BoundaryConstraint, Case, CodecShape, Declaration, Field, LeafScalar,
+    MetaType, Prim,
 };
 use crate::{
     CaseBody, Construction, Constructors, Declared, Emitting, Lowered, POINTER, TRUSTED,
@@ -39,8 +40,72 @@ use cranelift::frontend::{FunctionBuilder, Variable};
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
-    ANSWERED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, room_for_held, room_for_list,
+    ANSWERED, HELD, LIST_ELEMENTS, LIST_LENGTH, NOTHING, SLOT, case_names_written, room_for_held,
+    room_for_list,
 };
+
+/// What a reading reaches beside the function it is emitted in, taken from what every function of
+/// the object is emitted with before one is.
+#[derive(Clone, Copy)]
+pub(crate) struct Reached<'w> {
+    declared: &'w Declared<'w>,
+    literals: &'w Literals,
+    constructors: &'w Constructors,
+    allocate: FuncId,
+    value_ops: &'w crate::hashing::ValueOps,
+    patterns: &'w Patterns,
+}
+
+impl<'w> Reached<'w> {
+    pub(crate) fn of(emitting: &Emitting<'w>) -> Self {
+        Reached {
+            declared: emitting.declared,
+            literals: emitting.literals,
+            constructors: emitting.constructors,
+            allocate: emitting.allocate,
+            value_ops: emitting.value_ops,
+            patterns: emitting.patterns,
+        }
+    }
+
+    /// A reading emitted into `builder`, recording what it finds in `decoding` and writing a value
+    /// through `out`, with the blocks it goes to where it has no value and where a clause ended
+    /// without one made in `builder`.
+    fn reading<'f, 'b>(
+        self,
+        builder: &'b mut FunctionBuilder<'f>,
+        module: &'b mut ObjectModule,
+        codecs: &'b mut Codecs,
+        decoding: ir::Value,
+        out: ir::Value,
+    ) -> Reading<'b, 'f>
+    where
+        'w: 'b,
+    {
+        let refused = builder.declare_var(types::I8);
+        let nought = builder.ins().iconst(types::I8, 0);
+        builder.def_var(refused, nought);
+        let nothing = builder.create_block();
+        let abort = builder.create_block();
+        builder.append_block_param(abort, types::I32);
+        Reading {
+            builder,
+            module,
+            declared: self.declared,
+            literals: self.literals,
+            constructors: self.constructors,
+            allocate: self.allocate,
+            value_ops: self.value_ops,
+            patterns: self.patterns,
+            codecs,
+            decoding,
+            out,
+            refused,
+            nothing,
+            abort,
+        }
+    }
+}
 
 /// Defines the reader of `key`.
 pub(super) fn define(
@@ -50,38 +115,13 @@ pub(super) fn define(
     signature: ir::Signature,
     key: &str,
 ) -> Lowered<()> {
-    let declared = emitting.declared;
-    let literals = emitting.literals;
-    let constructors = emitting.constructors;
-    let allocate = emitting.allocate;
-    let value_ops = emitting.value_ops;
-    let machines = emitting.machines;
+    let reached = Reached::of(emitting);
     emitting.function(id, signature, |builder, module, given| {
         let [node, path, decoding, out] = given else {
             unreachable!("a reader takes a node, a path, a reading and room for the value")
         };
-        let refused = builder.declare_var(types::I8);
-        let nought = builder.ins().iconst(types::I8, 0);
-        builder.def_var(refused, nought);
-        let nothing = builder.create_block();
-        let abort = builder.create_block();
-        builder.append_block_param(abort, types::I32);
-        let mut reading = Reading {
-            builder,
-            module,
-            declared,
-            literals,
-            constructors,
-            allocate,
-            value_ops,
-            machines,
-            codecs,
-            decoding: *decoding,
-            out: *out,
-            refused,
-            nothing,
-            abort,
-        };
+        let mut reading = reached.reading(builder, module, codecs, *decoding, *out);
+        let (nothing, abort) = (reading.nothing, reading.abort);
         reading.declaration(key, *node, *path)?;
 
         builder.switch_to_block(nothing);
@@ -97,6 +137,60 @@ pub(super) fn define(
     })
 }
 
+/// What a host's construction of a value of `key` out of `fields` comes to, emitted into
+/// `builder`: a reading of no document written through `out`, holding the value, or the issue the
+/// type's reader records where a clause does not hold of it, at the value's own place.
+///
+/// The construction is the reader's own ([`Reading::construct`]), decided by the same function and
+/// with the same words for each clause, so a host building a value is told what a host reading the
+/// same value is: which constraint the clause is, or the type and the clause. A clause that itself
+/// ends without a value answers its status, and the reading is abandoned, as a decoder answers.
+pub(crate) fn constructed(
+    reached: Reached,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    codecs: &mut Codecs,
+    (key, fields): (&str, &[ir::Value]),
+    out: ir::Value,
+) -> Lowered<()> {
+    let begin = codecs.runtime(module, Runtime::ConstructBegin);
+    let end = codecs.runtime(module, Runtime::DecodeEnd);
+    let abandon = codecs.runtime(module, Runtime::DecodeAbandon);
+    let begun = module.declare_func_in_func(begin, builder.func);
+    let begun = builder.ins().call(begun, &[]);
+    let decoding = builder.inst_results(begun)[0];
+
+    // The value goes through no room of the reading's own: it is what the construction answers.
+    let room = out_slot(builder);
+    let mut reading = reached.reading(builder, module, codecs, decoding, room);
+    let (nothing, abort) = (reading.nothing, reading.abort);
+    let at_the_root = reading.builder.ins().iconst(POINTER, 0);
+    let value = reading.construct(key, fields, at_the_root)?;
+
+    let ended = builder.create_block();
+    builder.append_block_param(ended, POINTER);
+    builder.ins().jump(ended, &[value.into()]);
+
+    builder.switch_to_block(nothing);
+    let none = builder.ins().iconst(POINTER, NOTHING);
+    builder.ins().jump(ended, &[none.into()]);
+
+    builder.switch_to_block(ended);
+    let value = builder.block_params(ended)[0];
+    let ending = module.declare_func_in_func(end, builder.func);
+    builder.ins().call(ending, &[decoding, value]);
+    builder.ins().store(TRUSTED, decoding, out, 0);
+    let answered = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[answered]);
+
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    let abandoning = module.declare_func_in_func(abandon, builder.func);
+    builder.ins().call(abandoning, &[decoding]);
+    builder.ins().return_(&[status]);
+    Ok(())
+}
+
 /// The reader being emitted, and what it reaches.
 struct Reading<'w, 'f> {
     builder: &'w mut FunctionBuilder<'f>,
@@ -107,8 +201,8 @@ struct Reading<'w, 'f> {
     allocate: FuncId,
     /// The hasher and the equality of what a set or a map read here is kept over.
     value_ops: &'w crate::hashing::ValueOps,
-    /// The pattern machines the object holds, for a value held to a pattern.
-    machines: &'w Machines,
+    /// The patterns the object holds, for a value held to a pattern.
+    patterns: &'w Patterns,
     codecs: &'w mut Codecs,
     /// The reading every issue is recorded in.
     decoding: ir::Value,
@@ -809,14 +903,12 @@ impl Reading<'_, '_> {
                 let bound = n(self, bound);
                 self.asked(Runtime::ReadFixedLength, &[path, reading, value, bound])
             }
-            BoundaryConstraint::Pattern { written, meaning } => {
-                let machine = patterns::machine(meaning)
-                    .expect("`Declared::of` held what every pattern is said to mean to a reading");
-                let machine = self.machines.address(self.builder, self.module, &machine);
+            BoundaryConstraint::Pattern { written, image } => {
+                let pattern = self.patterns.address(self.builder, self.module, image);
                 let written = self.literal(written);
                 self.asked(
                     Runtime::ReadPattern,
-                    &[path, reading, value, machine, written],
+                    &[path, reading, value, pattern, written],
                 )
             }
             BoundaryConstraint::Min { n: bound } => {
@@ -862,7 +954,7 @@ impl Reading<'_, '_> {
                 let bound = n(self, bound);
                 self.asked(Runtime::ReadListFixedSize, &[path, reading, value, bound])
             }
-            BoundaryConstraint::Unique => self.unique(shape, value, path)?,
+            BoundaryConstraint::Unique { element } => self.unique(shape, element, value, path)?,
             BoundaryConstraint::MapNonEmpty => {
                 self.asked(Runtime::ReadMapNonEmpty, &[path, reading, value])
             }
@@ -889,10 +981,12 @@ impl Reading<'_, '_> {
 
     /// Whether the list `value` of `shape` holds no element twice, compared as Souther compares.
     /// Where it holds some, they are written as a boundary writes the list's elements and handed
-    /// to the runtime, which records them as Raoh's `duplicates`.
+    /// to the runtime, which records them as Raoh's `duplicates`, each the type `element_type`
+    /// names, which the checker gave.
     fn unique(
         &mut self,
         shape: &CodecShape,
+        element_type: &MetaType,
         value: ir::Value,
         path: ir::Value,
     ) -> Lowered<ir::Value> {
@@ -925,7 +1019,11 @@ impl Reading<'_, '_> {
             codecs: &mut *self.codecs,
         }
         .shaped(shape, repeated)?;
-        self.call(Runtime::ReadDuplicates, &[path, self.decoding, written]);
+        let element_type = self.literal(element_type.as_str());
+        self.call(
+            Runtime::ReadDuplicates,
+            &[path, self.decoding, written, element_type],
+        );
         let broken = self.builder.ins().iconst(types::I8, 0);
         self.builder.ins().jump(answered, &[broken.into()]);
 
@@ -945,6 +1043,8 @@ impl Reading<'_, '_> {
             .iter()
             .map(|case| self.declared.body_of(case))
             .collect();
+        // What a refusal lists as allowed: every case's name, which is what each is read as.
+        let names = case_names_written(bodies.iter().map(|body| body.name()));
         match form {
             // The value is the case's name, and the case is a unit.
             AlternativesForm::Enumeration => {
@@ -968,7 +1068,8 @@ impl Reading<'_, '_> {
                         Ok(())
                     })?;
                 }
-                self.call(Runtime::ReadNotACase, &[node, path, self.decoding]);
+                let names = self.literal(&names);
+                self.call(Runtime::ReadNotOneOf, &[node, path, self.decoding, names]);
                 self.builder.ins().jump(self.nothing, &[]);
             }
             AlternativesForm::Discriminated { tag, contents } => {
@@ -984,7 +1085,11 @@ impl Reading<'_, '_> {
                         reading.case(case, body, contents, node, path)
                     })?;
                 }
-                self.call(Runtime::ReadNotACase, &[named, at_tag, self.decoding]);
+                let names = self.literal(&names);
+                self.call(
+                    Runtime::ReadNoSuchTag,
+                    &[named, at_tag, self.decoding, names],
+                );
                 self.builder.ins().jump(self.nothing, &[]);
             }
         }

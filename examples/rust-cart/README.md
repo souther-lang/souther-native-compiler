@@ -65,8 +65,8 @@ guard PendingItem { cart = c, item = CartItem { productId = productId, quantity 
 In Rust by hand, that is a constructor answering an error of its own, a decoder that calls the
 constructor and reports its error as an issue at the right path, and a `match` in the service
 mapping that error to `CartFull`: three places that have to agree on one rule, and a test for each.
-Here the binding's `PendingItem::new` refuses the value with an `invariant_violation`, its `decode`
-reports the same at the value's path, and the behavior answers `CartFull`, all from the two lines
+Here the binding's `PendingItem::new` refuses the value with an `invariant_violation` naming the
+clause, `withinCapacity`, its `decode` reports the same at the value's path, and the behavior answers `CartFull`, all from the two lines
 above.
 
 The rules are checked without a database. `fake loadCart` and the other fakes in `cart.sou` stand
@@ -179,8 +179,8 @@ found the first, and the model the other two.
 ```json
 {"issues": [
   {"path": "/orderer/email", "code": "invalid_format", ...},
-  {"path": "/orderer/companyName", "code": "missing_field", ...},
-  {"path": "/orderer/corporateNumber", "code": "missing_field", ...}]}
+  {"path": "/orderer/companyName", "code": "required", ...},
+  {"path": "/orderer/corporateNumber", "code": "required", ...}]}
 ```
 
 A rule a type states is reported at the field's path. A newtype's rule with a Raoh equivalent is
@@ -194,16 +194,17 @@ it.
 
 ## Building and running it
 
-What it needs is what the repository's own build needs: Maven, Cargo, and a C compiler, for the
-SQLite rusqlite builds.
+What it needs is `souther` with the native backend installed beside it, Cargo, and a C compiler,
+for the SQLite rusqlite builds. In a clone of this repository, `SOUTHER=../../scripts/souther
+bin/build` builds the backend from the clone and runs it in place of an installed one.
 
     bin/build
     cargo test
 
 `bin/build` runs the command line:
 
-    scripts/souther-native --library <here>/build/native --rust <here>/build/rust --crate model \
-        examples/cart-model
+    souther compile --target native --library <here>/build/native \
+        --binding rust <here>/build/rust --binding-option crate=model <here>/../cart-model
 
 It writes the library into `build/native` and its binding into `build/rust`, as the crate `model`,
 which `Cargo.toml` depends on by path. The module is `com.example.cart.domain`, so its types are

@@ -12,9 +12,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * A package that imports Raoh has to require it, since Go asks the module that imports a package to
- * name the module the package is from. Raoh has no release, so the version is a commit, and the
- * generated module names the one the runtime module does: a host that gets both has one Raoh, and
- * not two that a moved commit makes.
+ * name the module the package is from. The generated module names the release the runtime module
+ * does: a host that gets both has one Raoh, and not two that moving one of them would make.
  */
 class TheRaohTheGoBindingAsksForIsTheRuntimesTest {
 

@@ -49,8 +49,14 @@ public final class RustBindings {
 
     /** What says a directory is a Rust binding this wrote, and may be replaced whole. */
 
-    /** The version of the runtime crate what this writes calls. */
+    /** The version of the runtime crate what this writes calls; held to the crate's by a test. */
     static final String RUNTIME_VERSION = "0.1";
+
+    /**
+     * The oldest Rust a crate this writes builds with, which is the runtime crate's, since it depends
+     * on that crate and on Raoh, which asks for no newer; held to the crate's by a test.
+     */
+    static final String RUST_VERSION = "1.88";
 
     /**
      * Every name the root of the crate declares, which no top module of the model may be. A test
@@ -810,17 +816,21 @@ public final class RustBindings {
         String function = symbol(construct.function());
         StringBuilder body = new StringBuilder("        let library = run.library();\n");
         List<String> handed = given(body, "        ", names, takes);
-        body.append("        let mut made: rt::Word = std::ptr::null();\n");
-        handed.add("&mut made");
-        body.append("        let called = run.call(|| unsafe { (library.symbols.").append(function)
-                .append(")(").append(String.join(", ", handed)).append(") });\n");
-        body.append("        // SAFETY: the library answered the value in this run.\n");
-        body.append("        crate::Construction::of(called, || unsafe { Self::__held(library,"
-                + " made) })\n");
+        body.append("        let mut reading: rt::Word = std::ptr::null();\n");
+        handed.add("&mut reading");
+        body.append("        run.call(|| unsafe { (library.symbols.").append(function)
+                .append(")(").append(String.join(", ", handed)).append(") })?;\n");
+        body.append("        // SAFETY: the library answered the reading, and the value it built, in"
+                + " this run.\n");
+        body.append("        Ok(crate::Construction::of(unsafe {\n");
+        body.append("            library.words.reading(reading, |value| {\n");
+        body.append("                Self::__held(library, value.as_ptr().cast_const())\n");
+        body.append("            })\n");
+        body.append("        }))\n");
         at.items.append("""
 
-                    /// A value of `%s`, or an `invariant_violation` where what is handed over does
-                    /// not hold what the type states.
+                    /// A value of `%s`, or the issue where what is handed over does not hold what
+                    /// the type states: the one [`Self::decode`] answers for the same value.
                     ///
                     /// # Errors
                     ///
@@ -864,7 +874,7 @@ public final class RustBindings {
                     /// with theirs, at the path it is reached at.
                     pub fn decoder<'a>(
                         decoding: &'a crate::Decoding<'_, 'run>,
-                    ) -> impl crate::raoh::Decoder<crate::raoh::json::prelude::Value, Output = Self> + 'a {
+                    ) -> impl crate::raoh::Decoder<crate::raoh::json::Json, Output = Self> + 'a {
                         decoding.reading(Self::decode)
                     }
                 """.formatted(it.key(), symbol(decode)));
@@ -1712,12 +1722,12 @@ public final class RustBindings {
                 name = "%s"
                 version = "0.0.0"
                 edition = "2024"
-                rust-version = "1.87"
+                rust-version = "%s"
                 publish = false
 
                 [dependencies]
                 souther-binding-runtime = "%s"
-                """.formatted(crate, RUNTIME_VERSION);
+                """.formatted(crate, RUST_VERSION, RUNTIME_VERSION);
         file(List.of("Cargo.toml"), toml);
     }
 

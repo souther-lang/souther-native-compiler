@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -20,8 +21,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *
  * <p>A command is one output, read before anything is built: an option of the other output, or
  * one qualifying a binding that was not asked for, is a command refused and not a build half done.
- * A binding of the catalog is asked for by its flag, and one of someone else's by {@code --binding};
- * what the standard generators write is held to the launcher's tests, which run their jars.
+ * A binding is asked for with {@code --binding}: one of the catalog by its id, and one of someone
+ * else's by its coordinate and digest or its path; what the standard generators write is held to the
+ * launcher's tests, which run their jars.
  */
 class TheCommandLineBuildsALibraryAndItsBindingTest {
 
@@ -57,23 +59,56 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
     }
 
     @Test
+    void helpWritesTheUsageAndNothingElse(@TempDir Path into) {
+        String out = into.resolve("out").toString();
+        // Asked for on its own, or among what would be a command: what it asks is how the command is
+        // written, which is answered and is not a refusal, and nothing is built or fetched for it.
+        for (String[] args : new String[][] {
+            {"--help"},
+            {"-h"},
+            {"--library", out, "m.sou", "--help"},
+            {"--help", "--fetch", "--offline"},
+        }) {
+            Ran ran = run(args);
+
+            assertThat(ran.ended()).as(String.join(" ", args)).isZero();
+            assertThat(ran.printed()).as(String.join(" ", args))
+                    .startsWith("usage: souther compile --target native")
+                    .contains("--help, -h");
+            assertThat(ran.said()).as(String.join(" ", args)).isEmpty();
+        }
+        assertThat(into.resolve("out")).doesNotExist();
+    }
+
+    @Test
+    void aCommandSaysWhatItLacks() {
+        refused("nothing at all");
+        refused("no source", "--library", "out");
+        refused("neither -o nor --library", "m.sou");
+        assertThat(run("m.sou").said()).startsWith("-o <object> or --library <dir> says what to"
+                + " write; name one\n");
+        assertThat(run("--library", "out").said()).startsWith("name the sources to compile\n");
+    }
+
+    @Test
     void aCommandIsOneOutput() {
         refused("options for two outputs", "-o", "a.o", "--library", "out", "m.sou");
         refused("--with without a library", "-o", "a.o", "--with", "b.o", "m.sou");
-        refused("--php without a library", "-o", "a.o", "--php", "php", "--namespace", "N",
-                "m.sou");
-        refused("--namespace without --php", "--library", "out", "--namespace", "N", "m.sou");
-        refused("the binding inside the library", "--library", "out", "--php", "out/php",
-                "--namespace", "N", "m.sou");
-        refused("the library inside the binding", "--library", "php/out", "--php", "php",
-                "--namespace", "N", "m.sou");
-        refused("--rust without a library", "-o", "a.o", "--rust", "rust", "--crate", "c",
-                "m.sou");
-        refused("--crate without --rust", "--library", "out", "--crate", "c", "m.sou");
-        refused("the Rust binding inside the library", "--library", "out", "--rust", "out/rust",
-                "--crate", "c", "m.sou");
-        refused("the PHP binding inside the Rust one", "--library", "out", "--rust", "b",
-                "--crate", "c", "--php", "b/php", "--namespace", "N", "m.sou");
+        refused("--binding php without a library", "-o", "a.o", "--binding", "php", "php",
+                "--binding-option", "namespace=N", "m.sou");
+        refused("the binding inside the library", "--library", "out", "--binding", "php",
+                "out/php", "--binding-option", "namespace=N", "m.sou");
+        refused("the library inside the binding", "--library", "php/out", "--binding", "php",
+                "php", "--binding-option", "namespace=N", "m.sou");
+        refused("--binding rust without a library", "-o", "a.o", "--binding", "rust", "rust",
+                "--binding-option", "crate=c", "m.sou");
+        refused("the Rust binding inside the library", "--library", "out", "--binding", "rust",
+                "out/rust", "--binding-option", "crate=c", "m.sou");
+        refused("the PHP binding inside the Rust one", "--library", "out", "--binding", "rust",
+                "b", "--binding-option", "crate=c", "--binding", "php", "b/php",
+                "--binding-option", "namespace=N", "m.sou");
+        assertThat(run("--library", "out", "--binding", "rust", "out/rust", "m.sou").said())
+                .startsWith("--binding rust and --library are each replaced whole");
         refused("one output named twice", "--library", "a", "--library", "b", "m.sou");
         refused("an option wanting a value", "m.sou", "--library");
         refused("no output", "m.sou");
@@ -82,9 +117,9 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
 
     @Test
     void aCommandIsReadAsTheOutputItNames() throws Exception {
-        Main.Command command = Main.read(new String[]{"-cp", "a" + java.io.File.pathSeparator + "b",
-                "--library", "out", "--with", "x.o", "--with", "y.o", "--php", "php",
-                "--namespace", "N", "m.sou"});
+        Main.Command command = Main.read(new String[]{"-cp", "a" + File.pathSeparator + "b",
+                "--library", "out", "--with", "x.o", "--with", "y.o", "--binding", "php", "php",
+                "--binding-option", "namespace=N", "m.sou"});
 
         assertThat(command.classPath()).containsExactly(Path.of("a"), Path.of("b"));
         assertThat(command.output()).isEqualTo(new Main.Output.Library(Path.of("out"),
@@ -92,14 +127,69 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
                 List.of(binding("php", "php", "namespace", "N"))));
     }
 
+    /**
+     * An id of the catalog is read as that binding, and the bindings are asked for in the order the
+     * command line names them.
+     */
     @Test
     void aCommandAsksForEachBindingItNames() throws Exception {
-        Main.Command command = Main.read(new String[]{"--library", "out", "--rust", "rust",
-                "--crate", "acme", "--php", "php", "--namespace", "N", "m.sou"});
+        Main.Command command = Main.read(new String[]{"--library", "out", "--binding", "rust",
+                "rust", "--binding-option", "crate=acme", "--binding", "go", "go",
+                "--binding-option", "package=example.com/shop", "--binding", "php", "php",
+                "--binding-option", "namespace=Acme\\Shop", "m.sou"});
 
         assertThat(command.output()).isEqualTo(new Main.Output.Library(Path.of("out"), List.of(),
-                List.of(binding("php", "php", "namespace", "N"),
-                        binding("rust", "rust", "crate", "acme"))));
+                List.of(binding("rust", "rust", "crate", "acme"),
+                        binding("go", "go", "package", "example.com/shop"),
+                        binding("php", "php", "namespace", "Acme\\Shop"))));
+    }
+
+    /** A generator of someone else's takes its place among the catalog's where the line names it. */
+    @Test
+    void aBindingOfSomeoneElsesKeepsItsPlaceAmongTheCatalogs() throws Exception {
+        Main.Command command = Main.read(new String[]{"--library", "out", "--binding", "go", "go",
+                "--binding-option", "package=example.com/shop", "--binding", "build/kotlin.jar",
+                "kotlin", "--binding", "php", "php", "--binding-option", "namespace=N", "m.sou"});
+
+        assertThat(command.output()).isEqualTo(new Main.Output.Library(Path.of("out"), List.of(),
+                List.of(binding("go", "go", "package", "example.com/shop"),
+                        new Main.HostBinding(new Main.Asked.External(new GeneratorRef.Local(
+                                Path.of("build/kotlin.jar"))), Path.of("kotlin"), Map.of()),
+                        binding("php", "php", "namespace", "N"))));
+    }
+
+    /**
+     * An option of a binding of the catalog is one its kind takes, and is refused on the command line
+     * otherwise; and a binding of the catalog is asked for once.
+     */
+    @Test
+    void aBindingOfTheCatalogIsRefusedWhatItDoesNotTake() {
+        refused("an option the PHP binding does not take", "--library", "out", "--binding", "php",
+                "php", "--binding-option", "crate=c", "m.sou");
+        assertThat(run("--library", "out", "--binding", "php", "php", "--binding-option",
+                "crate=c", "m.sou").said()).startsWith("--binding php takes no option \"crate\";"
+                + " it takes namespace\n");
+        refused("an option of the PHP binding after a Rust one", "--library", "out", "--binding",
+                "php", "php", "--binding", "rust", "rust", "--binding-option", "namespace=N",
+                "m.sou");
+        refused("a key named twice for a binding of the catalog", "--library", "out", "--binding",
+                "php", "php", "--binding-option", "namespace=A", "--binding-option",
+                "namespace=B", "m.sou");
+        refused("a binding of the catalog named twice", "--library", "out", "--binding", "php",
+                "a", "--binding", "php", "b", "m.sou");
+        assertThat(run("--library", "out", "--binding", "php", "a", "--binding", "php", "b",
+                "m.sou").said()).startsWith("--binding php is named twice\n");
+    }
+
+    /** What asks for a binding is {@code --binding} and nothing else, whichever binding it is. */
+    @Test
+    void aBindingIsAskedForByNoOptionOfItsOwn() {
+        for (String option : List.of("--php", "--rust", "--go", "--namespace", "--crate",
+                "--package")) {
+            String[] args = {"--library", "out", option, "x", "m.sou"};
+            refused(option, args);
+            assertThat(run(args).said()).as(option).startsWith("no such option: " + option + "\n");
+        }
     }
 
     /**
@@ -137,14 +227,22 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
                 "com.acme:kotlin:1.2.0@sha256:abc", "kotlin", "m.sou");
         refused("neither a jar nor a coordinate", "--library", "out", "--binding",
                 "build/generator", "kotlin", "m.sou");
+        assertThat(run("--library", "out", "--binding", "kotlin", "kotlin", "m.sou").said())
+                .startsWith("--binding: \"kotlin\" is none of the generators of this compiler"
+                        + " (php, rust, go), a path to a jar, which ends in .jar, or"
+                        + " groupId:artifactId:version@sha256:<hex>\n");
         refused("a coordinate of two parts", "--library", "out", "--binding",
                 "com.acme:kotlin@sha256:" + digest, "kotlin", "m.sou");
         refused("a --binding with no directory", "--library", "out", "m.sou", "--binding",
                 "g.jar");
         refused("an option with no --binding", "--library", "out", "--binding-option", "a=b",
                 "m.sou");
-        refused("an option after a flag of the catalog", "--library", "out", "--binding", "g.jar",
-                "b", "--php", "php", "--namespace", "N", "--binding-option", "a=b", "m.sou");
+        assertThat(run("--library", "out", "--binding-option", "a=b", "m.sou").said())
+                .startsWith("--binding-option qualifies the --binding before it, and there is"
+                        + " none\n");
+        refused("an option after a binding of the catalog", "--library", "out", "--binding",
+                "g.jar", "b", "--binding", "php", "php", "--binding-option", "namespace=N",
+                "--binding-option", "a=b", "m.sou");
         refused("an option with no key", "--library", "out", "--binding", "g.jar", "b",
                 "--binding-option", "=b", "m.sou");
         refused("an option with no =", "--library", "out", "--binding", "g.jar", "b",
@@ -160,14 +258,16 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
     }
 
     private static Main.HostBinding binding(String id, String into, String option, String value) {
-        return new Main.HostBinding(new Main.Asked.Standard(KnownBindings.all().stream()
-                .filter(kind -> kind.id().equals(id)).findFirst().orElseThrow()), Path.of(into),
-                Map.of(option, value));
+        return new Main.HostBinding(new Main.Asked.Standard(KnownBindings.named(id).orElseThrow()),
+                Path.of(into), Map.of(option, value));
     }
 
+    /** Refused, and told why before the usage: a refusal that says only the usage says nothing. */
     private static void refused(String what, String... args) {
         assertThatThrownBy(() -> Main.read(args)).as(what).isInstanceOf(Main.NotACommand.class);
-        assertThat(run(args).ended()).as(what).isEqualTo(2);
+        Ran ran = run(args);
+        assertThat(ran.ended()).as(what).isEqualTo(2);
+        assertThat(ran.said()).as(what).doesNotStartWith("usage:").contains("\nusage: ");
     }
 
     private static Path sources(Path into, Map<String, String> files) throws Exception {

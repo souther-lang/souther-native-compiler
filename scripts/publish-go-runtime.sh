@@ -23,10 +23,18 @@
 #
 # Only then is the tag pushed, if it is not standing, and the module fetched from where it went.
 #
-# usage: scripts/publish-go-runtime.sh [--check] [<remote> [<commit>]]
-#   --check  asks all of it and pushes nothing
-#   remote   where the tag is (default origin)
-#   commit   the runtime as of which commit (default HEAD)
+# What it is run for is said, and not read from whether it pushes: a check pushes nothing; a
+# rehearsal pushes to a repository that is a directory here, to try how a version is published; and a
+# publication pushes to where hosts fetch from, and is held to what a release is held to as well: the
+# runtime requires releases only, never a pseudo-version, which is a commit of somebody's repository
+# that a host would build against as if it were a release. A check and a rehearsal run while the
+# runtime may still require one, and a rehearsal never reaches anything but a directory.
+#
+# usage: scripts/publish-go-runtime.sh [--check | --rehearse] [<remote> [<commit>]]
+#   --check     asks all of it and pushes nothing
+#   --rehearse  pushes, to a remote that is a local directory, and asks nothing of a release
+#   remote      where the tag is (default origin)
+#   commit      the runtime as of which commit (default HEAD)
 set -euo pipefail
 
 # Every directory this makes is made in one, deleted however this ends.
@@ -35,17 +43,21 @@ trap 'rm -rf "$scratch"' EXIT
 
 . "$(dirname "$0")/require-go.sh"
 
-check=false
-if [ "${1:-}" = "--check" ]; then
-    check=true
-    shift
-fi
+mode=publish
+case "${1:-}" in
+    --check) mode=check; shift ;;
+    --rehearse) mode=rehearse; shift ;;
+esac
 if [ "$#" -gt 2 ]; then
-    echo "usage: $0 [--check] [<remote> [<commit>]]" >&2
+    echo "usage: $0 [--check | --rehearse] [<remote> [<commit>]]" >&2
     exit 2
 fi
 remote="${1:-origin}"
 commit="${2:-HEAD}"
+if [ "$mode" = rehearse ] && [ ! -d "$remote" ]; then
+    echo "a rehearsal pushes to a repository that is a directory here, and $remote is not one" >&2
+    exit 2
+fi
 
 directory="bindings/go/runtime"
 repository="https://github.com/souther-lang/souther-native-compiler"
@@ -93,6 +105,16 @@ if [ -n "$standing" ]; then
     published=true
 fi
 
+# What a publication is held to: the runtime requires releases only.
+if [ "$mode" = publish ] && ! $published; then
+    unreleased="$(git show "$sha:$directory/go.mod" \
+        | grep -E '[[:space:]]v[0-9]+\.[0-9]+\.[0-9]+-([0-9A-Za-z.-]*\.)?[0-9]{14}-[0-9a-f]{12}([[:space:]]|$)' || true)"
+    if [ -n "$unreleased" ]; then
+        refuse "the runtime requires what is not released, and is published requiring releases only:
+$unreleased"
+    fi
+fi
+
 # Whether the module can be fetched by its path and version: from nothing local.
 fetches() {
     local asked
@@ -122,11 +144,11 @@ if ! $published; then
     echo "$module@v$version can be fetched from a tag of this commit"
 fi
 
-if $check; then
+if [ "$mode" = check ]; then
     if $published; then
         echo "$tag is published, and is this runtime"
     else
-        echo "$tag is not published: a release publishes it"
+        echo "$tag is not published"
     fi
     exit 0
 fi

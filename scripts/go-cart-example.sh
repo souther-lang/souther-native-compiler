@@ -20,7 +20,7 @@ if [ "$said" != "$go_version" ]; then
     exit 1
 fi
 
-"$example/bin/build"
+SOUTHER="${SOUTHER:-$(cd "$(dirname "$0")" && pwd)/souther}" "$example/bin/build"
 cd "$example"
 unformatted="$(gofmt -l .)"
 if [ -n "$unformatted" ]; then

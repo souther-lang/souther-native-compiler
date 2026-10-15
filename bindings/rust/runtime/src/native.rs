@@ -4,18 +4,34 @@ use crate::decimal::Decimal;
 use crate::failure::{Failure, Statuses, UnnamedStatus};
 use crate::run::{Loaded, Run, Runtime, ScopeCloseFn, ScopeOpenFn};
 use crate::temporal::{Date, DateTime, Instant, Time};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
+use std::sync::{Mutex, PoisonError};
 
 /// The ABI generation this crate calls a library as, which [`NativeLibrary::load`] asks a library
 /// for before anything else and refuses any other of. The rooms `bound.rs` lays out are this
 /// generation's.
-pub const ABI_GENERATION: u32 = 9;
+pub const ABI_GENERATION: u32 = 12;
 
 /// The one function every generation has and none changes, asked before any other.
 const GENERATION_QUERY: &str = "souther_abi_generation";
 type GenerationQuery = unsafe extern "C" fn() -> u32;
+
+/// `void souther_release(void)`: what the library keeps beyond any scope is dropped, before the
+/// library is unloaded.
+pub(crate) type ReleaseFn = unsafe extern "C" fn();
+
+/// How many [`NativeLibrary`]s hold each library this process has loaded, by the address of its
+/// `souther_release`.
+///
+/// A loader hands the same library back for every load of one file and unloads it when the last of
+/// them is closed, so two loads of it share what it keeps beyond any scope: what one release drops
+/// is what a call through the other may be reading on another thread. The library is released only
+/// where the last that holds it lets it go, which is where it is unloaded. The lock is held across
+/// that release, so a load counted after it finds nothing dropped under it.
+static HOLDING: Mutex<Option<HashMap<usize, usize>>> = Mutex::new(None);
 
 /// One word the library hands over or is handed that is an address: a value, a string, a list and
 /// the rest, which only the library reads behind.
@@ -28,9 +44,13 @@ pub type Word = *const u8;
 /// naming the library, so two loaded into one process would be told apart by nothing a link could
 /// say. Each is reached through its own handle here instead, as the PHP runtime reaches each
 /// through its own FFI handle.
+///
+/// It owns its load of the library: what the library keeps beyond any scope is dropped when the
+/// last load of it in the process is (`souther_release`), and then the library is unloaded.
 pub struct NativeLibrary {
     library: libloading::Library,
     path: PathBuf,
+    release: ReleaseFn,
 }
 
 impl NativeLibrary {
@@ -47,11 +67,12 @@ impl NativeLibrary {
     /// [`LoadError::Open`] where the loader has no library there, and [`LoadError::Generation`]
     /// where it is not of [`ABI_GENERATION`]: asked of the library before any other function of
     /// it is looked up, by the one query every generation has (`souther_abi_generation`).
+    /// [`LoadError::Missing`] where it has no `souther_release`.
     pub unsafe fn load(path: impl AsRef<Path>) -> Result<Self, LoadError> {
         let path = path.as_ref().to_path_buf();
         // SAFETY: what the caller says.
         let library = match unsafe { libloading::Library::new(&path) } {
-            Ok(library) => NativeLibrary { library, path },
+            Ok(library) => library,
             Err(source) => {
                 return Err(LoadError::Open {
                     path,
@@ -63,17 +84,34 @@ impl NativeLibrary {
         // `uint32_t souther_abi_generation(void)`.
         let found = unsafe {
             library
-                .function::<GenerationQuery>(GENERATION_QUERY)
+                .get::<GenerationQuery>(GENERATION_QUERY.as_bytes())
                 .ok()
                 .map(|query| query())
         };
         if found != Some(ABI_GENERATION) {
-            return Err(LoadError::Generation {
-                path: library.path,
-                found,
-            });
+            return Err(LoadError::Generation { path, found });
         }
-        Ok(library)
+        // SAFETY: the library is of the generation that states it as `ReleaseFn`.
+        let release = match unsafe { library.get::<ReleaseFn>(b"souther_release") } {
+            Ok(release) => *release,
+            Err(source) => {
+                return Err(LoadError::Missing {
+                    name: "souther_release".to_owned(),
+                    reason: source.to_string(),
+                });
+            }
+        };
+        *HOLDING
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_or_insert_with(HashMap::new)
+            .entry(release as usize)
+            .or_insert(0) += 1;
+        Ok(NativeLibrary {
+            library,
+            path,
+            release,
+        })
     }
 
     /// Where it was loaded from.
@@ -124,6 +162,29 @@ impl NativeLibrary {
             let open: ScopeOpenFn = self.function("souther_scope_open")?;
             let close: ScopeCloseFn = self.function("souther_scope_close")?;
             Ok(Runtime::new(open, close, statuses))
+        }
+    }
+}
+
+impl Drop for NativeLibrary {
+    /// Drops what the library keeps beyond any scope where this is the last that holds it
+    /// ([`HOLDING`]), and then lets the library go, which unloads it where this was the last.
+    /// Nothing that calls into the library outlives the last that holds it, which is what
+    /// `souther_release` asks: no call in flight.
+    fn drop(&mut self) {
+        let mut holding = HOLDING.lock().unwrap_or_else(PoisonError::into_inner);
+        let counts = holding
+            .as_mut()
+            .expect("a library is counted where it is loaded");
+        let held = counts
+            .get_mut(&(self.release as usize))
+            .expect("a library is counted where it is loaded");
+        *held -= 1;
+        if *held == 0 {
+            counts.remove(&(self.release as usize));
+            // SAFETY: the library is loaded until this returns, and nothing borrowed from it is
+            // left in any that held it.
+            unsafe { (self.release)() };
         }
     }
 }
@@ -590,10 +651,58 @@ impl Words {
                 .with_message_key(key)
                 .at(raoh::Pointer::parse(&path).expect("the library writes a JSON Pointer"));
             for (name, said) in meta {
-                made = made.with_meta(name, said);
+                made = made.with_meta(name, meta_value(said));
             }
             made
         }
+    }
+}
+
+/// A value of an issue's metadata as the library writes it, an object of one member named for its
+/// type in Raoh's value model, made a value of that type: a `Decimal` at the scale it was written
+/// at, so `5` and `1.50` are the decimals they are, and a date, a time, a date-time or an instant
+/// as Raoh reads one, so a date is not text, as the JVM's issue holds them.
+///
+/// The library writes nothing else, so anything else is a library of another contract, which the
+/// generation it was loaded at already refused.
+fn meta_value(said: serde_json::Value) -> raoh::MetaValue {
+    let serde_json::Value::Object(typed) = said else {
+        panic!("the library writes a value of metadata as its type, and wrote {said}");
+    };
+    let mut members = typed.into_iter();
+    let (Some((name, value)), None) = (members.next(), members.next()) else {
+        panic!("the library writes a value of metadata as one member, its type");
+    };
+    match (name.as_str(), value) {
+        ("int", serde_json::Value::Number(n)) => {
+            raoh::MetaValue::Int(n.as_i64().expect("the library writes an int of 64 bits"))
+        }
+        ("decimal", serde_json::Value::String(text)) => raoh::MetaValue::Decimal(
+            text.parse()
+                .expect("the library writes a decimal as its text"),
+        ),
+        ("string", serde_json::Value::String(text)) => raoh::MetaValue::String(text),
+        ("bool", serde_json::Value::Bool(truth)) => raoh::MetaValue::Bool(truth),
+        ("date", serde_json::Value::String(text)) => raoh::MetaValue::Date(
+            text.parse()
+                .expect("the library writes a date as Raoh reads one"),
+        ),
+        ("time", serde_json::Value::String(text)) => raoh::MetaValue::Time(
+            text.parse()
+                .expect("the library writes a time as Raoh reads one"),
+        ),
+        ("datetime", serde_json::Value::String(text)) => raoh::MetaValue::DateTime(
+            text.parse()
+                .expect("the library writes a date-time as Raoh reads one"),
+        ),
+        ("instant", serde_json::Value::String(text)) => raoh::MetaValue::Instant(
+            text.parse()
+                .expect("the library writes an instant as Raoh reads one"),
+        ),
+        ("list", serde_json::Value::Array(items)) => {
+            raoh::MetaValue::List(items.into_iter().map(meta_value).collect())
+        }
+        (name, value) => panic!("the library writes no {name} of {value}"),
     }
 }
 
@@ -614,8 +723,9 @@ impl<T> Reading<T> {
     }
 }
 
-/// What constructing a value came to: the value, or an `invariant_violation` where what was handed
-/// over does not hold what the type states.
+/// What constructing a value came to: the value, or the issue where what was handed over does not
+/// hold what the type states, the one the type's decoder answers for the same value: the
+/// constraint the clause is, or the type and the clause.
 #[derive(Debug)]
 pub enum Construction<T> {
     Value(T),
@@ -623,19 +733,22 @@ pub enum Construction<T> {
 }
 
 impl<T> Construction<T> {
-    /// What a constructor's call came to: `made` where it answered, rejected where the library
-    /// says the invariant was not held, and the failure otherwise.
+    /// What the reading a constructor answered came to: the value, or the issue of the one clause
+    /// that did not hold, which stops a construction where it stands.
     ///
-    /// # Errors
+    /// # Panics
     ///
-    /// The call's failure, where it is not that the invariant was not held.
-    pub fn of(called: Result<(), Failure>, made: impl FnOnce() -> T) -> Result<Self, Failure> {
-        match called {
-            Ok(()) => Ok(Construction::Value(made())),
-            Err(Failure::Abort(abort)) if abort.name() == Some("INVARIANT_NOT_HELD") => Ok(
-                Construction::Rejected(raoh::Issue::new("invariant_violation")),
-            ),
-            Err(failure) => Err(failure),
+    /// Where the reading holds other than one issue, which no construction answers.
+    pub fn of(reading: Reading<T>) -> Self {
+        match reading {
+            Reading::Value(value) => Construction::Value(value),
+            Reading::Issues(issues) => {
+                let mut issues = issues.into_iter();
+                let (Some(issue), None) = (issues.next(), issues.next()) else {
+                    panic!("a construction is refused by the one clause that did not hold")
+                };
+                Construction::Rejected(issue)
+            }
         }
     }
 
@@ -770,6 +883,7 @@ pub(crate) mod machine {
 
 #[cfg(test)]
 mod tests {
+    use super::ReleaseFn;
     use super::machine::{Shape, Taken, of, recorded};
     use super::{ABI_GENERATION, Functions, GENERATION_QUERY, GenerationQuery};
     use crate::run::{ScopeCloseFn, ScopeOpenFn};
@@ -785,6 +899,7 @@ mod tests {
         let mut written: BTreeMap<&str, Shape> = Functions::table().into_iter().collect();
         written.insert("souther_scope_open", of::<ScopeOpenFn>());
         written.insert("souther_scope_close", of::<ScopeCloseFn>());
+        written.insert("souther_release", of::<ReleaseFn>());
         let recorded: BTreeMap<&str, Shape> = HOST_RUNTIME
             .iter()
             .map(|it| (it.name, recorded(it)))

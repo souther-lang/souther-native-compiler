@@ -41,7 +41,9 @@ class ALibraryIsBuiltForAGeneratorTest {
         assertThatThrownBy(() -> SoutherBindingTest.compile(into.resolve("native"), """
                 module shop exposing ( missing )
                 """)).isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("not a program the language takes");
+                .hasMessageContaining("not a program the language takes")
+                .hasMessageContaining("source 1:1:")
+                .hasMessageContaining("module shop exposing ( missing )");
         assertThatThrownBy(() -> SoutherBindingTest.compile(into.resolve("native")))
                 .isInstanceOf(IllegalArgumentException.class);
     }

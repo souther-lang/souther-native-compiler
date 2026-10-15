@@ -14,24 +14,20 @@ answers in. How the library itself is called, function by function, is in
 A binding is written by the same command that builds the library, and the namespace it is written
 under is the caller's to name:
 
-    souther-native --library build/native --php build/php --namespace Acme\Shop model
+    souther compile --target native --library build/native \
+        --binding php build/php --binding-option 'namespace=Acme\Shop' model
 
 `--library` writes the shared library, its C declarations and its manifest into `build/native`, and
-`--php` writes the binding into `build/php`, with a copy of those declarations as `souther.ffi.h`
-beside it. The [top-level README](../../../README.md) says how to run the command, through jbang or
-from a clone. A namespace PHP will not take is refused before the library is built.
+`--binding php` writes the binding into `build/php`, under the namespace its option `namespace`
+names, with a copy of those declarations as `souther.ffi.h` beside it. The [top-level README](../../../README.md) says how the command is installed, and how a
+clone runs it. A namespace PHP will not take is refused before the library is built.
 
-Until the runtime is published, an application reaches it as a Composer path repository, which is
-the supported way for now. The runtime asks for a development version of raoh-php, which Composer
-takes only where the application asks for it too:
+The runtime is the Composer package `souther-lang/php-runtime` on Packagist, which an application
+requires beside the binding it maps:
 
     {
-        "repositories": [
-            { "type": "path", "url": "<clone>/bindings/php/runtime" }
-        ],
         "require": {
-            "raoh/raoh": "0.8.x-dev",
-            "souther-lang/php-runtime": "@dev"
+            "souther-lang/php-runtime": "^0.1"
         },
         "autoload": { "psr-4": { "Acme\\Shop\\": "build/php/" } }
     }
@@ -126,10 +122,16 @@ an array with a key out of order is an `\InvalidArgumentException` and an elemen
 read, each element held as a field's value is. A list is built and read through the functions the
 module offers for a list of its element, and a function handing a list that the module offers no way
 to build or read is not written. A tuple is a PHP list of its members, typed `array` for PHP and
-`array{0: T0, 1: T1}` in the docblock. An optional is null where it holds nothing and what it holds
-where it holds something, except where what it holds may itself be null: an optional of an optional
-holds its value in a `Souther\Runtime\Some`, so `Int??` is null, `Some(null)` or `Some(1)`, and
-holding nothing is told apart at each depth.
+`array{0: T0, 1: T1}` in the docblock. A set is the list of its members and a map the list of its
+entries, each a tuple of the key and the value: a `Map<String, Int>` is
+`[['classic', 1], ['sf', 1]]` both ways, not an array keyed by the map's keys. The library makes a
+set of what it is handed, two members that are one being one, and a map of the entries, the later of
+two under one key winning. What it hands back is in the order it holds them, which the language says
+nothing of; written in the external form (`encode`), a set's members and a map's keys are in
+ascending order, as [the coverage document](../../../docs/language-coverage.md) says. An optional is
+null where it holds nothing and what it holds where it holds something, except where what it holds
+may itself be null: an optional of an optional holds its value in a `Souther\Runtime\Some`, so
+`Int??` is null, `Some(null)` or `Some(1)`, and holding nothing is told apart at each depth.
 
 A function value is a `Closure`, typed `\Closure(T): R` in the docblock. One the library answered is
 called in the innermost run going when it is called, and is refused, as any value is, once the run it
@@ -195,13 +197,15 @@ no longer than it lives.
 
 ## Failures
 
-A construction that does not hold its type's invariants is an `Err` with `invariant_violation`, and
-a reading answers the issues the library found, their codes being Raoh's already, or
-`invalid_format` where the text is not JSON. A Souther computation that ends without a value throws
-`SoutherAbort`, naming the status. What the runtime throws about runs, handles and the library's
-statuses implements `Souther\Runtime\SoutherFailure`; a host's own exception coming back out of a
-call does not, and neither do the refusals of a value PHP made (`\InvalidArgumentException`,
-`TypeError`) or of a library at loading, described below.
+A construction that does not hold its type's invariants is an `Err` with the issue the type's
+`decode` answers for the same value: `invalid_format` with its `pattern` for a clause that is a
+pattern, and `invariant_violation` naming the `module`, the `type` and the `clause` for one no
+constraint states. A reading answers the issues the library found, their codes being Raoh's already,
+or `invalid_format` where the text is not JSON. A Souther computation that ends without a value
+throws `SoutherAbort`, naming the status. What the runtime throws about runs, handles and the
+library's statuses implements `Souther\Runtime\SoutherFailure`; a host's own exception coming back
+out of a call does not, and neither do the refusals of a value PHP made
+(`\InvalidArgumentException`, `TypeError`) or of a library at loading, described below.
 
 A behavior a host implements is handed to a run as its module's `Injections::of(name: fn (...) =>
 ...)`, which is what a behavior called through `Behaviors` in that run is constructed from, or bound

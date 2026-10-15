@@ -1,9 +1,14 @@
 package souther
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
+
+	notation199x "github.com/raoh-project/notation-199x/go"
 )
 
 // A Souther Date, Time, DateTime and Instant as Go holds one.
@@ -226,3 +231,139 @@ func (i Instant) String() string {
 	}
 	return written + "Z"
 }
+
+// daysFromCivil is the count of days from 1970-01-01 to the day year, month and day name, the
+// inverse of civilFromDays.
+func daysFromCivil(year, month, day int64) int64 {
+	if month <= 2 {
+		year--
+	}
+	era := floorDiv(year, 400)
+	yearOfEra := year - era*400
+	monthFromMarch := (month + 9) % 12
+	dayOfYear := (153*monthFromMarch+2)/5 + day - 1
+	dayOfEra := yearOfEra*365 + yearOfEra/4 - yearOfEra/100 + dayOfYear
+	return era*146_097 + dayOfEra - 719_468
+}
+
+// admitted is text of kind as notation-199x reads one, which is the one statement of the form; the
+// fields are read from it only once it is.
+func admitted(kind notation199x.TemporalKind, text string) error {
+	if answer := notation199x.CheckTemporal(kind, text); answer != notation199x.Admitted {
+		return notTemporal("%q is no %v: %v", text, kind, answer)
+	}
+	return nil
+}
+
+// civilOfText is the year, the month and the day of text that is a date as notation-199x admits
+// one: a year of at least four digits, signed past 9999 and below nought.
+func civilOfText(text string) (year, month, day int64, err error) {
+	if err := admitted(notation199x.Date, text); err != nil {
+		return 0, 0, 0, err
+	}
+	year, month, day = civilFields(text)
+	return year, month, day, nil
+}
+
+// civilFields is the year, the month and the day text writes, which was admitted as a date or as
+// the date of an instant, whose years reach one further either way.
+func civilFields(text string) (year, month, day int64) {
+	sign := int64(1)
+	switch text[0] {
+	case '-':
+		sign, text = -1, text[1:]
+	case '+':
+		text = text[1:]
+	}
+	parts := strings.Split(text, "-")
+	year, _ = strconv.ParseInt(parts[0], 10, 64)
+	month, _ = strconv.ParseInt(parts[1], 10, 64)
+	day, _ = strconv.ParseInt(parts[2], 10, 64)
+	return sign * year, month, day
+}
+
+// dateOfText is the Date text writes, as LocalDate.toString and notation-199x write one.
+func dateOfText(text string) (Date, error) {
+	year, month, day, err := civilOfText(text)
+	if err != nil {
+		return Date{}, err
+	}
+	return NewDate(int32(year), uint8(month), uint8(day))
+}
+
+// clockOfText is the hour, the minute, the second and the nanosecond of text that is a time of
+// day as notation-199x admits one.
+func clockOfText(text string) (hour, minute, second int64, nano uint32, err error) {
+	if err := admitted(notation199x.Time, text); err != nil {
+		return 0, 0, 0, 0, err
+	}
+	clock, fraction, _ := strings.Cut(text, ".")
+	parts := strings.Split(clock, ":")
+	hour, _ = strconv.ParseInt(parts[0], 10, 64)
+	minute, _ = strconv.ParseInt(parts[1], 10, 64)
+	if len(parts) > 2 {
+		second, _ = strconv.ParseInt(parts[2], 10, 64)
+	}
+	if fraction != "" {
+		nanos, _ := strconv.ParseUint((fraction + "000000000")[:9], 10, 32)
+		nano = uint32(nanos)
+	}
+	return hour, minute, second, nano, nil
+}
+
+// timeOfText is the Time text writes. A Souther Time is held to the second, so a fraction is no
+// Time.
+func timeOfText(text string) (Time, error) {
+	hour, minute, second, nano, err := clockOfText(text)
+	if err != nil {
+		return Time{}, err
+	}
+	if nano != 0 {
+		return Time{}, notTemporal("%q is past the second a Time is held to", text)
+	}
+	return NewTime(uint8(hour), uint8(minute), uint8(second))
+}
+
+// dateTimeOfText is the DateTime text writes: a date, T and a time.
+func dateTimeOfText(text string) (DateTime, error) {
+	if err := admitted(notation199x.DateTime, text); err != nil {
+		return DateTime{}, err
+	}
+	date, clock, _ := strings.Cut(text, "T")
+	day, err := dateOfText(date)
+	if err != nil {
+		return DateTime{}, err
+	}
+	of, err := timeOfText(clock)
+	if err != nil {
+		return DateTime{}, err
+	}
+	return NewDateTime(day, of), nil
+}
+
+// instantOfText is the Instant text writes, as Instant.toString and notation-199x write one: a
+// date-time in UTC with its seconds, and Z.
+func instantOfText(text string) (Instant, error) {
+	if err := admitted(notation199x.Instant, text); err != nil {
+		return Instant{}, err
+	}
+	date, clock, _ := strings.Cut(strings.TrimSuffix(text, "Z"), "T")
+	year, month, day := civilFields(date)
+	hour, minute, second, nano, err := clockOfText(clock)
+	if err != nil {
+		return Instant{}, err
+	}
+	return NewInstant(daysFromCivil(year, month, day)*secondsPerDay+hour*3600+minute*60+second, nano)
+}
+
+// MarshalJSON writes the Date as Raoh observes one: the JSON string of its text.
+func (d Date) MarshalJSON() ([]byte, error) { return json.Marshal(d.String()) }
+
+// MarshalJSON writes the Time as Raoh observes one: the JSON string of its text.
+func (t Time) MarshalJSON() ([]byte, error) { return json.Marshal(t.String()) }
+
+// MarshalJSON writes the DateTime as Raoh observes one: the JSON string of its text.
+func (d DateTime) MarshalJSON() ([]byte, error) { return json.Marshal(d.String()) }
+
+// MarshalJSON writes the Instant as Raoh observes one: the JSON string of its text.
+func (i Instant) MarshalJSON() ([]byte, error) { return json.Marshal(i.String()) }

@@ -53,7 +53,7 @@ use cranelift::object::{ObjectBuilder, ObjectModule};
 use interface::Surface;
 use kernels::LoweredKernel;
 use literals::Literals;
-use patterns::Machines;
+use patterns::Patterns;
 use restating::restate;
 use souther_native_abi::{
     ALLOCATE, ANSWERED, CAPABILITY_ENVIRONMENT, CAPABILITY_INVOKE, CARRIED, DATE_ADD_DAYS,
@@ -505,7 +505,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         .collect();
 
     let literals = Literals::default();
-    let machines = Machines::default();
+    let patterns = Patterns::default();
 
     // The token every declaration at home in this object is tagged by, defined whether anything
     // here builds a value of one or not. A declaration has one home and it is the object of the
@@ -820,7 +820,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         lifted: &lifted,
         targets: &targets,
         literals: &literals,
-        machines: &machines,
+        patterns: &patterns,
         constructors: &constructors,
     };
 
@@ -1190,7 +1190,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         constructors: &constructors,
         allocate,
         value_ops: &value_ops,
-        machines: &machines,
+        patterns: &patterns,
     };
     let mut codecs = codec::Codecs::new(call_conv);
     // What a host builds, reads, decodes and encodes a value of a published type through, each
@@ -1373,8 +1373,8 @@ pub(crate) struct Emitting<'a> {
     /// The hasher and the equality of each type a set or a map is kept over, declared here where a
     /// reading builds one and written with the rest ([`define_owed`]).
     pub value_ops: &'a hashing::ValueOps,
-    /// What pattern machines this object already holds, for a reading that holds a value to one.
-    pub machines: &'a patterns::Machines,
+    /// What patterns this object already holds, for a reading that holds a value to one.
+    pub patterns: &'a patterns::Patterns,
 }
 
 impl Emitting<'_> {
@@ -2045,23 +2045,6 @@ impl<'a> Declared<'a> {
         Ok(NewtypeSpine { opens })
     }
 
-    /// How a pair read in `reading` is taken apart, told by the pair and not by the reading alone.
-    ///
-    /// The reading does not say which of the checker's rules gave it. A newtype is the reading of
-    /// a newtype beside a bare literal of what it wraps, and it is also the reading of a newtype
-    /// beside a value that states nothing about its own type: the one is compared by opening the
-    /// newtype, and the other by holding both as the newtype. So the operands decide, and this is
-    /// the one place that decides it — Coherent holds the pair to what this answers, and the
-    /// lowering takes it apart by the same answer.
-    fn pair_in(&self, reading: &Ty, left: &Ty, right: &Ty) -> Result<PairIn> {
-        if let Some(inner) = self.newtype_spine(reading)?.opens.last()
-            && ((left == reading && right == inner) || (right == reading && left == inner))
-        {
-            return Ok(PairIn::Opened(inner.clone()));
-        }
-        Ok(PairIn::Held)
-    }
-
     /// The leaves the enumeration `enumeration` places its values among, in the order it places
     /// them: its cases, which the checker descended and `Declared::of` held to list each once. Read
     /// off the declaration and not worked out, so asking it for every comparison costs nothing.
@@ -2273,8 +2256,8 @@ struct Lowerings<'a> {
     lifted: &'a BTreeMap<ClosureId, FuncId>,
     /// What string literals this object already holds.
     literals: &'a Literals,
-    /// What pattern machines this object already holds.
-    machines: &'a Machines,
+    /// What patterns this object already holds.
+    patterns: &'a Patterns,
     /// The constructor of every declaration a body here builds a value of.
     constructors: &'a Constructors,
     /// Every behavior the document names, which is where what a composition's stage answers is
@@ -2445,7 +2428,7 @@ fn word_on_the_machine(word: Word) -> types::Type {
         | Word::Form
         | Word::Node
         | Word::Path
-        | Word::Machine
+        | Word::Pattern
         | Word::Set
         | Word::Map
         | Word::Held
@@ -5594,16 +5577,14 @@ fn lower_kernel(
     // lowered: it is a string the checker folded at compile time, and nothing it would compute at
     // run time is read.
     if kernel == LoweredKernel::StringMatches {
-        let KernelFact::StringMatches { meaning, .. } = fact else {
+        let KernelFact::StringMatches { image, .. } = fact else {
             unreachable!("`Coherent` held string.matches to the fact it settles");
         };
         let [_, text] = arguments else {
             unreachable!("`Coherent` held string.matches to the two arguments it takes");
         };
-        let machine = patterns::machine(meaning)
-            .expect("`Coherent` held what every pattern is said to mean to a reading of one");
         let text = lower(builder, lowering, module, bindings, abort, text)?;
-        let at = lowering.machines.address(builder, module, &machine);
+        let at = lowering.patterns.address(builder, module, image);
         return Ok(runtime_call(
             builder,
             lowering,
@@ -6560,6 +6541,9 @@ fn binary(
             binary_as_they_stand(builder, lowering, module, bindings, abort, op, operands)
         }
         Reading::In { ty } => read_in(builder, lowering, module, bindings, abort, op, ty, operands),
+        Reading::Opened { base, .. } => read_opened(
+            builder, lowering, module, bindings, abort, op, base, operands,
+        ),
         Reading::ExactNumbers => {
             let Operands {
                 left,
@@ -6702,14 +6686,10 @@ fn exact_quotient(
 
 /// A comparison over two operands the checker reads as values of `reading`, for this operator only.
 ///
-/// What arrives is one of the few pairs the checker reads this way, and each is taken as the
-/// reading for what it is and not by one rule over any two types. A newtype beside a bare literal
-/// of what it wraps is compared by the value it wraps (ADR-0047): the newtype is opened, and the
-/// literal is not made into a value of it, which it never is. A sum beside one of its cases, two
-/// sums over one set of cases, an enumeration beside one of its cases, and a value beside one that
-/// states nothing about its own type are all values of the reading already, which is what each is
-/// restated to before the two are compared as it. Which of the two a pair is, is
-/// [`Declared::pair_in`]'s answer, and Coherent held the pair to it.
+/// A sum beside one of its cases, two sums over one set of cases, an enumeration beside one of its
+/// cases, and a value beside one that states nothing about its own type are all values of the
+/// reading already, which is what each is restated to before the two are compared as it. Neither
+/// is opened: a newtype that is a case of the reading is that case.
 #[allow(clippy::too_many_arguments)]
 fn read_in(
     builder: &mut FunctionBuilder,
@@ -6729,39 +6709,44 @@ fn read_in(
     } = operands;
     let a = lower(builder, lowering, module, bindings, abort, left)?;
     let b = lower(builder, lowering, module, bindings, abort, right)?;
-    let pair = lowering
-        .declared
-        .pair_in(reading, left.ty(), right.ty())
-        .expect("`Coherent` held every type an operator is read in to be one that crossed");
-    match pair {
-        PairIn::Opened(inner) => {
-            let (_, a) = opened(builder, lowering.declared, left.ty(), a)?;
-            let (_, b) = opened(builder, lowering.declared, right.ty(), b)?;
-            let placing = ordering::Placing {
-                ty: &inner,
-                basis: ordering,
-            };
-            compare(builder, lowering, module, op, placing, a, b)
-        }
-        PairIn::Held => {
-            let a = restate(builder, lowering, module, a, left.ty(), reading)?;
-            let b = restate(builder, lowering, module, b, right.ty(), reading)?;
-            let placing = ordering::Placing {
-                ty: reading,
-                basis: ordering,
-            };
-            compare(builder, lowering, module, op, placing, a, b)
-        }
-    }
+    let a = restate(builder, lowering, module, a, left.ty(), reading)?;
+    let b = restate(builder, lowering, module, b, right.ty(), reading)?;
+    let placing = ordering::Placing {
+        ty: reading,
+        basis: ordering,
+    };
+    compare(builder, lowering, module, op, placing, a, b)
 }
 
-/// How a pair read in a type is taken apart ([`Declared::pair_in`]).
-enum PairIn {
-    /// A newtype beside what it wraps all the way down: the newtype is opened, and the two are
-    /// compared as what it wraps, which is this.
-    Opened(Ty),
-    /// Two values of the reading, each held as it and compared as it.
-    Held,
+/// A comparison of a newtype beside a bare literal of what it wraps, which is compared by the
+/// value it wraps (ADR-0047): the newtype is opened to `base`, and the literal is not made into a
+/// value of it, which it never is. Coherent held one side to the newtype and the other to `base`.
+#[allow(clippy::too_many_arguments)]
+fn read_opened(
+    builder: &mut FunctionBuilder,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+    bindings: &mut Bindings,
+    abort: ir::Block,
+    op: Op,
+    base: &Ty,
+    operands: Operands,
+) -> Lowered<ir::Value> {
+    let Operands {
+        left,
+        right,
+        ordering,
+        ..
+    } = operands;
+    let a = lower(builder, lowering, module, bindings, abort, left)?;
+    let b = lower(builder, lowering, module, bindings, abort, right)?;
+    let (_, a) = opened(builder, lowering.declared, left.ty(), a)?;
+    let (_, b) = opened(builder, lowering.declared, right.ty(), b)?;
+    let placing = ordering::Placing {
+        ty: base,
+        basis: ordering,
+    };
+    compare(builder, lowering, module, op, placing, a, b)
 }
 
 /// `value`, of type `ty`, opened to the value its newtypes wrap, and the type that value has: the
@@ -7674,12 +7659,12 @@ fn projected(
                     ty.spelt()
                 );
             }
-            if let transport::BoundaryConstraint::Pattern { written, meaning } = constraint
-                && patterns::check(meaning).is_err()
+            if let transport::BoundaryConstraint::Pattern { written, image } = constraint
+                && let Err(refused) = patterns::check(image)
             {
                 bail!(
-                    "clause {at} of {key} says the pattern {written:?} means what no reading of a \
-                     pattern is: the two halves disagree"
+                    "clause {at} of {key} carries the pattern {written:?} as an image that is not \
+                     one ({refused}): the two halves disagree"
                 );
             }
         }

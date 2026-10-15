@@ -7,6 +7,7 @@ namespace App\Http;
 use Raoh\CallableDecoder;
 use Raoh\Decoder;
 use Raoh\Err;
+use Raoh\Input\JsonObject;
 use Raoh\Issues;
 use Raoh\Ok;
 use Raoh\Path;
@@ -41,26 +42,31 @@ final class Members
     {
         return CallableDecoder::of(static function (mixed $given, ?Path $path = null) use ($members, $model): Result {
             $path ??= Path::root();
-            $decoded = $given;
             $issues = Issues::empty();
             $refused = [];
-            if (is_array($given)) {
+            // What JSON text is read into is a JsonObject, and what a host builds an array: the
+            // members of either, decoded and put back in the form it came in.
+            $object = $given instanceof JsonObject;
+            $kept = $object ? array_combine($given->names(), array_map($given->get(...), $given->names()))
+                : (is_array($given) ? $given : null);
+            if ($kept !== null) {
                 foreach ($members as $name => $decoder) {
-                    if (!array_key_exists($name, $given)) {
+                    if (!array_key_exists($name, $kept)) {
                         continue;
                     }
                     $at = $path->append($name);
-                    $written = $decoder->decode($given[$name], $at);
+                    $written = $decoder->decode($kept[$name], $at);
                     if ($written instanceof Ok) {
-                        $decoded[$name] = $written->value;
+                        $kept[$name] = $written->value;
                     } else {
                         \assert($written instanceof Err);
-                        unset($decoded[$name]);
+                        unset($kept[$name]);
                         $refused[] = $at->segments();
                         $issues = $issues->merge($written->issues);
                     }
                 }
             }
+            $decoded = $kept === null ? $given : ($object ? new JsonObject($kept) : $kept);
             $read = $model->decode($decoded, $path);
             if ($read instanceof Err) {
                 foreach ($read->issues->toArray() as $issue) {

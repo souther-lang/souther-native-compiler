@@ -9,7 +9,7 @@
 
 use std::cell::RefCell;
 
-use raoh::json::prelude::Value;
+use raoh::json::{Json, View};
 use raoh::{Decoder, Issue, Issues, codes, decoder_fn};
 
 use crate::native::{Construction, Reading};
@@ -65,14 +65,19 @@ impl<'d, 'run, L: Loaded> Decoding<'d, 'run, L> {
     }
 
     /// `decode`, a type's reading of its external form, as a raoh decoder of what a host decoded:
-    /// the value is written back as the JSON it is and read by the library. A member that is not
-    /// there is raoh's to report, as it is for any field, since there is no text to hand over.
+    /// the value of raoh's input model is written back as the JSON it is, each number as the text
+    /// it was written as, and read by the library. A member that is not there is raoh's to report,
+    /// as it is for any field, since there is no text to hand over.
     pub fn reading<'a, T>(
         &'a self,
         decode: impl Fn(&mut Run<'run, L>, &str) -> Result<Reading<T>, Failure> + 'a,
-    ) -> impl Decoder<Value, Output = T> + 'a {
-        let read = self.of(move |run, input: &Value| decode(run, &input.to_string()));
-        decoder_fn(move |input: &Value, path| {
+    ) -> impl Decoder<Json, Output = T> + 'a {
+        let read = self.of(move |run, input: &Json| {
+            let mut text = String::new();
+            written(input, &mut text);
+            decode(run, &text)
+        });
+        decoder_fn(move |input: &Json, path| {
             if raoh::json::is_missing(input) {
                 return Err(Issue::new(codes::REQUIRED).at(path.to_pointer()).into());
             }
@@ -100,5 +105,47 @@ impl<T> Answered<T> for Construction<T> {
 impl<T> Answered<T> for Reading<T> {
     fn into_result(self) -> Result<T, Issues> {
         Reading::into_result(self)
+    }
+}
+
+/// `input` as JSON text: a number as its lexeme, so `1.50` reaches the library as `1.50` and not as
+/// the float nearest it, and an object's members in the order raoh hands them. A member that is not
+/// there writes nothing, and is never handed here: [`Decoding::reading`] reports it first.
+fn written(input: &Json, out: &mut String) {
+    match input.view() {
+        View::Missing => {}
+        View::Null => out.push_str("null"),
+        View::Bool(truth) => out.push_str(if truth { "true" } else { "false" }),
+        View::Number(number) => out.push_str(&number.lexeme()),
+        View::String(text) => out.push_str(
+            &serde_json::to_string(text).expect("a string is written as JSON whatever it holds"),
+        ),
+        View::Array(elements) => {
+            out.push('[');
+            for (at, element) in elements.iter().enumerate() {
+                if at > 0 {
+                    out.push(',');
+                }
+                written(element, out);
+            }
+            out.push(']');
+        }
+        View::Object(members) => {
+            out.push('{');
+            let mut first = true;
+            members.each(&mut |name, value| {
+                if !first {
+                    out.push(',');
+                }
+                first = false;
+                out.push_str(
+                    &serde_json::to_string(name)
+                        .expect("a name is written as JSON whatever it holds"),
+                );
+                out.push(':');
+                written(value, out);
+            });
+            out.push('}');
+        }
     }
 }

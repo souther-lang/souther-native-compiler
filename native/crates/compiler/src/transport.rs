@@ -105,6 +105,23 @@ pub const MOVES: &[(u32, &str)] = &[
         "what each clause of a declaration this build runs is as standard constraints on its one \
          field (`projection`: `constraints`, `complete`)",
     ),
+    (
+        31,
+        "a pattern, of `String.matches` or of a clause, as the image notation-199x wrote the \
+         machine of what the checker read it as (`image`), in place of what it means part by part \
+         (`meaning`)",
+    ),
+    (
+        32,
+        "a newtype beside a literal of what it wraps, compared as that (`opened`: `newtype`, \
+         `base`), in place of a reading in the newtype that a backend told apart by the operands' \
+         types; read in a type (`in`), neither side is opened",
+    ),
+    (
+        33,
+        "a list's uniqueness names the type its repeated elements are reported as in an issue's \
+         metadata (`element`), which the checker gives only where they have one, in place of none",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1511,6 +1528,45 @@ impl Projection {
     }
 }
 
+/// The type a value of an issue's metadata is written as, as a document names it: one of the ABI's
+/// `META_TYPES`, or `list<T>` of one. A name this side does not have is a document the two halves
+/// disagree about, and is refused as one when it is read, not when the library runs.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(try_from = "String")]
+pub struct MetaType(String);
+
+impl MetaType {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for MetaType {
+    type Error = String;
+
+    fn try_from(written: String) -> Result<Self, String> {
+        fn names(written: &str) -> bool {
+            match written
+                .strip_prefix("list<")
+                .and_then(|it| it.strip_suffix('>'))
+            {
+                Some(element) => names(element),
+                None => {
+                    written != "list"
+                        && souther_native_abi::META_TYPES
+                            .iter()
+                            .any(|(name, _)| *name == written)
+                }
+            }
+        }
+        if names(&written) {
+            Ok(MetaType(written))
+        } else {
+            Err(format!("no type of an issue's metadata is {written}"))
+        }
+    }
+}
+
 /// One standard constraint a part of a clause is exactly (`BoundaryConstraint`), grouped by the type
 /// of the field it is about. Which code, message key and metadata a failure of it is reported with
 /// are not here: they are Raoh's, and the runtime says them.
@@ -1523,12 +1579,10 @@ pub enum BoundaryConstraint {
     MaxLength { n: i64 },
     /// A `String` of exactly `n` characters.
     FixedLength { n: i64 },
-    /// A `String` the whole of which a pattern matches: what it matches as the checker read it,
-    /// and the text it was written as, which is what a failure says the value was held to.
-    Pattern {
-        written: String,
-        meaning: Vec<PatternPart>,
-    },
+    /// A `String` the whole of which a pattern matches: the image of the machine of what the
+    /// checker read it as, and the text it was written as, which is what a failure says the value
+    /// was held to.
+    Pattern { written: String, image: String },
     /// An `Int` of at least `n`.
     Min { n: i64 },
     /// An `Int` of at most `n`.
@@ -1553,8 +1607,10 @@ pub enum BoundaryConstraint {
     MaxSize { n: i64 },
     /// A `List` of exactly `n` elements.
     FixedSize { n: i64 },
-    /// A `List` no element of which appears twice.
-    Unique,
+    /// A `List` no element of which appears twice, the elements it finds repeated reported as
+    /// `element` says: one of the ABI's `META_TYPES`, or `list<T>` of one, which the checker gives
+    /// from the elements' message form, a newtype seen through.
+    Unique { element: MetaType },
     /// A `Map` of one entry or more.
     MapNonEmpty,
     /// A `Map` of at least `n` entries.
@@ -1633,7 +1689,7 @@ impl BoundaryConstraint {
             | BoundaryConstraint::MinSize { .. }
             | BoundaryConstraint::MaxSize { .. }
             | BoundaryConstraint::FixedSize { .. }
-            | BoundaryConstraint::Unique => ConstraintOf::List,
+            | BoundaryConstraint::Unique { .. } => ConstraintOf::List,
             BoundaryConstraint::MapNonEmpty
             | BoundaryConstraint::MapMinSize { .. }
             | BoundaryConstraint::MapMaxSize { .. } => ConstraintOf::Map,
@@ -2623,9 +2679,9 @@ pub enum KernelFact {
     StringMatches {
         /// The pattern as its author wrote it: said in a message, and never read as a pattern.
         written: String,
-        /// Which strings it accepts, as the checker read the text: each part after the parts it
-        /// is made of, the whole last.
-        meaning: Vec<PatternPart>,
+        /// Which strings it accepts, as the checker read the text: the machine they make, written
+        /// as an image of a format notation-199x defines.
+        image: String,
     },
     /// The type an ordering was checked against, and the type whose order its values are placed
     /// on (`Core.OrderingBasis`), which is none exactly where there is no value to place.
@@ -2636,45 +2692,24 @@ pub enum KernelFact {
     },
 }
 
-/// One part of what a pattern means (`PatternMeaning`), naming the parts it is made of by where
-/// they stand in the list it is written in, which is always before it.
-///
-/// A list and not a tree because a pattern nests as deep as the checker reads one, and a document
-/// nesting as deep would be refused by the reader for its depth.
-#[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
-#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
-pub enum PatternPart {
-    /// The one string of no characters.
-    Nothing,
-    /// No string at all.
-    Never,
-    /// One character out of these runs, both ends in each, sorted and apart.
-    Symbols { ranges: Vec<(u32, u32)> },
-    /// One after another.
-    InTurn { parts: Vec<usize> },
-    /// Any one of them.
-    EitherOf { arms: Vec<usize> },
-    /// The same thing between `least` and `most` times, with no ceiling where `most` is absent.
-    Repeated {
-        what: usize,
-        least: u32,
-        most: Option<u32>,
-    },
-}
-
 /// What an operator reads its two operands as, as the checker settled it. Not a place either
-/// operand stands: a literal beside a newtype is read as the newtype by this operator and by
-/// nothing else.
+/// operand stands: a value beside one that states nothing about its own type is read as the first
+/// by this operator and by nothing else.
 #[derive(Debug, Deserialize, PartialEq, Eq, Clone)]
 #[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Reading {
     /// Each operand as the type it has, which is one type for both.
     AsTheyStand,
-    /// The pair as values of this type, for this operator only.
+    /// The pair as values of this type, for this operator only. Neither side is opened: a newtype
+    /// one of them is stands as the value of this type it is.
     In {
         #[serde(rename = "type")]
         ty: Ty,
     },
+    /// A newtype beside a literal of what it wraps under every name it wears: the side that is
+    /// `newtype` is opened through each of those names, and the pair is compared as `base`, which
+    /// the literal already is.
+    Opened { newtype: Ty, base: Ty },
     /// Each operand at its exact mathematical value, which one of them already being a `Rational`
     /// makes of the pair. No type of the language stands for it.
     ExactNumbers,
@@ -2795,7 +2830,7 @@ impl KernelFact {
             KernelFact::None
             | KernelFact::StringMatches {
                 written: _,
-                meaning: _,
+                image: _,
             } => Vec::new(),
             KernelFact::OrderingSubject { ty, ordering } => {
                 std::iter::once(ty).chain(ordering.as_ref()).collect()
@@ -2809,7 +2844,7 @@ impl KernelFact {
             KernelFact::None
             | KernelFact::StringMatches {
                 written: _,
-                meaning: _,
+                image: _,
             } => Vec::new(),
             KernelFact::OrderingSubject { ty, ordering } => {
                 std::iter::once(ty).chain(ordering.as_mut()).collect()
@@ -2824,6 +2859,7 @@ impl Reading {
         match self {
             Reading::AsTheyStand | Reading::ExactNumbers => Vec::new(),
             Reading::In { ty } => vec![ty],
+            Reading::Opened { newtype, base } => vec![newtype, base],
         }
     }
 
@@ -2832,6 +2868,7 @@ impl Reading {
         match self {
             Reading::AsTheyStand | Reading::ExactNumbers => Vec::new(),
             Reading::In { ty } => vec![ty],
+            Reading::Opened { newtype, base } => vec![newtype, base],
         }
     }
 
@@ -2841,6 +2878,9 @@ impl Reading {
             Reading::AsTheyStand => "as they stand".to_string(),
             Reading::ExactNumbers => "at their exact values".to_string(),
             Reading::In { ty } => format!("in {}", ty.spelt()),
+            Reading::Opened { newtype, base } => {
+                format!("as {} opened to {}", newtype.spelt(), base.spelt())
+            }
         }
     }
 }
@@ -3501,6 +3541,24 @@ mod tests {
                 pair[1],
                 pair[0]
             );
+        }
+    }
+
+    /// A uniqueness names the type its repeated elements are reported as, which is one the ABI
+    /// writes or a list of one; any other name is a document the two halves disagree about, and
+    /// is refused when it is read.
+    #[test]
+    fn a_uniqueness_names_a_type_the_metadata_writes() {
+        let read = |element: &str| {
+            serde_json::from_str::<BoundaryConstraint>(&format!(
+                r#"{{"is":"unique","element":"{element}"}}"#
+            ))
+        };
+        for element in ["int", "date", "list<decimal>", "list<list<instant>>"] {
+            assert!(read(element).is_ok(), "{element}");
+        }
+        for element in ["record", "none", "list", "list<record>", "Int"] {
+            assert!(read(element).is_err(), "{element}");
         }
     }
 }

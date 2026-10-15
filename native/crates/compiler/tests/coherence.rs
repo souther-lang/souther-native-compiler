@@ -1812,7 +1812,7 @@ fn what_a_clause_is_as_constraints_is_about_its_datas_one_field() {
         &text,
         &stated(
             &truth,
-            r#"{"is":"pattern","written":"a","meaning":[{"is":"nothing"}]}"#,
+            r#"{"is":"pattern","written":"a+","image":"P1,0,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0"}"#,
             false,
         ),
         &[],
@@ -1822,12 +1822,12 @@ fn what_a_clause_is_as_constraints_is_about_its_datas_one_field() {
             &text,
             &stated(
                 &truth,
-                r#"{"is":"pattern","written":"a","meaning":[]}"#,
+                r#"{"is":"pattern","written":"a+","image":"P1"}"#,
                 false,
             ),
             &[],
         ),
-        "means what no reading of a pattern is",
+        "as an image that is not one",
     );
     let same = node(
         "binary",
@@ -2129,12 +2129,13 @@ fn an_operator_is_read_only_as_the_checker_reads_it() {
         )
     };
     let in_amount = r#"{"is":"in","type":{"ref":{"is":"declared","declared":"m.A"}}}"#;
+    let opened = r#"{"is":"opened","newtype":{"ref":{"is":"declared","declared":"m.N"}},"base":{"prim":"INT"}}"#;
     let exact = r#"{"is":"exactnumbers"}"#;
     let stands = r#"{"is":"astheystand"}"#;
     let documents = |body: String, ty: &str| helpers(&[h(&[ty, ty], &body)]);
 
     reads_whole(&documents(over("AND", stands, BOOL), BOOL));
-    for reading in [in_amount, exact] {
+    for reading in [in_amount, opened, exact] {
         is_the_halves_disagreeing(
             &documents(over("AND", reading, BOOL), BOOL),
             "never reads it as",
@@ -2144,17 +2145,19 @@ fn an_operator_is_read_only_as_the_checker_reads_it() {
             "never reads it as",
         );
     }
-    is_the_halves_disagreeing(
-        &documents(over("ADD", in_amount, INT), INT),
-        "never reads it as",
-    );
+    for reading in [in_amount, opened] {
+        is_the_halves_disagreeing(
+            &documents(over("ADD", reading, INT), INT),
+            "never reads it as",
+        );
+    }
 }
 
-/// A pair read in a type is one the lowering can take apart as that type. A newtype beside what it
-/// wraps is read by opening the side that is one; any other pair, a newtype beside a value that
-/// states nothing about its own type included, is read by holding both sides as a value of the
-/// reading, so each is one. A pair that is neither would have the
-/// lowering read a field out of an `Int`, or a token out of a value that carries none.
+/// A pair read in a type is held as that type, neither side opened, so each side is a value of it:
+/// a newtype beside a value that states nothing about its own type included. A pair that is not
+/// would have the lowering read a field out of an `Int`, or a token out of a value that carries
+/// none. A newtype beside what it wraps is read opened ([`a_newtype_opened_beside_what_it_wraps_is_that_pair`]),
+/// and read in the newtype it is refused, so a backend never tells the two apart by the operands.
 #[test]
 fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
     let n = r#"{"ref":{"is":"declared","declared":"m.N"}}"#;
@@ -2173,8 +2176,7 @@ fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
         )])
     };
 
-    reads_whole(&compared(n, n, INT));
-    reads_whole(&compared(n, INT, n));
+    reads_whole(&compared(n, n, n));
     reads_whole(&compared(S, S, A));
     reads_whole(&compared(S, A, S));
 
@@ -2194,10 +2196,43 @@ fn a_pair_read_in_a_type_is_one_the_type_takes_apart() {
         }
     }
 
+    is_the_halves_disagreeing(&compared(n, n, INT), "is not a value of");
+    is_the_halves_disagreeing(&compared(n, INT, n), "is not a value of");
     is_the_halves_disagreeing(&compared(n, INT, INT), "is not a value of");
     is_the_halves_disagreeing(&compared(n, n, STRING), "is not a value of");
     is_the_halves_disagreeing(&compared(S, INT, S), "is not a value of");
     is_the_halves_disagreeing(&compared(A, S, A), "is not a value of");
+}
+
+/// A newtype opened beside a literal is one side the newtype and the other what it wraps under
+/// every name, which is what the lowering opens the one to and compares the other as. A pair that
+/// is anything else, or a base that is not what the newtype wraps, would be compared as a type
+/// neither side is.
+#[test]
+fn a_newtype_opened_beside_what_it_wraps_is_that_pair() {
+    let n = r#"{"ref":{"is":"declared","declared":"m.N"}}"#;
+    let compared = |newtype: &str, base: &str, left: &str, right: &str| {
+        helpers(&[h(
+            &[left, right],
+            &node(
+                "binary",
+                &format!(
+                    r#""op":"EQ","reading":{{"is":"opened","newtype":{newtype},"base":{base}}},"left":{},"right":{}"#,
+                    read(0, left),
+                    read(1, right)
+                ),
+                BOOL,
+            ),
+        )])
+    };
+
+    reads_whole(&compared(n, INT, n, INT));
+    reads_whole(&compared(n, INT, INT, n));
+
+    is_the_halves_disagreeing(&compared(n, INT, n, n), "the two halves disagree");
+    is_the_halves_disagreeing(&compared(n, INT, INT, INT), "the two halves disagree");
+    is_the_halves_disagreeing(&compared(n, STRING, n, STRING), "is not what");
+    is_the_halves_disagreeing(&compared(S, INT, S, INT), "is not what");
 }
 
 /// A newtype that wraps itself, directly or through another, has no value, and the checker refuses
@@ -2224,12 +2259,13 @@ fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
         )
     };
     let in_n = r#"{"is":"in","type":{"ref":{"is":"declared","declared":"m.N"}}}"#;
+    let opened = r#"{"is":"opened","newtype":{"ref":{"is":"declared","declared":"m.N"}},"base":{"prim":"INT"}}"#;
     let stands = r#"{"is":"astheystand"}"#;
     for declarations in [
         vec![newtype("N", "N")],
         vec![newtype("N", "M"), newtype("M", "N")],
     ] {
-        for reading in [in_n, stands] {
+        for reading in [in_n, opened, stands] {
             is_the_halves_disagreeing(&compared(&declarations, reading), "wraps itself");
         }
     }
@@ -2260,19 +2296,24 @@ fn every_type_a_node_writes_is_one_the_document_declares() {
     );
     refuses(call(&taking, &[int(1)], INT), &[]);
 
-    // What an operator reads its operands in.
-    refuses(
-        node(
-            "binary",
-            &format!(
-                r#""op":"EQ","reading":{{"is":"in","type":{missing}}},"left":{},"right":{}"#,
-                int(1),
-                int(2)
+    // What an operator reads its operands in, and what it opens one of them from.
+    for reading in [
+        format!(r#"{{"is":"in","type":{missing}}}"#),
+        format!(r#"{{"is":"opened","newtype":{missing},"base":{INT}}}"#),
+    ] {
+        refuses(
+            node(
+                "binary",
+                &format!(
+                    r#""op":"EQ","reading":{reading},"left":{},"right":{}"#,
+                    int(1),
+                    int(2)
+                ),
+                BOOL,
             ),
-            BOOL,
-        ),
-        &[],
-    );
+            &[],
+        );
+    }
 
     // What a let binds.
     refuses(let_(0, missing, &int(1), &int(2), INT), &[]);
@@ -2317,7 +2358,9 @@ fn a_kernel_settles_what_this_backend_knows_it_settles() {
 
     reads_whole(&document(r#"{"is":"none"}"#));
     is_the_halves_disagreeing(
-        &document(r#"{"is":"stringmatches","written":"foo","meaning":[{"is":"nothing"}]}"#),
+        &document(
+            r#"{"is":"stringmatches","written":"a+","image":"P1,0,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0"}"#,
+        ),
         "settles",
     );
     is_the_halves_disagreeing(
@@ -2574,18 +2617,16 @@ fn a_sort_by_a_variable_with_no_order_said_is_the_halves_disagreeing() {
     );
 }
 
-/// What a pattern is said to mean is what some pattern reads as: parts naming only parts written
-/// before them, and runs of scalar values in order and apart. Anything else is not a reading the
-/// checker makes, and is refused as the two halves disagreeing. Every reading is one this backend
-/// runs, whatever it counts: a count is a number the machine holds, so counts inside counts are no
-/// larger a machine than the reading they are written in.
+/// What a pattern crosses as is an image the runtime reads, of a format notation-199x defines, and
+/// one it could not read would end the run the first time the pattern is matched. So a text that
+/// is no image of any format is refused as the two halves disagreeing, before anything is written.
 #[test]
-fn a_pattern_is_said_to_mean_what_a_pattern_reads_as() {
-    let document = |meaning: &str| {
+fn a_pattern_crosses_as_an_image_the_runtime_reads() {
+    let document = |image: &str| {
         let matching = node(
             "call",
             &format!(
-                r#""reaches":{{"is":"kernel","kernel":"string.matches","takes":[{STRING},{STRING}],"fact":{{"is":"stringmatches","written":"p","meaning":{meaning}}}}},"arguments":[{},{}]"#,
+                r#""reaches":{{"is":"kernel","kernel":"string.matches","takes":[{STRING},{STRING}],"fact":{{"is":"stringmatches","written":"p","image":"{image}"}}}},"arguments":[{},{}]"#,
                 read(0, STRING),
                 read(1, STRING)
             ),
@@ -2594,34 +2635,26 @@ fn a_pattern_is_said_to_mean_what_a_pattern_reads_as() {
         helpers(&[h(&[STRING, STRING], &matching)])
     };
 
-    reads_whole(&document(r#"[{"is":"symbols","ranges":[[48,57]]}]"#));
-    reads_whole(&document(
-        r#"[{"is":"symbols","ranges":[[97,97]]},{"is":"repeated","what":0,"least":0,"most":null}]"#,
-    ));
+    // `a+`, as P1 writes it, the machine not deterministic and then deterministic.
+    reads_whole(&document("P1,0,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0"));
+    reads_whole(&document("P1,1,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0"));
     for unread in [
-        r#"[]"#,
-        r#"[{"is":"inturn","parts":[0]}]"#,
-        r#"[{"is":"symbols","ranges":[[55296,57343]]}]"#,
-        r#"[{"is":"symbols","ranges":[[5,9],[10,12]]}]"#,
-        r#"[{"is":"nothing"},{"is":"eitherof","arms":[0]}]"#,
-        r#"[{"is":"nothing"},{"is":"repeated","what":0,"least":3,"most":2}]"#,
+        "",
+        "P1",
+        "P9,0,0,1,1,0,0",
+        // A run whose first is past its last.
+        "P1,0,1,1,98,97,2,0,1,0,1,0,1,1,0,1,0",
+        // A run of surrogates.
+        "P1,0,1,1,55296,57343,1,1,1,0,0,0",
+        // No state to start in.
+        "P1,0,0,0",
+        // A step to a state there is not.
+        "P1,0,1,1,97,97,1,1,1,0,5,0",
+        // Something after the machine.
+        "P1,0,1,1,97,97,2,0,1,0,1,0,1,1,0,1,0,0",
     ] {
-        is_the_halves_disagreeing(&document(unread), "no reading of a pattern");
+        is_the_halves_disagreeing(&document(unread), "as an image that is not one");
     }
-
-    let counted = |what: usize, times: u32| {
-        format!(r#"{{"is":"repeated","what":{what},"least":{times},"most":{times}}}"#)
-    };
-    reads_whole(&document(&format!(
-        r#"[{{"is":"symbols","ranges":[[97,97]]}},{}]"#,
-        counted(0, 1 << 20)
-    )));
-    reads_whole(&document(&format!(
-        r#"[{{"is":"symbols","ranges":[[97,97]]}},{},{},{}]"#,
-        counted(0, 1000),
-        counted(1, 1000),
-        counted(2, 1000)
-    )));
 }
 
 /// A node names a reason to end a run without a value only where its kind has one. A literal, a

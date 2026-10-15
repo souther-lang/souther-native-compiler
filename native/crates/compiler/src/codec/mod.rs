@@ -31,20 +31,20 @@ use cranelift::codegen::isa::CallConv;
 use cranelift::module::{FuncId, Linkage, Module};
 use cranelift::object::ObjectModule;
 use souther_native_abi::{
+    CONSTRUCT_BEGIN, DECODE_ABANDON, DECODE_BEGIN, DECODE_END, DECODE_HOST_BEGIN, DECODE_ROOT,
+    EXTERNAL_APPEND, EXTERNAL_ARRAY, EXTERNAL_BOOL, EXTERNAL_DATE, EXTERNAL_DATETIME,
+    EXTERNAL_DECIMAL, EXTERNAL_INSTANT, EXTERNAL_INT, EXTERNAL_JSON, EXTERNAL_NULL,
+    EXTERNAL_OBJECT, EXTERNAL_PUT, EXTERNAL_STRING, EXTERNAL_TIME, PATH_AT, PATH_BELOW, READ_ARRAY,
+    READ_ARRAY_LENGTH, READ_BOOL, READ_CASE, READ_DATE, READ_DATETIME, READ_DECIMAL, READ_ELEMENT,
+    READ_INSTANT, READ_INT, READ_INVARIANT, READ_IS, READ_MEMBER, READ_MISSING, READ_NO_SUCH_TAG,
+    READ_NOT_ONE_OF, READ_NULL, READ_OBJECT, READ_STRING, READ_TAG, READ_TIME, reader_symbol,
+};
+use souther_native_abi::{
     DECIMAL_LITERAL, LIST_DUPLICATES, READ_DECIMAL_MAX, READ_DECIMAL_MIN,
     READ_DECIMAL_NON_NEGATIVE, READ_DECIMAL_POSITIVE, READ_DUPLICATES, READ_FIXED_LENGTH,
     READ_INT_MAX, READ_INT_MIN, READ_INT_NON_NEGATIVE, READ_INT_POSITIVE, READ_LIST_FIXED_SIZE,
     READ_LIST_MAX_SIZE, READ_LIST_MIN_SIZE, READ_LIST_NON_EMPTY, READ_MAP_MAX_SIZE,
     READ_MAP_MIN_SIZE, READ_MAP_NON_EMPTY, READ_MAX_LENGTH, READ_MIN_LENGTH, READ_PATTERN,
-};
-use souther_native_abi::{
-    DECODE_ABANDON, DECODE_BEGIN, DECODE_END, DECODE_HOST_BEGIN, DECODE_ROOT, EXTERNAL_APPEND,
-    EXTERNAL_ARRAY, EXTERNAL_BOOL, EXTERNAL_DATE, EXTERNAL_DATETIME, EXTERNAL_DECIMAL,
-    EXTERNAL_INSTANT, EXTERNAL_INT, EXTERNAL_JSON, EXTERNAL_NULL, EXTERNAL_OBJECT, EXTERNAL_PUT,
-    EXTERNAL_STRING, EXTERNAL_TIME, PATH_AT, PATH_BELOW, READ_ARRAY, READ_ARRAY_LENGTH, READ_BOOL,
-    READ_CASE, READ_DATE, READ_DATETIME, READ_DECIMAL, READ_ELEMENT, READ_INSTANT, READ_INT,
-    READ_INVARIANT, READ_IS, READ_MEMBER, READ_MISSING, READ_NOT_A_CASE, READ_NULL, READ_OBJECT,
-    READ_STRING, READ_TAG, READ_TIME, reader_symbol,
 };
 use souther_native_abi::{
     EXTERNAL_ENTRIES, EXTERNAL_ORDER, MAP_CONTAINS_KEY, MAP_EMPTY, MAP_INSERT, MAP_TO_LIST,
@@ -193,6 +193,7 @@ pub(crate) enum Runtime {
     ExternalJson,
     DecodeBegin,
     DecodeHostBegin,
+    ConstructBegin,
     DecodeRoot,
     DecodeEnd,
     DecodeAbandon,
@@ -216,7 +217,8 @@ pub(crate) enum Runtime {
     ReadCase,
     ReadTag,
     ReadIs,
-    ReadNotACase,
+    ReadNotOneOf,
+    ReadNoSuchTag,
     ReadInvariant,
     ReadMembers,
     ReadMemberKey,
@@ -274,6 +276,7 @@ impl Runtime {
             Runtime::ExternalJson => EXTERNAL_JSON,
             Runtime::DecodeBegin => DECODE_BEGIN,
             Runtime::DecodeHostBegin => DECODE_HOST_BEGIN,
+            Runtime::ConstructBegin => CONSTRUCT_BEGIN,
             Runtime::DecodeRoot => DECODE_ROOT,
             Runtime::DecodeEnd => DECODE_END,
             Runtime::DecodeAbandon => DECODE_ABANDON,
@@ -297,7 +300,8 @@ impl Runtime {
             Runtime::ReadCase => READ_CASE,
             Runtime::ReadTag => READ_TAG,
             Runtime::ReadIs => READ_IS,
-            Runtime::ReadNotACase => READ_NOT_A_CASE,
+            Runtime::ReadNotOneOf => READ_NOT_ONE_OF,
+            Runtime::ReadNoSuchTag => READ_NO_SUCH_TAG,
             Runtime::ReadInvariant => READ_INVARIANT,
             Runtime::ReadMembers => READ_MEMBERS,
             Runtime::ReadMemberKey => READ_MEMBER_KEY,

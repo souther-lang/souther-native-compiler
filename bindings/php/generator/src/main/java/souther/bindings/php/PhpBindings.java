@@ -69,7 +69,7 @@ public final class PhpBindings {
      * The version of what generated code calls of the runtime package that this writes against:
      * {@code Binding::PROTOCOL} in {@code bindings/php/runtime}, which a test holds to this.
      */
-    static final int RUNTIME_PROTOCOL = 11;
+    static final int RUNTIME_PROTOCOL = 12;
 
     private final Manifest manifest;
     private final String root;
@@ -763,7 +763,7 @@ public final class PhpBindings {
         }
         String session = PhpNames.freeOf("session", names);
         String ffi = PhpNames.freeOf("ffi", names);
-        String made = PhpNames.freeOf("made", names);
+        String made = PhpNames.freeOf("reading", names);
         String status = PhpNames.freeOf("status", names);
 
         List<String> parameters = new ArrayList<>();
@@ -788,8 +788,8 @@ public final class PhpBindings {
         php.append("""
 
                     /**
-                     * A value of `%s`, or an `invariant_violation` where what is handed over does not
-                     * hold what the type states.
+                     * A value of `%s`, or the issue where what is handed over does not hold what the
+                     * type states: the one `decode` answers for the same value.
                      *
                 %s     * @return \\Raoh\\Result<%s>
                      */
@@ -799,13 +799,14 @@ public final class PhpBindings {
                         $%s = $%s->call();
                         $%s = $%s->new('%s');
                         $%s = $%s->%s(%s);
-                        return $%s->constructed($%s,
-                            static fn (): %s => new %s($%s->held($%s)));
+                        return $%s->decoded($%s, $%s,
+                            static fn (\\FFI\\CData $value): %s => new %s($%s->held($value)));
                     }
                 """.formatted(it.key(), described, it.fqcn(), String.join(", ", parameters),
                 session, innermost(), ffi, session, made, ffi,
-                Crossing.storage(Word.VALUE), status, ffi, construct.function().name(),
-                String.join(", ", given), session, status, it.fqcn(), it.fqcn(), session, made));
+                Crossing.storage(construct.function().takes().getLast().word()), status, ffi,
+                construct.function().name(), String.join(", ", given), session, status, made,
+                it.fqcn(), it.fqcn(), session));
     }
 
     /**

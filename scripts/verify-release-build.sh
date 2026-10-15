@@ -45,11 +45,19 @@ if [ "$generators" -eq 0 ]; then
     exit 1
 fi
 
-compiler="$repository/org/souther-lang/souther-native-compiler/$version/souther-native-compiler-$version.jar"
-if ! unzip -p "$compiler" souther/nativecode/release-checksums.properties | diff - "$checksums" > /dev/null; then
-    echo "$compiler does not carry the checksums that were written" >&2
-    exit 1
-fi
+# The compiler, and the backend jar `souther compile --target native` runs, which is the compiler with
+# what it runs with: both are published, and a user of either fetches what these checksums are of.
+for compiler in "$repository/org/souther-lang/souther-native-compiler/$version/souther-native-compiler-$version.jar" \
+        "$repository/org/souther-lang/souther-native-compiler/$version/souther-native-compiler-$version-backend.jar"; do
+    if [ ! -f "$compiler" ]; then
+        echo "no $compiler" >&2
+        exit 1
+    fi
+    if ! unzip -p "$compiler" souther/nativecode/release-checksums.properties | diff - "$checksums" > /dev/null; then
+        echo "$compiler does not carry the checksums that were written" >&2
+        exit 1
+    fi
+done
 
 artifact_of() {
     sed -n '/<\/parent>/,$ s#^ *<artifactId>\(.*\)</artifactId> *$#\1#p' "$1" | head -1
@@ -70,4 +78,23 @@ if [ "$expected" != "$deployed" ]; then
     printf '  %s\n' $deployed >&2
     exit 1
 fi
-echo "the publication is what was checksummed, and holds what the modules publish"
+
+# Maven Central refuses a jar without its sources and its Javadoc beside it, and it is refused there
+# only after the publication has been signed and uploaded; so it is refused here, where the workflow
+# that built it can still be run again.
+for artifact in $deployed; do
+    base="$repository/org/souther-lang/$artifact/$version/$artifact-$version"
+    if [ ! -f "$base.pom" ]; then
+        echo "no $base.pom" >&2
+        exit 1
+    fi
+    if [ -f "$base.jar" ]; then
+        for classifier in sources javadoc; do
+            if [ ! -f "$base-$classifier.jar" ]; then
+                echo "no $base-$classifier.jar, which Maven Central requires beside $base.jar" >&2
+                exit 1
+            fi
+        done
+    fi
+done
+echo "the publication is what was checksummed, and holds what the modules publish, each jar with its sources and its Javadoc"

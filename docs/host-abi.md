@@ -41,7 +41,10 @@ a generator. What it says is described with its types in
 Everything a host calls of a library belongs to one ABI generation, and the generation moves when
 any of it changes. It is `ABI_GENERATION` in the `abi` crate, and the file of its number under
 `generations/` records every contract the generation has offered: every function a host calls and
-every function generated code calls in the runtime, with what each takes and answers; every word
+every function generated code calls in the runtime, with what each takes and answers; each kind of
+function generated for a host, a constructor, a decoder or a list's reader, with what it takes and
+answers whatever the model it is over (`HOST_ENTRIES`), which every such function is made from;
+every word
 and what it is on the machine; the storage a host lays out; the scope contract; the input contract;
 the statuses and the range reserved for a host; how a value is hashed; and the constants generated
 code and the runtime agree on. The record only grows: a host or an object can be built on any day of a
@@ -142,8 +145,8 @@ spelt apart: `souther<n>`, `<n>` being the ABI generation, then the module as `_
 segment of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape
 a list's element crosses in, or `_fn_` and the shape of a function value, and then what is done with
 it. A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther9_m_shop_b_quote` at generation
-9, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther12_m_shop_b_quote` at generation
+12, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
 `_` or `u`, which keeps every spelling readable back to the names it was made from. The functions
 that spell each name are in [`native/crates/abi/src/lib.rs`](../native/crates/abi/src/lib.rs), each
 with what the function it names takes and answers.
@@ -153,18 +156,37 @@ own for a host, which converts what a host hands over and calls the symbol anoth
 the day one of them takes a value in a form a host does not hand one over in, a host's entry still
 takes what a host hands over.
 
-For a published type, `_t_<Name>_construct` takes the fields and answers a status the way the type's
-own constructor does, since it is that constructor it runs: a value whose clauses do not hold is
-answered `InvariantNotHeld` and nothing is written. A type with no clause answers a status too, so a
-clause added later does not change how a host calls it. `_f_<field>` writes a field through room and
+For a published type, `_t_<Name>_construct` takes the fields and runs the type's clauses, as its
+own constructor does, and answers as the type's `_decode` does: a status, which is not `ANSWERED`
+only where a clause ended without a value, and otherwise a reading through room. The reading holds
+the value, or the issue the first clause that does not hold is, at the value's own place: the one
+`_decode` records for the same value, so a host is told which constraint or which clause, of which
+type, whichever way it built the value. A type with no clause answers a reading too, so a clause
+added later does not change how a host calls it. `_f_<field>` writes a field through room and
 answers nothing. A sum has `_case`, answering which of the cases the sum descends to the value is,
 as its place among them counted from nought. `_decode` reads a value out of its external form as
 bytes, and `_decode_host` out of a value a host built of ordered maps and wrote with every container
 as an object. Each answers a status, which is not `ANSWERED` only where a clause the reading runs
 ended without a value, and otherwise writes through room a reading the host asks what it came to
 through the runtime's `souther_decoded_*` functions: a value, bytes that are not JSON and where they
-stopped, or every issue found. A clause that does not hold is one of the issues. `_encode` writes a
-value in its external form. A behavior answering a union no declaration names has
+stopped, or every issue found. A clause that does not hold is one of the issues. An issue says its
+code, its message key, its path and its metadata (`souther_issue_meta`), a JSON object with a
+member for each name Raoh gives the issue. Each value in it is written as the type it is in Raoh's
+value model, an object of one member named for the type: `{"int":5}`, `{"decimal":"1.50"}` (the
+decimal at its scale, as Java's `BigDecimal.toString` writes it), `{"string":"…"}`,
+`{"bool":true}`, `{"date":"2026-01-31"}` and the same for `time`, `datetime` and `instant`, and
+`{"list":[…]}`. These are the types Raoh gives a message form, which are the only ones its
+metadata holds. The type is the one the declaration gives, never one read off the JSON a value
+would be written as, where a `Decimal` of scale nought is an `Int` and a date is a string: an
+element `duplicates` lists is the type the checker gives the elements' message form, a newtype
+what it holds. The checker states a list's uniqueness only of elements that have one, and a list of
+anything else keeps its own check, reported as `invariant_violation` (Souther's specification,
+"Codes an invariant produces"). A host makes each value that type in its own Raoh and guesses
+nothing. An issue's code and wording are Raoh's, word for word as the JVM's `jsonDecoder()` gives
+them: `required` where a value is `null` or a member is missing, and `type_mismatch` naming the
+kinds of JSON found and wanted, in the words the JVM's decoders use for them (string, long,
+number, boolean, object and array).
+`_encode` writes a value in its external form. A behavior answering a union no declaration names has
 `_b_<behavior>_answer_case` beside its call, which says which of the union's cases the value is.
 
 A primitive among the cases of a union is carried by the runtime, and a host makes one and reads it
@@ -282,3 +304,20 @@ whatever works on one arena shares, so two loads of one file are one runtime.
 
 A library is loaded, asked `souther_abi_generation`, and only then looked up further. Everything
 else a runtime does with it follows the words, the input contract and the scope contract above.
+
+A library keeps one thing beyond any scope: a pattern it read from the image the object carries,
+so that the image is read once however often the pattern is matched. That is kept on the runtime's
+heap and not in the object, so unloading the library does not drop it. A host that unloads a library
+calls `souther_release` first, with no call into the library in flight on any thread; it drops what
+the library kept and leaves it usable, and calling it again drops nothing. A host that keeps a
+library loaded for as long as the process runs never has to call it. The release contract is the
+record's `release` lines.
+
+A loader hands the same library back for every load of one file, and unloads it only when the last
+of them is closed, so "unloads" is the last close and not each. Two loads of one file share what it
+keeps: released when one of them is closed, it drops a pattern a call through the other may be
+matching on another thread. A host that loads one file more than once counts its loads and releases
+the library only when it closes the last. The Rust runtime counts each `NativeLibrary` of a library
+and calls it when the last is dropped, which unloads the library; the Go runtime unloads a library
+only where loading it failed and nothing was called, and releases it then only where no other load
+holds it; and the PHP runtime keeps a library for as long as the process runs.

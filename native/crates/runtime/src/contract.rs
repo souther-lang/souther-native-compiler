@@ -15,6 +15,7 @@ use crate::decimal::*;
 use crate::decoding::*;
 use crate::document::Node;
 use crate::external::*;
+use crate::kernels::HeldPattern;
 use crate::rational::*;
 use crate::temporal::*;
 use crate::*;
@@ -150,7 +151,7 @@ words! {
     *const Value => Word::Host(HostWord::Value),
     *const List => Word::Host(HostWord::List),
     *mut List => Word::Host(HostWord::List),
-    *const u32 => Word::Machine,
+    *const HeldPattern => Word::Pattern,
     *const Decoding => Word::Host(HostWord::Decoded),
     *mut Decoding => Word::Host(HostWord::Decoded),
     *const Issue => Word::Host(HostWord::Issue),
@@ -257,6 +258,10 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_scope_close as extern "C" fn(Scope) -> Bool),
         ),
         (
+            "souther_release",
+            shape_of(souther_release as extern "C" fn()),
+        ),
+        (
             "souther_string_compare",
             shape_of(souther_string_compare as unsafe extern "C" fn(T, T) -> Comparison),
         ),
@@ -294,7 +299,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_string_matches",
-            shape_of(souther_string_matches as unsafe extern "C" fn(*const u32, T) -> Bool),
+            shape_of(souther_string_matches as unsafe extern "C" fn(*const HeldPattern, T) -> Bool),
         ),
         (
             "souther_string_slice",
@@ -423,6 +428,10 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_decode_host_begin as unsafe extern "C" fn(*const u8, Count) -> D),
         ),
         (
+            "souther_construct_begin",
+            shape_of(souther_construct_begin as extern "C" fn() -> D),
+        ),
+        (
             "souther_decode_root",
             shape_of(souther_decode_root as unsafe extern "C" fn(C) -> *const Node),
         ),
@@ -519,6 +528,18 @@ fn functions() -> Vec<(&'static str, Shape)> {
             shape_of(souther_read_not_a_case as unsafe extern "C" fn(*const Node, *const Path, D)),
         ),
         (
+            "souther_read_not_one_of",
+            shape_of(
+                souther_read_not_one_of as unsafe extern "C" fn(*const Node, *const Path, D, T),
+            ),
+        ),
+        (
+            "souther_read_no_such_tag",
+            shape_of(
+                souther_read_no_such_tag as unsafe extern "C" fn(*const Node, *const Path, D, T),
+            ),
+        ),
+        (
             "souther_read_invariant",
             shape_of(souther_read_invariant as unsafe extern "C" fn(*const Path, D, T, T, T)),
         ),
@@ -544,7 +565,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
             "souther_read_pattern",
             shape_of(
                 souther_read_pattern
-                    as unsafe extern "C" fn(*const Path, D, T, *const u32, T) -> Bool,
+                    as unsafe extern "C" fn(*const Path, D, T, *const HeldPattern, T) -> Bool,
             ),
         ),
         (
@@ -650,7 +671,7 @@ fn functions() -> Vec<(&'static str, Shape)> {
         ),
         (
             "souther_read_duplicates",
-            shape_of(souther_read_duplicates as unsafe extern "C" fn(*const Path, D, *mut Form)),
+            shape_of(souther_read_duplicates as unsafe extern "C" fn(*const Path, D, *mut Form, T)),
         ),
         (
             "souther_list_duplicates",
@@ -1634,10 +1655,8 @@ fn every_function_the_runtime_defines_is_in_one_table() {
         ("decimal", include_str!("decimal.rs")),
         ("decoding", include_str!("decoding.rs")),
         ("document", include_str!("document.rs")),
-        ("enclosure", include_str!("enclosure.rs")),
         ("external", include_str!("external.rs")),
         ("kernels", include_str!("kernels.rs")),
-        ("magnitude", include_str!("magnitude.rs")),
         ("rational", include_str!("rational.rs")),
         ("temporal", include_str!("temporal.rs")),
     ];
@@ -1773,6 +1792,13 @@ fn hostile() -> Vec<(&'static str, Hostile)> {
                 let scope = souther_scope_open();
                 assert_eq!(souther_scope_close(scope), Bool::TRUE);
             }),
+        ),
+        (
+            "souther_release",
+            // Takes nothing, so nothing a host hands it can be wrong. It is not called here: it
+            // drops what every test matching a pattern beside this one is reading, a call in
+            // flight a host never makes. `kernels` calls it alone.
+            Refuses(|| {}),
         ),
         (
             "souther_scope_close",

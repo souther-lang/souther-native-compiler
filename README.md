@@ -29,7 +29,8 @@ application, each with a README of its own.
 The build is one Maven reactor of seven modules. `bindings/api` (`souther-bindings-api`) is what a
 binding generator is written against: the interface a generator implements and the model of a
 library it is handed. `compiler` (`souther-native-compiler`) is the compiler and the command, which
-reads the manifest a build writes into that model and puts each binding in place.
+reads the manifest a build writes into that model and puts each binding in place; it also builds the
+backend jar, the command with everything it runs with, which `souther compile --target native` runs.
 `bindings/testkit` (`souther-bindings-testkit`) is what a generator is tested with: sources built
 into a library by the compiler and driver of its release. `bindings/php/generator`,
 `bindings/rust/generator` and `bindings/go/generator` are the generators, each beside the runtime in
@@ -46,22 +47,42 @@ which only the JDK, the API and the jar itself resolve.
 ## From the command line
 
 What the API builds, the command line builds too, so an application needs no Java of its own to
-build what it runs. Only a JVM is needed to start it, through [jbang](https://www.jbang.dev/):
+build what it runs. The command is `souther compile --target native`: the Souther CLI finds this
+backend among those installed beside it, checks that it was built against the CLI's own Souther, and
+runs it as a process of its own with every argument after the target. Only a JVM is needed to run
+it, which the CLI needs anyway.
 
-    jbang souther-native@souther-lang/souther-native-compiler \
-        --library build/native --php build/php --namespace Acme\Shop model
+    souther compile --target native --library build/native \
+        --binding php build/php --binding-option 'namespace=Acme\Shop' model
 
-    souther-native [--offline] [-cp <path>] -o <object> <source>...
-    souther-native [--offline] [-cp <path>] --library <dir> [--with <object>]...
-                   [--php <dir> --namespace <ns>] [--rust <dir> --crate <name>]
-                   [--go <dir> --package <import path>] <source>...
-    souther-native --fetch
+    souther compile --target native [--offline] [-cp <path>] -o <object> <source>...
+    souther compile --target native [--offline] [-cp <path>] --library <dir>
+        [--with <object>]...
+        [--binding <generator> <dir> [--binding-option <key>=<value>]...]...
+        <source>...
+    souther compile --target native --fetch
+    souther compile --target native --help
 
-A source is a `.sou` file or a directory holding some. `-o` writes one object file. `--library`
-writes what a host is handed into its directory ([docs/host-abi.md](docs/host-abi.md)), and `--php`,
-`--rust` and `--go` each write that binding of it, from the library's model. A program importing
-another build reads that build's modules from `-cp`, the class path the `souther` command takes, and
-has its object linked in with `--with`, one for each build. The command ends with 0 where it wrote
+The backend is the jar `souther-native-compiler-<version>-backend.jar`, released on Maven Central
+beside the compiler at this repository's own version. Its descriptor,
+`META-INF/souther/backend.properties`, names the target `native` and the Souther it was built
+against, and the CLI runs a backend only where that Souther is exactly its own, so a backend is
+released again for each Souther. A package manager installs it where its `souther` looks; by hand,
+it goes into `$SOUTHER_HOME/backends`, which the CLI searches first. Jars built against different
+Souther versions can sit there side by side, and the CLI chooses the one built against itself.
+
+A source is a `.sou` file or a directory holding some. A lone file may leave out its `module`
+header and is then named after its file, as `souther compile` names it, and a link found under a
+directory is refused rather than followed, as is a directory under it that cannot be read, rather
+than left out. `--help` writes the usage and ends with 0. `-o` writes one object file. `--library`
+writes what a host is handed into its directory ([docs/host-abi.md](docs/host-abi.md)), and each
+`--binding` writes a binding of it, from the library's model, into the directory after the
+generator. The generator is `php`, `rust` or `go` for the bindings this compiler ships, which take
+the option `namespace`, `crate` and `package` respectively, each as `--binding-option <key>=<value>`
+after its `--binding`; a generator of anyone else's is named by its coordinate and digest or the path
+of its jar ([docs/writing-a-binding.md](docs/writing-a-binding.md)). A program importing another
+build reads that build's modules from `-cp`, the class path the `souther` command takes, and has its
+object linked in with `--with`, one for each build. The command ends with 0 where it wrote
 everything, 1 where the build is refused (a compile error, what this backend does not write yet, a
 name from the model a binding's language will not take, or a generator that failed), and 2 where the
 command is refused.
@@ -75,14 +96,14 @@ directory holding what no binding of that language wrote, is refused before the 
 The compiler is one artifact, and what a command needs beyond it is fetched the first time it needs
 it and kept in `~/.souther` (`$SOUTHER_HOME` where it is set): the driver for the platform it runs
 on, from the GitHub release of its own version, and the generator of each binding that is asked for,
-from Maven Central at that version. Nothing else is fetched unless the command line names it: a
-flag of the catalog brings what the catalog names, and nobody who does not use the Rust binding has
-the Rust generator.
+from Maven Central at that version. Nothing else is fetched unless the command line names it: an id
+of the catalog brings what the catalog names, and nobody who does not use the Rust binding has the
+Rust generator.
 
 A binding of someone else's is written by their generator's jar, named by its coordinate and the
 SHA-256 of the jar, or by a path to a jar for its author's own build:
 
-    souther-native --library build/native \
+    souther compile --target native --library build/native \
         --binding com.acme:souther-binding-kotlin:1.2.0@sha256:<64 hex> build/kotlin \
         --binding-option package=com.acme.shop model
 
@@ -106,10 +127,13 @@ same build made, which it names by `-Dsouther.generator.<id>` and the command lo
 generator's jar. That property is the one place such a build looks for a driver, and a release never
 reads it, as it reads no property naming a generator: a release runs only what its checksums name. A
 compiler does not look in the directory it is run in, where a project of somebody else's could have
-an executable of the same name. In a clone:
+an executable of the same name. In a clone, the script stands where `souther compile --target native`
+stands:
 
-    scripts/souther-native --library build/native --php build/php --namespace Acme\Shop model
+    scripts/souther-native --library build/native \
+        --binding php build/php --binding-option 'namespace=Acme\Shop' model
 
 The script builds what the command needs and runs it in the directory it was started in, so the
-paths are read from there. How an application then depends on what was written is each binding's own
-README.
+paths are read from there. The jar is also run directly with `java -jar`, which is how the CLI starts
+it, for working on the backend and for finding out what it does. How an application then depends on
+what was written is each binding's own README.

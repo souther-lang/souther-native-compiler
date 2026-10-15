@@ -407,7 +407,7 @@ func TestAFieldTheOrderersCaseHasIsMissingIs400(t *testing.T) {
 	a := newClient(t).checkout("/carts/checkout", user, orderer)
 
 	expectIssues(t, a, "/orderer/name")
-	if code := a.field("issues").([]any)[0].(object)["code"]; code != "missing_field" {
+	if code := a.field("issues").([]any)[0].(object)["code"]; code != "required" {
 		t.Fatalf("the code is %v", code)
 	}
 }

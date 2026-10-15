@@ -15,8 +15,8 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * A job of a workflow is a runner of its own, so what one installed is not there in another: the
- * release does not have the Go the build installed. What a job needs is therefore a fact about each
+ * A job of a workflow is a runner of its own, so what one installed is not there in another: a job
+ * of the release does not have the Go the build installed. What a job needs is therefore a fact about each
  * job, and is held for each, and not remembered from the one that happened to have it.
  *
  * <p>The Go a job needs is said once, in the {@code go} line of the runtime module's go.mod: a job
@@ -63,7 +63,8 @@ class EveryJobThatRunsGoHasTheGoTheRuntimeModuleNamesTest {
                         .contains("uses: actions/setup-go@").contains(GO_MOD);
             }
         }
-        assertThat(held).as("the jobs that run Go, which are the build's and the release's").isEqualTo(2);
+        // The release runs Go only in the build it calls: the Go runtime's tag is published by hand.
+        assertThat(held).as("the jobs that run Go, which are the build's").isEqualTo(1);
     }
 
     @Test

@@ -181,6 +181,33 @@ pub const GENERATIONS: &[(u32, &str)] = &[
          position `souther_mark` answered and `souther_reset` took back unchecked \
          (souther-native-compiler#137)",
     ),
+    (
+        10,
+        "a pattern crosses to the runtime as the image notation-199x wrote its machine in, behind \
+         room the runtime keeps the pattern it read in (`PATTERN_READ`, `PATTERN_LENGTH`, \
+         `PATTERN_IMAGE`), in place of the words `souther_text::pattern` compiled it to: \
+         `souther_string_matches` and `souther_read_pattern` take that; and a host that unloads a \
+         library calls `souther_release` first, which drops what the runtime read \
+         (souther-native-compiler#144)",
+    ),
+    (
+        11,
+        "an issue's metadata (`souther_issue_meta`) writes each value as the type it is in Raoh's \
+         value model, a JSON object of one member named for it (`META_TYPES`), in place of the \
+         plain JSON value, in which a `Decimal` of scale nought was an `Int`, a date was a string \
+         and a host read `1.50` as the float 1.5; and `souther_read_duplicates` takes the type of \
+         the elements, which the compiler gives from the list's declaration \
+         (souther-native-compiler#153)",
+    ),
+    (
+        12,
+        "a host's construction of a value (`_t_<type>_construct`) writes a reading through room in \
+         place of the value, as the type's decoder does: the value, or the issue a clause that did \
+         not hold is, named as the decoder names it, where a host was answered \
+         `INVARIANT_NOT_HELD` and told nothing of which clause; a reading of no document is begun \
+         by `souther_construct_begin`; and how a host calls each function generated for it is \
+         recorded by kind (`HOST_ENTRIES`) (souther-native-compiler#157)",
+    ),
 ];
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
@@ -492,10 +519,17 @@ pub fn host_value_symbol(module: &str, value: &str) -> String {
     host_under(module, 'v', value)
 }
 
-/// Where a host builds a value of a declared type: the fields as a host hands them over, and
-/// `status + out`, the way a call to the type's own constructor answers — which is what this runs.
+/// Where a host builds a value of a declared type: the fields as a host hands them over, and room
+/// for a reading, `(fields, out) -> status` ([`CONSTRUCT_ENTRY`]).
 ///
-/// A type with no clause answers a status too, so a clause added to it later is not a change to
+/// It runs the type's clauses as its own constructor does, and answers as the type's decoder
+/// ([`host_decode_symbol`]) does: a status where a clause itself ended without a value, and
+/// otherwise a reading through `out`, holding the value or the issue a clause that did not hold is
+/// at the value's own place — the issue the decoder records for the same value, naming the
+/// constraint the clause is, or the type and the clause. A host that built a value is told which
+/// rule it broke, whichever way it built it.
+///
+/// A type with no clause answers a reading too, so a clause added to it later is not a change to
 /// how a host calls it.
 pub fn host_constructor_symbol(module: &str, name: &str) -> String {
     format!("{}_construct", host_under(module, 't', name))
@@ -1094,6 +1128,23 @@ pub const HELD: i64 = 0;
 /// thing standing before the text.
 pub const TEXT_LENGTH: i64 = 0;
 
+/// Where a pattern's room holds the pattern the runtime read from its image: null in the object,
+/// and written by the first match that reads the image, so that a pattern is read once however
+/// many times it is matched. The object keeps the room writable for that. What is written there is
+/// a pointer to what the runtime keeps and owns until [`RELEASE`], which empties the room again.
+///
+/// A pattern says the same thing every run, so what it is run as is worked out from the image and
+/// not carried in a layout of the runtime's own: the image is notation-199x's format, which every
+/// implementation reading it reads alike (`image/P1.md`, `image/P2.md` in that repository), so what
+/// an object holds does not depend on how the runtime keeps a pattern.
+pub const PATTERN_READ: i64 = 0;
+
+/// Where a pattern's room says how many bytes its image is.
+pub const PATTERN_LENGTH: i64 = SLOT;
+
+/// Where a pattern's image begins: ASCII text, as notation-199x's formats are written.
+pub const PATTERN_IMAGE: i64 = 2 * SLOT;
+
 /// Where a string's text begins, as UTF-8 and in no other encoding.
 ///
 /// One slot along, so the text starts aligned as everything the arena answers does, and so what
@@ -1560,6 +1611,34 @@ pub const SCOPE_OPEN: &str = "souther_scope_open";
 /// the token was the innermost open scope of the calling thread.
 pub const SCOPE_CLOSE: &str = "souther_scope_close";
 
+/// The symbol a host calls before it unloads a library: the runtime drops what the library keeps
+/// beyond any scope, and nothing the library answered is touched.
+///
+/// A scope is what a run makes lives for, and closing it drops that. What the library keeps beyond
+/// a run is what it works out once and keeps for every run after: a pattern read from the image the
+/// object carries (`PATTERN_READ`). That is owned by the library, and kept on the runtime's heap
+/// and not in the object, so unloading the object does not drop it; this does, and the room is
+/// left empty, so a match after it reads the image again. What it holds to is
+/// [`RELEASE_CONTRACT`].
+pub const RELEASE: &str = "souther_release";
+
+/// What [`RELEASE`] promises and what a host holds to, in the words a generation records.
+pub const RELEASE_CONTRACT: &[(&str, &str)] = &[
+    (
+        "when",
+        "before the library is unloaded, with no call into it in flight on any thread",
+    ),
+    (
+        "drops",
+        "what the library keeps beyond any scope, and nothing a scope holds",
+    ),
+    (
+        "after",
+        "the library is used as before, and works out again what it had kept",
+    ),
+    ("again", "dropping nothing kept is nothing"),
+];
+
 /// What a host function takes of what a host hands it, in the words a generation records.
 ///
 /// A host hands over data and handles. Data ([`HostWord::is_datum`]) is a number, a truth, a count,
@@ -1676,6 +1755,11 @@ pub const DECODE_BEGIN: &str = "souther_decode_begin";
 /// maps and wrote with every container as an object ([`host_decode_host_value_symbol`]): a map
 /// keyed by its indices is read as an array wherever the reader takes one.
 pub const DECODE_HOST_BEGIN: &str = "souther_decode_host_begin";
+/// `() -> reading`: a reading of no document, for a host's construction of a value
+/// ([`host_constructor_symbol`]), which reads nothing and records what a clause that did not hold
+/// says at the value's own place, the way a reader of the type records it. Ended and abandoned as
+/// any other reading is; its root is never asked for.
+pub const CONSTRUCT_BEGIN: &str = "souther_construct_begin";
 /// `(reading) -> node`.
 pub const DECODE_ROOT: &str = "souther_decode_root";
 /// `(reading, value)`.
@@ -1749,8 +1833,42 @@ pub const READ_CASE: &str = "souther_read_case";
 pub const READ_TAG: &str = "souther_read_tag";
 /// `(node, name string) -> bool`: whether the text is that name.
 pub const READ_IS: &str = "souther_read_is";
-/// `(node, path, reading)`: the text names no case there is.
+/// `(node, path, reading)`: the text names no case there is. What an object of this generation
+/// built before [`READ_NOT_ONE_OF`] and [`READ_NO_SUCH_TAG`] calls, which knows no names to say
+/// were allowed; generated code calls those two.
 pub const READ_NOT_A_CASE: &str = "souther_read_not_a_case";
+/// `(node, path, reading, names string)`: the text is the name of no case of an enumeration, which
+/// is Raoh's `not_allowed` with the names allowed and the text written, as its `oneOf` over strings
+/// reports it. The names are as [`case_names_written`] writes them.
+pub const READ_NOT_ONE_OF: &str = "souther_read_not_one_of";
+/// `(node, path, reading, names string)`: the tag an object names its case with names none, which
+/// is Raoh's `not_allowed` with the names allowed, as its `discriminate` reports it. The names are
+/// as [`case_names_written`] writes them.
+pub const READ_NO_SUCH_TAG: &str = "souther_read_no_such_tag";
+
+/// The names of the cases a value could have been read as, as one string a call carries: in code
+/// point order, which is the order Raoh lists what was allowed in, with a space between each. No
+/// name holds a space, since a case is named by an identifier.
+///
+/// The one place the string is written, and [`case_names_read`] the one place it is read, so the
+/// compiler and the runtime cannot spell it two ways.
+pub fn case_names_written<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
+    let mut sorted: Vec<&str> = names.into_iter().collect();
+    // A `str` orders by its UTF-8 bytes, which is the order of the code points they encode.
+    sorted.sort_unstable();
+    assert!(
+        sorted
+            .iter()
+            .all(|name| !name.is_empty() && !name.contains(' ')),
+        "a case is named by an identifier, which holds no space: {sorted:?}"
+    );
+    sorted.join(" ")
+}
+
+/// The names [`case_names_written`] wrote, in the order it wrote them.
+pub fn case_names_read(written: &str) -> impl Iterator<Item = &str> {
+    written.split(' ')
+}
 /// `(path, reading, module string, name string, clause string)`: a value read there breaks a
 /// clause, the clause's name null where it has none.
 pub const READ_INVARIANT: &str = "souther_read_invariant";
@@ -1791,8 +1909,9 @@ pub const READ_LIST_FIXED_SIZE: &str = "souther_read_list_fixed_size";
 /// `(list, hasher, equality) -> list`: the elements the list holds more than once, each once, in
 /// the order their repetition was found.
 pub const LIST_DUPLICATES: &str = "souther_list_duplicates";
-/// `(path, reading, form)`: a list held no element twice and does, `duplicate_element` with the
-/// form of the elements it repeats, which it takes.
+/// `(path, reading, form, string)`: a list held no element twice and does, `duplicate_element` with
+/// the form of the elements it repeats, which it takes, each the type the string names: one of
+/// [`META_TYPES`], or `list<T>` of one.
 pub const READ_DUPLICATES: &str = "souther_read_duplicates";
 /// `(path, reading, map) -> bool`: one entry or more, `too_small.nonempty`.
 pub const READ_MAP_NON_EMPTY: &str = "souther_read_map_non_empty";
@@ -1832,8 +1951,42 @@ pub const ISSUE_CODE: &str = "souther_issue_code";
 pub const ISSUE_MESSAGE_KEY: &str = "souther_issue_message_key";
 /// `(issue) -> string`: a JSON Pointer, empty for the document's root.
 pub const ISSUE_PATH: &str = "souther_issue_path";
-/// `(issue) -> string`: what Raoh calls its metadata, as the JSON object it is.
+/// `(issue) -> string`: what Raoh calls its metadata, as a JSON object of a member for each name,
+/// each value written as [`META_TYPES`] says.
 pub const ISSUE_META: &str = "souther_issue_meta";
+
+/// How [`ISSUE_META`] writes a value: a JSON object of one member, named for the value's type in
+/// Raoh's value model, holding the value as that type writes it.
+///
+/// Raoh holds each value of an issue's metadata as the type it is, and a host's Raoh writes and
+/// compares it as that type: a `Decimal` is its text at its scale, so `5` read as a `Decimal` is not
+/// the `Int` 5, and `1.50` is not `1.5`. Plain JSON says neither, so each value says its type, and a
+/// host makes the value of that type and guesses nothing. The types are the ones Raoh gives a
+/// message form, which are the only ones its metadata holds: an element `duplicates` lists is one
+/// of them, or a list of them, which the checker gives from the elements' message form, and the
+/// checker states no uniqueness of any other (Souther's specification, "Codes an invariant
+/// produces"). Each line is held by the generation's record, so a type added or written otherwise
+/// is a contract that moved.
+pub const META_TYPES: &[(&str, &str)] = &[
+    ("int", "a JSON integer, of 64 bits"),
+    (
+        "decimal",
+        "a JSON string, the decimal at its scale as Java's BigDecimal.toString writes it",
+    ),
+    ("string", "a JSON string"),
+    ("bool", "a JSON boolean"),
+    ("date", "a JSON string, the date as a boundary writes it"),
+    ("time", "a JSON string, the time as a boundary writes it"),
+    (
+        "datetime",
+        "a JSON string, the date-time as a boundary writes it",
+    ),
+    (
+        "instant",
+        "a JSON string, the instant as a boundary writes it",
+    ),
+    ("list", "a JSON array of values each written as this says"),
+];
 
 /// What a host hands over and is handed, one word at a time, as a C declaration says it.
 ///
@@ -2218,6 +2371,287 @@ pub struct RuntimeFunction {
     pub answers: Option<HostWord>,
 }
 
+/// One part of what a function this compiler generates for a host takes, as [`HostEntry`] lists
+/// them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EntryPart {
+    /// One word, handed over or written through.
+    Word(HostParameter),
+    /// What the function is over, handed over each as the words of the shape it crosses in: a
+    /// type's fields, or what a behavior or a function value takes.
+    Over,
+    /// Room for each word of the shape what the function answers crosses in, written as every
+    /// value a host is handed is.
+    Answered,
+    /// A list's elements, as one [`HostParameter::Slice`] of each word the element crosses as.
+    Columns,
+    /// An address whose layout a contract of its own states, named for what it is: room a host lays
+    /// a hosted implementation out in ([`HOSTED_IMPLEMENTATION`]), or the implementation itself.
+    Address(&'static str),
+}
+
+/// A function this compiler generates for a host, of which a library holds one for each thing of
+/// the model it is over: what it takes and answers, with what varies from one model to another
+/// named ([`EntryPart::Over`], [`EntryPart::Answered`]) and not spelt out.
+///
+/// What a model has is the model's, but how a host calls what it has is this, and a host's binding
+/// is written against it. So it is part of the contract a generation records, and every function of
+/// the kind is made from its entry here, which is what keeps the record and the functions one fact.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct HostEntry {
+    /// The symbol, with what varies in angle brackets, after `souther<n>_m_<module>`.
+    pub spelt: &'static str,
+    /// What it takes, in order.
+    pub takes: &'static [EntryPart],
+    /// What it answers, where it answers anything.
+    pub answers: Option<HostWord>,
+}
+
+impl HostEntry {
+    /// What a function of this entry takes, `over` being the shapes of what it is over and
+    /// `answered` the shape of what it answers.
+    ///
+    /// # Panics
+    ///
+    /// Where the entry takes a part `over` and `answered` do not give, or is handed one it takes
+    /// no part of, or takes an address, which is not a word a host's parameter is.
+    pub fn takes(&self, over: &[HostShape], answered: Option<&HostShape>) -> Vec<HostParameter> {
+        let taken = |wanted: fn(&EntryPart) -> bool| self.takes.iter().any(wanted);
+        assert!(
+            over.is_empty() || taken(|it| matches!(it, EntryPart::Over | EntryPart::Columns)),
+            "{} is over nothing, and was handed {over:?}",
+            self.spelt
+        );
+        assert!(
+            answered.is_none() || taken(|it| matches!(it, EntryPart::Answered)),
+            "{} writes no answer through room, and was handed {answered:?}",
+            self.spelt
+        );
+        let mut takes = Vec::new();
+        for part in self.takes {
+            match part {
+                EntryPart::Word(parameter) => takes.push(*parameter),
+                EntryPart::Over => takes.extend(
+                    over.iter()
+                        .flat_map(HostShape::words)
+                        .map(HostParameter::Given),
+                ),
+                EntryPart::Answered => takes.extend(
+                    answered
+                        .unwrap_or_else(|| panic!("{} answers something", self.spelt))
+                        .words()
+                        .into_iter()
+                        .map(HostParameter::Room),
+                ),
+                EntryPart::Columns => {
+                    let [element] = over else {
+                        panic!(
+                            "{} is over the one shape a list's element crosses in",
+                            self.spelt
+                        )
+                    };
+                    takes.extend(element.words().into_iter().map(HostParameter::Slice));
+                }
+                EntryPart::Address(named) => {
+                    panic!("{} takes {named}, an address and not a word", self.spelt)
+                }
+            }
+        }
+        takes
+    }
+}
+
+/// `_b_<behavior>`: [`host_behavior_symbol`].
+pub const BEHAVIOR_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Requirements)),
+        EntryPart::Over,
+        EntryPart::Answered,
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_b_<behavior>_bind`: [`host_bind_symbol`].
+pub const BIND_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>_bind",
+    takes: &[
+        EntryPart::Word(HostParameter::Room(HostWord::Capability)),
+        EntryPart::Word(HostParameter::Given(HostWord::Requirements)),
+    ],
+    answers: None,
+};
+
+/// `_b_<behavior>_implement`: [`host_implement_symbol`].
+pub const IMPLEMENT_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>_implement",
+    takes: &[
+        EntryPart::Word(HostParameter::Room(HostWord::Capability)),
+        EntryPart::Address("room for a hosted implementation"),
+        EntryPart::Address("the implementation"),
+        EntryPart::Word(HostParameter::Given(HostWord::Userdata)),
+    ],
+    answers: None,
+};
+
+/// `_b_<behavior>_implementation`, the function a host writes: [`host_implementation_type`].
+pub const IMPLEMENTATION_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>_implementation",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Userdata)),
+        EntryPart::Over,
+        EntryPart::Answered,
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_b_<behavior>_answer_case`: [`host_behavior_answer_case_symbol`].
+pub const ANSWER_CASE_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>_answer_case",
+    takes: &[EntryPart::Word(HostParameter::Given(HostWord::Value))],
+    answers: Some(HostWord::Case),
+};
+
+/// `_v_<value>`: [`host_value_symbol`].
+pub const VALUE_ENTRY: HostEntry = HostEntry {
+    spelt: "_v_<value>",
+    takes: &[EntryPart::Answered],
+    answers: Some(HostWord::Status),
+};
+
+/// `_t_<type>_construct`: [`host_constructor_symbol`].
+pub const CONSTRUCT_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_construct",
+    takes: &[
+        EntryPart::Over,
+        EntryPart::Word(HostParameter::Room(HostWord::Decoded)),
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_t_<type>_f_<field>`: [`host_field_symbol`].
+pub const FIELD_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_f_<field>",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Value)),
+        EntryPart::Answered,
+    ],
+    answers: None,
+};
+
+/// `_t_<type>_case`: [`host_case_symbol`].
+pub const CASE_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_case",
+    takes: &[EntryPart::Word(HostParameter::Given(HostWord::Value))],
+    answers: Some(HostWord::Case),
+};
+
+/// `_t_<type>_decode`: [`host_decode_symbol`].
+pub const DECODE_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_decode",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Bytes)),
+        EntryPart::Word(HostParameter::Given(HostWord::Count)),
+        EntryPart::Word(HostParameter::Room(HostWord::Decoded)),
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_t_<type>_decode_host`: [`host_decode_host_value_symbol`].
+pub const DECODE_HOST_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_decode_host",
+    takes: DECODE_ENTRY.takes,
+    answers: DECODE_ENTRY.answers,
+};
+
+/// `_t_<type>_encode`: [`host_encode_symbol`].
+pub const ENCODE_ENTRY: HostEntry = HostEntry {
+    spelt: "_t_<type>_encode",
+    takes: &[EntryPart::Word(HostParameter::Given(HostWord::Value))],
+    answers: Some(HostWord::String),
+};
+
+/// `_l_<shape>_construct`: [`HostListOperation::Construct`].
+pub const LIST_CONSTRUCT_ENTRY: HostEntry = HostEntry {
+    spelt: "_l_<shape>_construct",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Count)),
+        EntryPart::Columns,
+        EntryPart::Word(HostParameter::Room(HostWord::List)),
+    ],
+    answers: Some(HostWord::Bool),
+};
+
+/// `_l_<shape>_length`: [`HostListOperation::Length`].
+pub const LIST_LENGTH_ENTRY: HostEntry = HostEntry {
+    spelt: "_l_<shape>_length",
+    takes: &[EntryPart::Word(HostParameter::Given(HostWord::List))],
+    answers: Some(HostWord::Count),
+};
+
+/// `_l_<shape>_at`: [`HostListOperation::At`].
+pub const LIST_AT_ENTRY: HostEntry = HostEntry {
+    spelt: "_l_<shape>_at",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::List)),
+        EntryPart::Word(HostParameter::Given(HostWord::Count)),
+        EntryPart::Answered,
+    ],
+    answers: Some(HostWord::Bool),
+};
+
+/// `_fn_<shape>_call`: [`HostFunctionOperation::Call`].
+pub const FUNCTION_CALL_ENTRY: HostEntry = HostEntry {
+    spelt: "_fn_<shape>_call",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Function)),
+        EntryPart::Over,
+        EntryPart::Answered,
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_fn_<shape>_implement`: [`HostFunctionOperation::Implement`].
+pub const FUNCTION_IMPLEMENT_ENTRY: HostEntry = HostEntry {
+    spelt: "_fn_<shape>_implement",
+    takes: &[
+        EntryPart::Address("room for a hosted function"),
+        EntryPart::Address("the implementation"),
+        EntryPart::Word(HostParameter::Given(HostWord::Userdata)),
+    ],
+    answers: Some(HostWord::Function),
+};
+
+/// `_fn_<shape>_implementation`, the function a host writes:
+/// [`HostFunctionOperation::Implementation`].
+pub const FUNCTION_IMPLEMENTATION_ENTRY: HostEntry = HostEntry {
+    spelt: "_fn_<shape>_implementation",
+    takes: IMPLEMENTATION_ENTRY.takes,
+    answers: IMPLEMENTATION_ENTRY.answers,
+};
+
+/// Every function this compiler generates for a host, by kind.
+pub const HOST_ENTRIES: &[HostEntry] = &[
+    BEHAVIOR_ENTRY,
+    BIND_ENTRY,
+    IMPLEMENT_ENTRY,
+    IMPLEMENTATION_ENTRY,
+    ANSWER_CASE_ENTRY,
+    VALUE_ENTRY,
+    CONSTRUCT_ENTRY,
+    FIELD_ENTRY,
+    CASE_ENTRY,
+    DECODE_ENTRY,
+    DECODE_HOST_ENTRY,
+    ENCODE_ENTRY,
+    LIST_CONSTRUCT_ENTRY,
+    LIST_LENGTH_ENTRY,
+    LIST_AT_ENTRY,
+    FUNCTION_CALL_ENTRY,
+    FUNCTION_IMPLEMENT_ENTRY,
+    FUNCTION_IMPLEMENTATION_ENTRY,
+];
+
 /// Every function of the runtime's a host calls, and nothing else of the runtime's.
 ///
 /// What generated code calls — taking room, comparing and joining text, building external form,
@@ -2241,6 +2675,11 @@ pub const HOST_RUNTIME: &[RuntimeFunction] = {
             name: SCOPE_CLOSE,
             takes: &[Given(Scope)],
             answers: Some(Bool),
+        },
+        RuntimeFunction {
+            name: RELEASE,
+            takes: &[],
+            answers: None,
         },
         RuntimeFunction {
             name: STRING_OF_UTF8,
@@ -2531,9 +2970,9 @@ pub enum Word {
     Memory,
     /// Which of two strings comes first: below, at or above nought.
     Comparison,
-    /// A pattern's machine: the words `souther_text::pattern` compiled it to, which the object
-    /// carries and the runtime runs, the first of them saying how many there are.
-    Machine,
+    /// A pattern, as the object carries it: the image its machine is written in, behind room the
+    /// runtime keeps what it read of the image in ([`PATTERN_READ`]) until [`RELEASE`].
+    Pattern,
     /// A piece of the external form being built, owned by whoever [`EXTERNAL_NULL`] and the rest
     /// say.
     Form,
@@ -2601,7 +3040,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
     };
     use Parameter::{Given, Room};
     use Word::{
-        Comparison, Equality, Form, Hash, Hasher, Held, Host, Machine, Map, Memory, Node, Path,
+        Comparison, Equality, Form, Hash, Hasher, Held, Host, Map, Memory, Node, Path, Pattern,
         Rational, Set,
     };
     &[
@@ -2657,7 +3096,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: STRING_MATCHES,
-            takes: &[Given(Machine), Given(Host(String))],
+            takes: &[Given(Pattern), Given(Host(String))],
             answers: Some(Host(Bool)),
         },
         GeneratedCall {
@@ -3171,6 +3610,11 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             answers: Some(Host(Decoded)),
         },
         GeneratedCall {
+            name: CONSTRUCT_BEGIN,
+            takes: &[],
+            answers: Some(Host(Decoded)),
+        },
+        GeneratedCall {
             name: DECODE_ROOT,
             takes: &[Given(Host(Decoded))],
             answers: Some(Node),
@@ -3361,6 +3805,26 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
             answers: None,
         },
         GeneratedCall {
+            name: READ_NOT_ONE_OF,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(String)),
+            ],
+            answers: None,
+        },
+        GeneratedCall {
+            name: READ_NO_SUCH_TAG,
+            takes: &[
+                Given(Node),
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Host(String)),
+            ],
+            answers: None,
+        },
+        GeneratedCall {
             name: READ_INVARIANT,
             takes: &[
                 Given(Path),
@@ -3407,7 +3871,7 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
                 Given(Path),
                 Given(Host(Decoded)),
                 Given(Host(String)),
-                Given(Machine),
+                Given(Pattern),
                 Given(Host(String)),
             ],
             answers: Some(Host(Bool)),
@@ -3539,7 +4003,12 @@ pub const GENERATED_RUNTIME: &[GeneratedCall] = {
         },
         GeneratedCall {
             name: READ_DUPLICATES,
-            takes: &[Given(Path), Given(Host(Decoded)), Given(Form)],
+            takes: &[
+                Given(Path),
+                Given(Host(Decoded)),
+                Given(Form),
+                Given(Host(String)),
+            ],
             answers: None,
         },
         GeneratedCall {
@@ -3815,6 +4284,18 @@ pub const IMPLEMENTATION_ANSWERS: &[Status] = &[ANSWERED, HOST_EXCEPTION];
 
 #[cfg(test)]
 mod tests {
+    /// The names a refusal allows are written in code point order, which is Raoh's, and read back
+    /// in it. U+FF21 is before U+1D400 in code point order and after it in UTF-16's, where U+1D400
+    /// is the surrogate U+D835 first, so these names tell the two orders apart as ASCII ones cannot.
+    #[test]
+    fn case_names_are_written_in_code_point_order() {
+        let written = super::case_names_written(["𝐀lpha", "Won", "Ａlpha", "Lost"]);
+        assert_eq!(
+            super::case_names_read(&written).collect::<Vec<_>>(),
+            ["Lost", "Won", "Ａlpha", "𝐀lpha"]
+        );
+    }
+
     /// Every unit the language declares, as the Java half holds it to what upstream's library
     /// declares, and this table names each of them and nothing else.
     #[test]
@@ -3861,13 +4342,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther9.calculation.add"
+            "souther12.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther9.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther12.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -3907,7 +4388,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther9.calculation.add$example$0"
+            "souther12.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -3922,7 +4403,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther9.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther12.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -3993,7 +4474,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther9.pricing$value$standard"
+            "souther12.pricing$value$standard"
         );
     }
 
@@ -4031,7 +4512,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther9.pricing$construct$Amount"
+            "souther12.pricing$construct$Amount"
         );
     }
 
@@ -4051,7 +4532,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther9.pricing$checked$Amount"
+            "souther12.pricing$checked$Amount"
         );
     }
 
@@ -4081,23 +4562,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther9_m_pricing_t_Amount_construct"
+            "souther12_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther9_m_pricing_t_Amount_f_value"
+            "souther12_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther9_m_pricing_t_Result_case"
+            "souther12_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther9_m_pricing_t_Amount_decode"
+            "souther12_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther9_m_pricing_t_Amount_encode"
+            "souther12_m_pricing_t_Amount_encode"
         );
     }
 
@@ -4105,15 +4586,15 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther9_m_lib_m_shop_b_quote"
+            "souther12_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther9_m_lib_m_shop_v_standard"
+            "souther12_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther9_m_lib_m_shop_b_find_answer_case"
+            "souther12_m_lib_m_shop_b_find_answer_case"
         );
     }
 
@@ -4126,7 +4607,7 @@ mod tests {
                 &HostShape::Leaf(Value),
                 HostListOperation::Construct
             ),
-            "souther9_m_shop_l_value_construct"
+            "souther12_m_shop_l_value_construct"
         );
         assert_eq!(
             host_list_symbol(
@@ -4134,7 +4615,7 @@ mod tests {
                 &HostShape::Option(Box::new(HostShape::Leaf(Int))),
                 HostListOperation::At
             ),
-            "souther9_m_lib_m_shop_l_o_int_at"
+            "souther12_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
             host_list_symbol(
@@ -4145,7 +4626,7 @@ mod tests {
                 ]))),
                 HostListOperation::Length
             ),
-            "souther9_m_shop_l_l_t2_int_o_bool_length"
+            "souther12_m_shop_l_l_t2_int_o_bool_length"
         );
     }
 
@@ -4158,11 +4639,11 @@ mod tests {
         };
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Call),
-            "souther9_m_shop_fn_f2_int_string_o_int_call"
+            "souther12_m_shop_fn_f2_int_string_o_int_call"
         );
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Implement),
-            "souther9_m_shop_fn_f2_int_string_o_int_implement"
+            "souther12_m_shop_fn_f2_int_string_o_int_implement"
         );
     }
 
@@ -4246,11 +4727,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther9_m_shop_b_foo__bar"
+            "souther12_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther9_m_shop_b__u6570__u91cf_"
+            "souther12_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -4260,7 +4741,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther9.pricing$read$Amount"
+            "souther12.pricing$read$Amount"
         );
     }
 

@@ -66,6 +66,55 @@ final class Running {
     }
 
     /**
+     * C a harness that declares what it calls by hand puts after its includes, to build a value
+     * through a host's constructor. A constructor writes a reading, as a decoder does, and
+     * {@code built} is handed what it answered and where it wrote the reading: it writes the value
+     * the reading holds through {@code into} and answers {@code "built"}, or answers
+     * {@code "refused "} and the code of the issue the clause that did not hold is, writing nothing,
+     * or {@code "ended"} where a clause ended without a value.
+     *
+     * <p>The reading is handed by its address and read inside, after the constructor has written
+     * it: C evaluates a call's arguments in no order it promises, so a reading handed by value
+     * beside the call that writes it, {@code built(make(&reading), reading, into)}, is read before
+     * it is written where a compiler evaluates the arguments right to left, as GCC does. No
+     * {@code %} in it, so a harness formatted after it is whole.
+     */
+    static final String BUILT = """
+            #include <stdint.h>
+            #include <string.h>
+
+            extern int32_t souther_decoded_outcome(const void *);
+            extern const void *souther_decoded_value(const void *);
+            extern const void *souther_decoded_issue(const void *, int64_t);
+            extern const void *souther_issue_code(const void *);
+            extern int64_t souther_string_length(const void *);
+            extern const uint8_t *souther_string_bytes(const void *);
+
+            static char builtSaid[96];
+
+            static const char *built(uint32_t status, const void *const *written,
+                                     const void **into) {
+                if (status != 0) {
+                    return "ended";
+                }
+                const void *reading = *written;
+                if (souther_decoded_outcome(reading) == 0) {
+                    *into = souther_decoded_value(reading);
+                    return "built";
+                }
+                const void *code = souther_issue_code(souther_decoded_issue(reading, 0));
+                size_t length = (size_t) souther_string_length(code);
+                if (length > sizeof builtSaid - 9) {
+                    length = sizeof builtSaid - 9;
+                }
+                memcpy(builtSaid, "refused ", 8);
+                memcpy(builtSaid + 8, souther_string_bytes(code), length);
+                builtSaid[8 + length] = 0;
+                return builtSaid;
+            }
+            """;
+
+    /**
      * One thing a run can reach in the object: a behavior by its own symbol, or a row by the entry
      * the object carries for it. The name is what a run says to select it and the symbol is what
      * the harness declares to reach it; the types are what its call is made of, written into the

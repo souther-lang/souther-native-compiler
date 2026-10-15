@@ -182,7 +182,7 @@ class AGoHostCallsALibraryThroughItsBindingTest {
             line: 3 x 2, "gift"
             plain: false
             none: invariant_violation
-            negative: invariant_violation
+            negative: out_of_range
             settle 0: owed 6 overdue true, owing 6
             settle 2: owed 4 overdue false, owing 4
             settle 6: paid 6, owing 0
@@ -194,7 +194,7 @@ class AGoHostCallsALibraryThroughItsBindingTest {
             encoded: {"line":{"price":3,"quantity":2,"note":"gift"},"placed":true}
             read back: 2 placed true
             wrong: out_of_range at [price]
-            wrong: missing_field at [quantity]
+            wrong: required at [quantity]
             wrong: type_mismatch at [note]
             broken: invalid_format
             inside: 5, then 2

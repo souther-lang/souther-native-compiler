@@ -1,7 +1,9 @@
 package souther.nativecode;
 
 import java.nio.file.Path;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * The jar a generator is, as it was pointed at: a coordinate in a Maven repository with the SHA-256
@@ -42,16 +44,16 @@ sealed interface GeneratorRef {
     Pattern COORDINATE = Pattern.compile("([^:@/\\\\]+):([^:@/\\\\]+):([^:@/\\\\]+)@(.*)");
 
     /**
-     * What {@code --binding} names, which is one of two forms that cannot be taken for each other: a
-     * path to a jar, which ends in {@code .jar}, whatever else it holds; or
-     * {@code groupId:artifactId:version@sha256:<hex>}, which cannot end so. Anything else is refused,
-     * a coordinate without its digest among it, since nothing is trusted on first use.
+     * What {@code --binding} names when it is not an id of the catalog, which is one of two forms that
+     * cannot be taken for each other: a path to a jar, which ends in {@code .jar}, whatever else it
+     * holds; or {@code groupId:artifactId:version@sha256:<hex>}, which cannot end so. Anything else is
+     * refused, a coordinate without its digest among it, since nothing is trusted on first use.
      */
     static GeneratorRef parse(String named) {
         if (named.endsWith(".jar")) {
             return new Local(Path.of(named));
         }
-        java.util.regex.Matcher coordinate = COORDINATE.matcher(named);
+        Matcher coordinate = COORDINATE.matcher(named);
         if (coordinate.matches()) {
             String digest = coordinate.group(4);
             if (!digest.startsWith("sha256:")) {
@@ -66,7 +68,9 @@ sealed interface GeneratorRef {
                     + " a generator is named as groupId:artifactId:version@sha256:<hex>, and"
                     + " nothing is trusted on first use");
         }
-        throw new IllegalArgumentException("\"" + named + "\" is neither a path to a jar, which ends"
-                + " in .jar, nor groupId:artifactId:version@sha256:<hex>");
+        throw new IllegalArgumentException("\"" + named + "\" is none of the generators of this"
+                + " compiler (" + KnownBindings.all().stream().map(KnownBindings.Kind::id)
+                .collect(Collectors.joining(", ")) + "), a path to a jar, which ends in .jar, or"
+                + " groupId:artifactId:version@sha256:<hex>");
     }
 }

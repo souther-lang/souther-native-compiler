@@ -31,7 +31,8 @@ public final class PhpBindingGenerator implements BindingGenerator {
         }
         String namespace = options.get("namespace");
         if (namespace == null) {
-            throw new NotBindable("--php wants --namespace, the namespace the binding is under");
+            throw new NotBindable("the PHP binding wants the option namespace, the namespace the"
+                    + " binding is under");
         }
         return namespace;
     }

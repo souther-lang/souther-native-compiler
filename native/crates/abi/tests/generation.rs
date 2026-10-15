@@ -8,7 +8,8 @@
 //! through room).
 //!
 //! So each generation has a record of its contract in `generations/<n>.txt`, one line for each
-//! function either side calls, each case a host reads and each number the two sides share. An object
+//! function either side calls, each kind of function generated for a host, each case a host reads
+//! and each number the two sides share. An object
 //! or a host can be built on any day of a generation's life, against anything the generation offered
 //! that day, so the record is a ledger of everything the generation has ever offered, and only grows.
 //! A line gone or changed is a contract that moved and needs the next generation, which records the
@@ -43,6 +44,9 @@ fn constants() -> Vec<(&'static str, i128)> {
         ("HELD", HELD.into()),
         ("TEXT_LENGTH", TEXT_LENGTH.into()),
         ("TEXT_BYTES", TEXT_BYTES.into()),
+        ("PATTERN_READ", PATTERN_READ.into()),
+        ("PATTERN_LENGTH", PATTERN_LENGTH.into()),
+        ("PATTERN_IMAGE", PATTERN_IMAGE.into()),
         ("SECONDS_PER_DAY", SECONDS_PER_DAY.into()),
         ("DECODED_VALUE", DECODED_VALUE.into()),
         ("DECODED_ISSUES", DECODED_ISSUES.into()),
@@ -72,6 +76,12 @@ fn surface() -> BTreeSet<String> {
     for function in HOST_RUNTIME {
         lines.insert(format!("host {function:?}"));
     }
+    for entry in HOST_ENTRIES {
+        lines.insert(format!(
+            "entry {} {:?} -> {:?}",
+            entry.spelt, entry.takes, entry.answers
+        ));
+    }
     for case in HOST_CASES {
         lines.insert(format!("case {case:?}"));
     }
@@ -100,10 +110,16 @@ fn surface() -> BTreeSet<String> {
     for (name, promise) in SCOPE_CONTRACT {
         lines.insert(format!("scope {name}: {promise}"));
     }
+    for (name, promise) in RELEASE_CONTRACT {
+        lines.insert(format!("release {name}: {promise}"));
+    }
     for (at, rule) in HASHING.iter().enumerate() {
         lines.insert(format!("hashing {at} {rule}"));
     }
     lines.insert(format!("runtime says {}", runtime_generation_symbol()));
+    for (name, written) in META_TYPES {
+        lines.insert(format!("meta {name}: {written}"));
+    }
     for (name, value) in constants() {
         lines.insert(format!("const {name} = {value}"));
     }

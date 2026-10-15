@@ -2,7 +2,7 @@
 
 What every Rust binding of a Souther library built by souther-native-compiler runs on: a run's arena,
 the handles a value is held as, and calls into the library and back. An application does not
-depend on this crate by itself. It depends on the crate `souther-native --rust` wrote for its
+depend on this crate by itself. It depends on the crate `souther compile --target native --binding rust` wrote for its
 model, which depends on this one and re-exports what a host names (`Construction`, `Reading`,
 `Failure`, `Decimal`, the temporal types and `raoh`).
 
@@ -11,24 +11,27 @@ model, which depends on this one and re-exports what a host names (`Construction
 The command writes the library and the Rust binding of it in one build, the binding from the
 manifest the library was written with:
 
-    souther-native --library build/native --rust build/rust --crate acme model
+    souther compile --target native --library build/native \
+        --binding rust build/rust --binding-option crate=acme model
 
-`--crate` names the crate the binding is, and `--rust` the directory it is written to. That
+The option `crate` names the crate the binding is, and the directory after `--binding rust` is where
+it is written. That
 directory is the binding of one manifest and nothing else: the command writes a binding beside it
 and puts it in place whole, so a type the model no longer declares is not left from the build
 before. It replaces only a directory a Rust binding was written to, which the file
 `.souther-binding` in it says, and refuses one holding anything else rather than deleting it.
 
-A Rust host depends on the crate `--rust` wrote by path, and until this crate is published, reaches
-it by patching it in from a clone of souther-native-compiler:
+A Rust host depends on the crate `--binding rust` wrote by path, and that crate requires this one from
+crates.io, so the host names nothing else:
 
     [dependencies]
     acme = { path = "build/rust" }
 
-    [patch.crates-io]
-    souther-binding-runtime = { path = "<clone>/bindings/rust/runtime" }
+Work on this crate itself is tried against a host by patching it in from a clone of
+souther-native-compiler (`[patch.crates-io]`, naming `<clone>/bindings/rust/runtime`), which the
+repository's own tests of a generated binding do.
 
-The generated crate asks for Rust 1.87 or newer, as this one does, since Raoh, which both depend
+The generated crate asks for Rust 1.88 or newer, as this one does, since Raoh, which both depend
 on, asks for that. The library is loaded by path when the host runs, not linked.
 [`scripts/rust-from-the-command-line.sh`](../../../scripts/rust-from-the-command-line.sh) is the
 whole of it as an application outside the repository's tests does it: a two-file model built into a
@@ -109,16 +112,18 @@ a run inside it is opened from it with `scope`.
 
 A product, a newtype and a unit are each a `Copy` handle, whose native value is not public either,
 with a reader for each field. `new` takes the run and the fields and answers a `Construction` (the
-value, or an `invariant_violation` Raoh issue where what is handed over does not hold what the type
-states), and `decode` takes the run and the JSON text and answers a `Reading` (the value, or Raoh's
-issues, or `invalid_format` where the text is not JSON); each answers a `Failure` outside that where
-the call ended for another reason. `encode` writes the value in its external form, and `decoder` is
-`decode` as a raoh decoder of a `serde_json::Value`, which a host composes with its own the way a JVM
-host composes a type's `decoder()`. It reads in the run a `Decoding` lends the decoders of one decode
-(`Decoding::read`), which also makes a constructor into a decoder (`decoding.of`), and what the
-library finds wrong is an issue at the path it is reached at. A raoh decoder answers issues or a
-value and nothing else, so a step that ends the run for a reason of its own answers no issue, and the
-failure is what `Decoding::read` comes to.
+value, or the Raoh issue where what is handed over does not hold what the type states, the one
+`decode` answers for the same value: `invalid_format` with its `pattern` for a clause that is a
+pattern, `invariant_violation` naming the `module`, the `type` and the `clause` for one no
+constraint states), and `decode` takes the run and the JSON text and answers a `Reading` (the value,
+or Raoh's issues, or `invalid_format` where the text is not JSON); each answers a `Failure` outside
+that where the call ended for another reason. `encode` writes the value in its external form, and
+`decoder` is `decode` as a raoh decoder of a `serde_json::Value`, which a host composes with its own
+the way a JVM host composes a type's `decoder()`. It reads in the run a `Decoding` lends the
+decoders of one decode (`Decoding::read`), which also makes a constructor into a decoder
+(`decoding.of`), and what the library finds wrong is an issue at the path it is reached at. A raoh
+decoder answers issues or a value and nothing else, so a step that ends the run for a reason of its
+own answers no issue, and the failure is what `Decoding::read` comes to.
 
 A sum is a handle too, with `decode`, `decoder`, `encode` and `case`, which answers an enum of its
 cases, a case the model keeps being `Kept`, and `From` each of its cases and each narrower sum.
@@ -142,9 +147,16 @@ is this crate and the library disagreeing, which comes back as `Failure::Protoco
 An optional is an `Option` at every depth, a tuple a Rust tuple, a list a slice handed over and a
 `Vec` handed back. A list is built by the library of the slice's elements, and where the library
 answers that it could not build it, the call comes to `Failure::ProtocolViolation` rather than
-handing over a list that is not one. A union no declaration names is an enum with a variant for each
-member, named after them in the manifest's order (`FreeOrInt`), handed over by reference and handed
-back where the library says its case, as a behavior's answer.
+handing over a list that is not one. A set is the list of its members and a map the list of its
+entries, each a tuple of the key and the value: a `Map<String, Int>` is handed over as
+`&[(String, i64)]` and handed back as `Vec<(String, i64)>`, not as a `HashMap`. The library makes a
+set of what it is handed, two members that are one being one, and a map of the entries, the later of
+two under one key winning. What it hands back is in the order it holds them, which the language says
+nothing of; written in the external form (`encode`), a set's members and a map's keys are in
+ascending order, as [the coverage document](../../../docs/language-coverage.md) says. A union no
+declaration names is an enum with a variant for each member, named after them in the manifest's
+order (`FreeOrInt`), handed over by reference and handed back where the library says its case, as a
+behavior's answer.
 
 A function value is a type of its own (`FnIntToInt`), made by the library or by `FnIntToInt::host`
 of a `'static` Rust closure, which is handed the run and what the function takes and answers a

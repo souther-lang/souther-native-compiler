@@ -65,8 +65,8 @@ guard PendingItem { cart = c, item = CartItem { productId = productId, quantity 
     else | withinCapacity -> CartFull
 ```
 
-The binding's `NewPendingItem` refuses the value with an `invariant_violation` issue, its
-`DecodePendingItem` reports the same at the value's path, and the behavior answers `CartFull`. None
+The binding's `NewPendingItem` refuses the value with an `invariant_violation` issue naming the
+clause, `withinCapacity`, its `DecodePendingItem` reports the same at the value's path, and the behavior answers `CartFull`. None
 of that is written in Go. `saveItem` is handed a `PendingItem`, and a `PendingItem` exists only
 where the capacity holds, so the SQL that saves it checks nothing again.
 
@@ -139,8 +139,8 @@ first, and the model the other two.
 ```json
 {"issues": [
   {"path": "/orderer/email", "code": "invalid_format", ...},
-  {"path": "/orderer/companyName", "code": "missing_field", ...},
-  {"path": "/orderer/corporateNumber", "code": "missing_field", ...}]}
+  {"path": "/orderer/companyName", "code": "required", ...},
+  {"path": "/orderer/corporateNumber", "code": "required", ...}]}
 ```
 
 ## Where a row meets the model
@@ -238,8 +238,10 @@ a route asks only whether a value is one case, as the quote route asks whether t
 
 ## Building and running it
 
-What it needs is what the repository's own build needs: Maven, Go and a C compiler, for the binding
-cgo builds. SQLite is Go here, so nothing else is installed.
+What it needs is `souther` with the native backend installed beside it, Go, and a C compiler, for
+the binding cgo builds. SQLite is Go here, so nothing else is installed. In a clone of this
+repository, `SOUTHER=../../scripts/souther bin/build` builds the backend from the clone and runs it in
+place of an installed one.
 
     bin/build
     go run github.com/alecthomas/go-check-sumtype/cmd/go-check-sumtype@v0.5.0 \
@@ -248,8 +250,9 @@ cgo builds. SQLite is Go here, so nothing else is installed.
 
 `bin/build` runs the command line:
 
-    scripts/souther-native --library <here>/build/native --go <here>/build/go \
-        --package example.com/go-cart/model examples/cart-model
+    souther compile --target native --library <here>/build/native \
+        --binding go <here>/build/go --binding-option package=example.com/go-cart/model \
+        <here>/../cart-model
 
 It writes the library into `build/native` and its binding into `build/go`, as the module
 `example.com/go-cart/model`, which `go.mod` replaces with that directory. The module is

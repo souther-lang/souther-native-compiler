@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Runs a command with $SOUTHER naming a Souther CLI, and this clone's backend jar installed where that
+# CLI looks for one: what `souther compile --target native` is to a user, the CLI choosing the jar by
+# its descriptor and running it as a process of its own, with a clone's build in place of a release.
+#
+# The jar goes into backends/ of a $SOUTHER_HOME of its own, which the CLI searches first. A backend
+# built from a clone is not a release, so it fetches nothing and is told where the driver and the
+# generators this build made are; the CLI passes the environment through and no property, so they
+# reach it in JAVA_TOOL_OPTIONS, which the JVM announces on every start.
+#
+# usage: scripts/with-the-souther-cli <souther> <command> [<argument>...]
+#   e.g. scripts/with-the-souther-cli ~/souther/souther-cli/target/souther scripts/rust-cart-example.sh
+set -euo pipefail
+
+if [ "$#" -lt 2 ]; then
+    echo "usage: $0 <souther> <command> [<argument>...]" >&2
+    exit 2
+fi
+souther="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+shift
+root="$(cd "$(dirname "$0")/.." && pwd)"
+
+mvn --batch-mode --quiet -f "$root/pom.xml" -pl launcher -am package -DskipTests >&2
+version="$(sed -n 's#^    <version>\(.*\)</version>$#\1#p' "$root/pom.xml" | head -1)"
+
+home="$(mktemp -d)"
+trap 'rm -rf "$home"' EXIT
+mkdir "$home/backends"
+cp "$root/compiler/target/souther-native-compiler-$version-backend.jar" "$home/backends/"
+
+options="-Dsouther.native.driver=$root/native/target/debug/souther-native-driver"
+for id in php rust go; do
+    options="$options -Dsouther.generator.$id=$root/bindings/$id/generator/target/souther-binding-$id-$version.jar"
+done
+
+SOUTHER="$souther" SOUTHER_HOME="$home" JAVA_TOOL_OPTIONS="$options" "$@"

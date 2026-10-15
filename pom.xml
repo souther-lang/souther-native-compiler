@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+         child.project.url.inherit.append.path="false">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>org.souther-lang</groupId>
@@ -29,20 +30,30 @@
         </developer>
     </developers>
 
+    <!-- Every module is in this one repository, so a module's pom names the repository as it is, in
+         its scm and its url (the attribute on <project>), and not with its artifactId appended, which
+         is what Maven does to an inherited url otherwise. -->
+    <scm child.scm.connection.inherit.append.path="false"
+         child.scm.developerConnection.inherit.append.path="false"
+         child.scm.url.inherit.append.path="false">
+        <connection>scm:git:https://github.com/souther-lang/souther-native-compiler.git</connection>
+        <developerConnection>scm:git:git@github.com:souther-lang/souther-native-compiler.git</developerConnection>
+        <url>https://github.com/souther-lang/souther-native-compiler</url>
+    </scm>
+
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <!-- What surefire reads, and what each module's exec of a test runner reads too: a build
+             with -DskipTests (scripts/souther-native's) runs no tests, Rust's and Go's no more than
+             Java's. A runner bound to the test phase without it ran on every command a clone ran. -->
+        <skipTests>false</skipTests>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
-        <souther.version>0.3.0</souther.version>
-        <!-- The commit that release was built from. The jar carries no revision of its own, and a tag
-             can be moved, so scripts/upstream-premises.sh compares against this value and asks the
-             tag only whether it still points here. Raised with souther.version. -->
-        <souther.commit>30f27153df2addf8e643c84e04c5b606adcbfe1f</souther.commit>
+        <souther.version>0.4.0</souther.version>
         <jspecify.version>1.0.0</jspecify.version>
         <junit.version>5.14.0</junit.version>
         <assertj.version>3.27.6</assertj.version>
         <jackson.version>3.2.2</jackson.version>
-        <raoh.version>0.8.0</raoh.version>
         <!-- What every file a jar holds is dated, so that building the same sources twice writes the same
              jar. The release embeds the checksum of each generator's jar in the compiler, and what it
              publishes has to be what it checksummed. -->
@@ -56,8 +67,24 @@
              is for. Held to BindingApi.MAJOR and ManifestReader.ABI by the launcher's tests, which load
              the jars as the command does and are refused otherwise. -->
         <souther.bindings.api>1</souther.bindings.api>
-        <souther.abi.generations>9</souther.abi.generations>
+        <souther.abi.generations>12</souther.abi.generations>
     </properties>
+
+    <!-- Where a souther snapshot is published, for a build that takes one before its release: Central
+         holds releases only. Snapshots alone are read from here, so a release resolves from Central
+         as before. -->
+    <repositories>
+        <repository>
+            <id>central-snapshots</id>
+            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
+            <releases>
+                <enabled>false</enabled>
+            </releases>
+            <snapshots>
+                <enabled>true</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
 
     <modules>
         <module>bindings/api</module>
@@ -71,25 +98,27 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- What tests are written against is this project's to choose, and Souther's BOM below
+                 manages JUnit too: an import declared first is the one that manages what both do. -->
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Souther's own versions: of its modules, and of what they share a class path with here
+                 and inside the backend jar, Raoh and notation-199x (which writes a pattern's machine as
+                 the image the runtime reads with the Rust crate of the same repository). A version of
+                 one of those that is not Souther's puts two releases of a library under one Souther, so
+                 none is written here: they are what the Souther named by souther.version manages, and
+                 move with it. -->
             <dependency>
                 <groupId>org.souther-lang</groupId>
-                <artifactId>souther-compiler</artifactId>
+                <artifactId>souther-parent</artifactId>
                 <version>${souther.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>org.souther-lang</groupId>
-                <artifactId>souther-runtime</artifactId>
-                <version>${souther.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>net.unit8.raoh</groupId>
-                <artifactId>raoh</artifactId>
-                <version>${raoh.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>net.unit8.raoh</groupId>
-                <artifactId>raoh-json</artifactId>
-                <version>${raoh.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
             </dependency>
             <dependency>
                 <groupId>tools.jackson.core</groupId>
@@ -144,6 +173,18 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>3.5.4</version>
                     <configuration>
+                        <!-- Test classes run at once, each class's tests one after another. Most of
+                             a test is waiting on a C compiler, Cargo, Go or PHP it started, so one
+                             class at a time left the runner's other cores idle. A class that changes
+                             what the whole JVM sees, a system property or the temporary directory
+                             it watches, says so with @Isolated and runs with nothing beside it. -->
+                        <properties>
+                            <configurationParameters>
+                                junit.jupiter.execution.parallel.enabled = true
+                                junit.jupiter.execution.parallel.mode.default = same_thread
+                                junit.jupiter.execution.parallel.mode.classes.default = concurrent
+                            </configurationParameters>
+                        </properties>
                         <systemPropertyVariables>
                             <souther.repository>${maven.multiModuleProjectDirectory}</souther.repository>
                             <souther.native.driver>${maven.multiModuleProjectDirectory}/native/target/debug/souther-native-driver</souther.native.driver>
@@ -163,4 +204,49 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <!-- What Maven Central takes beside each jar, its sources and its Javadoc, attached by the
+             release workflow's publication step and by nothing else: `-Ppublication`. A build that
+             publishes nothing has no use for them, and Javadoc is the slowest of the two.
+             scripts/verify-release-build.sh refuses a publication whose jars lack either. -->
+        <profile>
+            <id>publication</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <version>3.4.0</version>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <version>3.12.0</version>
+                        <configuration>
+                            <doclint>none</doclint>
+                            <failOnError>false</failOnError>
+                            <quiet>true</quiet>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

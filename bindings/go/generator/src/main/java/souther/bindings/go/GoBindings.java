@@ -53,13 +53,13 @@ public final class GoBindings {
      * The protocol of the runtime module this writes for: what its public surface is, as recorded
      * under {@code bindings/go/runtime/protocol}. A test holds it to the runtime's own.
      */
-    static final int RUNTIME_PROTOCOL = 3;
+    static final int RUNTIME_PROTOCOL = 6;
 
     /**
      * The version of Raoh the runtime module asks for, which a package that imports it asks for as
      * well; held to the runtime's own go.mod by a test.
      */
-    static final String RAOH_VERSION = "v0.0.0-20260929134234-af24f3ce21c6";
+    static final String RAOH_VERSION = "v0.9.0";
 
     /** The runtime module every import of it names, as the module says its own path. */
     private static final String RUNTIME_MODULE = RuntimeModule.THE.path();
@@ -763,7 +763,7 @@ public final class GoBindings {
         at.items.append(out);
     }
 
-    /** {@code New<Type>}: the value, or the invariant it does not hold as an issue. */
+    /** {@code New<Type>}: the value, or the issue of the clause it does not hold. */
     private void construct(GoModule at, Declared it, Manifest.Construct construct) {
         List<Manifest.Field> fields = it.declaration().fields();
         List<Crossing> takes = helds(at.module, construct.takes(), Manifest.Way.GIVEN);
@@ -779,9 +779,10 @@ public final class GoBindings {
                     "field `" + it.key() + "." + field.name() + "`"), "field `" + field.name() + "`"));
         }
         Crossing made = Crossing.Whole.handle(it);
-        at.items.append(function(at, "// " + name + " is a value of `" + it.key() + "`, or an"
-                + " invariant_violation issue where what is handed over does not hold what the type"
-                + " states.", name, null, names, takes, made, construct.function(), null, true));
+        at.items.append(function(at, "// " + name + " is a value of `" + it.key() + "`, or the"
+                + " issue where what is handed over does not hold what the type\n// states, as a"
+                + " *raoh.Issues: the one Decode" + it.name() + " answers for the same value.",
+                name, null, names, takes, made, construct.function(), null, true));
     }
 
     /** {@code Decode<Type>}: a value of the type read out of its external form, or the issues found in it. */
@@ -955,7 +956,8 @@ public final class GoBindings {
      * @param receiver    what a method is a method of, or null for a function
      * @param names       what the model names each parameter
      * @param before      what is written before the call, or null for nothing
-     * @param constructed whether a call that says the invariant was not held comes to an issue
+     * @param constructed whether the call answers a reading of what it built, the value or the
+     *                    issue of the clause that did not hold
      */
     private String function(GoModule at, String doc, String name, @Nullable Receiver receiver,
                             List<String> names, List<Crossing> takes, Crossing answers,
@@ -993,7 +995,15 @@ public final class GoBindings {
                 + String.join(", ", handed) + "))");
         body.line("})");
         body.open("if " + failed + " != nil").line("return " + answers.zero(imports) + ", "
-                + (constructed ? souther + ".Constructed(" + failed + ")" : failed)).close();
+                + failed).close();
+        if (constructed) {
+            // A construction answers a reading, as a decoder does: the value it built, or the
+            // issue of the clause that did not hold.
+            String value = scope.fixed("value");
+            body.line(value + ", " + err + " := " + souther + ".Reading(" + run + ", " + rooms.getFirst()
+                    + ")").checked();
+            rooms = List.of(value);
+        }
         body.line("return " + answers.of(body, rooms) + ", nil");
         String declared = receiver == null ? "func " + name
                 : "func (" + self + " " + receiver.type() + ") " + name;

@@ -30,7 +30,9 @@ use crate::temporal::{
     parse_instant, parse_time, time_of,
 };
 use crate::{Bool, Count, STRING_HOLDS, Text, Value, souther_alloc, string_of, text};
-use souther_native_abi::{DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE};
+use souther_native_abi::{
+    DECODED_ISSUES, DECODED_MALFORMED, DECODED_VALUE, META_TYPES, case_names_read,
+};
 use std::ptr;
 
 /// One reading of one document, from when its bytes are handed over to what a host is answered.
@@ -113,13 +115,91 @@ fn string(text: &str) -> *const u8 {
     string_of(text).cast()
 }
 
+/// A value of an issue's metadata as the type it is in Raoh's value model (`META_TYPES`), which
+/// is what decides how it is written: the type each value is said to be is the one its declaration
+/// gives, never one read off the JSON it would be written as, in which a `Decimal` of scale nought
+/// and an `Int` are alike, and so are a date and a string.
+#[derive(Debug)]
+enum Meta {
+    Int(i64),
+    Decimal(Amount),
+    String(Vec<u8>),
+    Bool(bool),
+    Date(Vec<u8>),
+    Time(Vec<u8>),
+    DateTime(Vec<u8>),
+    Instant(Vec<u8>),
+    List(Vec<Meta>),
+}
+
+impl Meta {
+    /// The type's name in `META_TYPES`.
+    fn type_name(&self) -> &'static str {
+        match self {
+            Meta::Int(_) => "int",
+            Meta::Decimal(_) => "decimal",
+            Meta::String(_) => "string",
+            Meta::Bool(_) => "bool",
+            Meta::Date(_) => "date",
+            Meta::Time(_) => "time",
+            Meta::DateTime(_) => "datetime",
+            Meta::Instant(_) => "instant",
+            Meta::List(_) => "list",
+        }
+    }
+
+    /// As `META_TYPES` writes it: an object of one member, named for the type.
+    fn written(&self) -> Said {
+        let name = self.type_name();
+        debug_assert!(META_TYPES.iter().any(|(type_name, _)| *type_name == name));
+        let value = match self {
+            Meta::Int(n) => Said::Number(*n),
+            Meta::Decimal(amount) => Said::String(amount.scaled_text().into_bytes()),
+            Meta::String(text)
+            | Meta::Date(text)
+            | Meta::Time(text)
+            | Meta::DateTime(text)
+            | Meta::Instant(text) => Said::String(text.clone()),
+            Meta::Bool(truth) => Said::Bool(*truth),
+            Meta::List(items) => Said::Array(items.iter().map(Meta::written).collect()),
+        };
+        Said::Object(vec![(name.as_bytes().to_vec(), value)])
+    }
+
+    /// An element of a list as the boundary wrote it, made the type `declared` names: one of
+    /// `META_TYPES`, or `list<T>` of one. What generated code writes for an element of that type is
+    /// the only form it is handed, so any other is a contract broken, and not a value to guess at.
+    fn of(form: &Said, declared: &str) -> Meta {
+        if let Some(element) = declared
+            .strip_prefix("list<")
+            .and_then(|it| it.strip_suffix('>'))
+        {
+            let Said::Array(items) = form else {
+                panic!("a list<{element}> is written as an array");
+            };
+            return Meta::List(items.iter().map(|item| Meta::of(item, element)).collect());
+        }
+        match (declared, form) {
+            ("int", Said::Number(n)) => Meta::Int(*n),
+            ("decimal", Said::Amount(amount)) => Meta::Decimal(amount.clone()),
+            ("string", Said::String(text)) => Meta::String(text.clone()),
+            ("bool", Said::Bool(truth)) => Meta::Bool(*truth),
+            ("date", Said::String(text)) => Meta::Date(text.clone()),
+            ("time", Said::String(text)) => Meta::Time(text.clone()),
+            ("datetime", Said::String(text)) => Meta::DateTime(text.clone()),
+            ("instant", Said::String(text)) => Meta::Instant(text.clone()),
+            (declared, form) => panic!("a {declared} is not written as {form:?}"),
+        }
+    }
+}
+
 /// The metadata of an issue as the JSON object it is written as: its entries in the order of their
 /// names, one entry to a name, so one issue's metadata is written one way wherever it is read, and
-/// each value as the value it is — a `Decimal` at its scale, where a boundary writes its amount.
-fn metadata(entries: Vec<(&str, Said)>) -> String {
+/// each value as the type it is.
+fn metadata(entries: Vec<(&str, Meta)>) -> String {
     let mut members: Vec<(Vec<u8>, Said)> = entries
         .into_iter()
-        .map(|(name, said)| (name.as_bytes().to_vec(), said))
+        .map(|(name, meta)| (name.as_bytes().to_vec(), meta.written()))
         .collect();
     members.sort_by(|a, b| a.0.cmp(&b.0));
     assert!(
@@ -127,17 +207,13 @@ fn metadata(entries: Vec<(&str, Said)>) -> String {
         "an issue says one thing under a name"
     );
     let mut written = Vec::new();
-    crate::external::write(
-        &Said::Object(members),
-        &mut written,
-        crate::external::Written::AsMetadata,
-    );
+    crate::external::write(&Said::Object(members), &mut written);
     String::from_utf8(written).expect("JSON written of text is text")
 }
 
 /// Text an issue says under a name.
-fn words(text: &str) -> Said {
-    Said::String(text.as_bytes().to_vec())
+fn words(text: &str) -> Meta {
+    Meta::String(text.as_bytes().to_vec())
 }
 
 /// Records an issue found at `path`, under `key` where Raoh gives it a message key of its own and
@@ -151,7 +227,7 @@ unsafe fn found(
     code: &str,
     key: Option<&str>,
     path: *const Path,
-    meta: Vec<(&str, Said)>,
+    meta: Vec<(&str, Meta)>,
 ) {
     let issue = held(Issue {
         code: string(code),
@@ -169,8 +245,26 @@ unsafe fn found(
     decoding.count += 1;
 }
 
-/// A place was something other than what was declared there.
+/// What a reading wanted where it found another kind of input, as `type_mismatch` names it in
+/// `expected`: the kind of JSON Raoh's decoder of the type reads, which is what the JVM's
+/// `jsonDecoder()` says, word for word. Each is the one statement of its word here.
+mod wanted {
+    pub(super) const STRING: &str = "string";
+    pub(super) const INT: &str = "long";
+    pub(super) const DECIMAL: &str = "number";
+    pub(super) const BOOL: &str = "boolean";
+    pub(super) const OBJECT: &str = "object";
+    pub(super) const ARRAY: &str = "array";
+}
+
+/// Records that `node` is not the kind of input a reading takes at `path`: `required` where it is
+/// `null`, which Raoh's decoders take as no value given and not as a value of the wrong kind, and
+/// otherwise `type_mismatch`, with the kind found and the kind `wanted` (one of [`wanted`]).
 unsafe fn mismatched(decoding: *mut Decoding, path: *const Path, node: &Node, wanted: &str) {
+    if matches!(node, Node::Null) {
+        unsafe { found(decoding, "required", None, path, Vec::new()) };
+        return;
+    }
     unsafe {
         found(
             decoding,
@@ -229,6 +323,22 @@ pub unsafe extern "C" fn souther_decode_host_begin(
     length: Count,
 ) -> *mut Decoding {
     unsafe { begun(bytes, length, Form::HostValue) }
+}
+
+/// Begins a reading of no document, for a host's construction of a value: nothing is read, and
+/// what a clause that did not hold says is recorded at the value's own place, as a reader of the
+/// type records it (`souther_native_abi::CONSTRUCT_BEGIN`).
+#[unsafe(no_mangle)]
+pub extern "C" fn souther_construct_begin() -> *mut Decoding {
+    held(Decoding {
+        document: ptr::null_mut(),
+        malformed_at: -1,
+        first: ptr::null_mut(),
+        last: ptr::null_mut(),
+        count: 0,
+        issues: ptr::null(),
+        value: ptr::null(),
+    })
 }
 
 /// # Safety
@@ -354,7 +464,7 @@ pub unsafe extern "C" fn souther_read_array(
     if node.length().is_some() {
         return Bool::TRUE;
     }
-    unsafe { mismatched(decoding, path, node, "an array") };
+    unsafe { mismatched(decoding, path, node, wanted::ARRAY) };
     Bool::FALSE
 }
 
@@ -400,7 +510,7 @@ pub unsafe extern "C" fn souther_read_object(
     if node.is_object() {
         return Bool::TRUE;
     }
-    unsafe { mismatched(decoding, path, node, "an object") };
+    unsafe { mismatched(decoding, path, node, wanted::OBJECT) };
     Bool::FALSE
 }
 
@@ -478,21 +588,13 @@ pub unsafe extern "C" fn souther_read_duplicate_key(path: *const Path, decoding:
 }
 
 /// Records that a field the declaration says every value has was not written, at `path`, which
-/// is where it would have been.
+/// is where it would have been: `required`, as Raoh's decoder of a field says it.
 ///
 /// # Safety
 /// As [`souther_read_object`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_missing(path: *const Path, decoding: *mut Decoding) {
-    unsafe {
-        found(
-            decoding,
-            "missing_field",
-            None,
-            path,
-            vec![("actual", words("nothing")), ("expected", words("a field"))],
-        )
-    };
+    unsafe { found(decoding, "required", None, path, Vec::new()) };
 }
 
 /// Whether `node` is `null`, which is what absence is written as where there is no key to leave
@@ -536,7 +638,7 @@ pub unsafe extern "C" fn souther_read_int(
 
 unsafe fn int(node: &Node, path: *const Path, decoding: *mut Decoding) -> Option<i64> {
     let Node::Number(written) = node else {
-        unsafe { mismatched(decoding, path, node, "Int") };
+        unsafe { mismatched(decoding, path, node, wanted::INT) };
         return None;
     };
     let (negative, digits) = match written.split_first() {
@@ -546,7 +648,7 @@ unsafe fn int(node: &Node, path: *const Path, decoding: *mut Decoding) -> Option
     // A point or an exponent means the document wrote an amount and not a whole number, whatever
     // amount it is.
     if !digits.iter().all(u8::is_ascii_digit) {
-        unsafe { mismatched(decoding, path, node, "Int") };
+        unsafe { mismatched(decoding, path, node, wanted::INT) };
         return None;
     }
     let mut magnitude: i128 = 0;
@@ -559,13 +661,15 @@ unsafe fn int(node: &Node, path: *const Path, decoding: *mut Decoding) -> Option
     let value = if negative { -magnitude } else { magnitude };
     let read = i64::try_from(value).ok();
     if read.is_none() {
+        // A whole number past what an Int holds is no number of the kind wanted, as Raoh's decoder
+        // of a long says it, under a message key of its own.
         unsafe {
             found(
                 decoding,
-                "out_of_range",
-                None,
+                "type_mismatch",
+                Some("type_mismatch.numeric_range"),
                 path,
-                vec![("actual", words("number")), ("expected", words("Int"))],
+                vec![("expected", words(wanted::INT))],
             )
         };
     }
@@ -587,7 +691,7 @@ pub unsafe extern "C" fn souther_read_bool(
     let read = match unsafe { &*node } {
         Node::Bool(truth) => Some(Bool::from(*truth)),
         other => {
-            unsafe { mismatched(decoding, path, other, "Bool") };
+            unsafe { mismatched(decoding, path, other, wanted::BOOL) };
             None
         }
     };
@@ -611,7 +715,7 @@ pub unsafe extern "C" fn souther_read_string(
             unsafe { admitted_text(written, STRING_HOLDS, path, decoding) }.map(|it| string_of(&it))
         }
         other => {
-            unsafe { mismatched(decoding, path, other, "String") };
+            unsafe { mismatched(decoding, path, other, wanted::STRING) };
             None
         }
     };
@@ -652,7 +756,7 @@ pub unsafe extern "C" fn souther_read_decimal(
             read.as_ref().map(decimal_of)
         }
         other => {
-            unsafe { mismatched(decoding, path, other, "Decimal") };
+            unsafe { mismatched(decoding, path, other, wanted::DECIMAL) };
             None
         }
     };
@@ -669,7 +773,7 @@ unsafe fn temporal_text<'a>(
     match node {
         Node::String(written) => unsafe { admitted_text(written, STRING_HOLDS, path, decoding) },
         other => {
-            unsafe { mismatched(decoding, path, other, "String") };
+            unsafe { mismatched(decoding, path, other, wanted::STRING) };
             None
         }
     }
@@ -695,7 +799,7 @@ pub unsafe extern "C" fn souther_read_date(
     out: *mut *mut Date,
 ) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let day = parse_date(written.as_bytes());
+        let day = parse_date(&written);
         if day.is_none() {
             unsafe { refused(decoding, path) };
         }
@@ -717,7 +821,7 @@ pub unsafe extern "C" fn souther_read_time(
     out: *mut *mut Time,
 ) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let second = parse_time(written.as_bytes());
+        let second = parse_time(&written);
         if second.is_err() {
             unsafe { refused(decoding, path) };
         }
@@ -738,7 +842,7 @@ pub unsafe extern "C" fn souther_read_datetime(
     out: *mut *mut DateTime,
 ) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let second = parse_date_time(written.as_bytes());
+        let second = parse_date_time(&written);
         if second.is_err() {
             unsafe { refused(decoding, path) };
         }
@@ -761,7 +865,7 @@ pub unsafe extern "C" fn souther_read_instant(
     out: *mut *mut Instant,
 ) -> Bool {
     let read = unsafe { temporal_text(&*node, path, decoding) }.and_then(|written| {
-        let moment = parse_instant(written.as_bytes());
+        let moment = parse_instant(&written);
         if moment.is_none() {
             unsafe { refused(decoding, path) };
         }
@@ -780,7 +884,12 @@ unsafe fn read_case(
     decoding: *mut Decoding,
 ) -> Bool {
     let Node::String(written) = node else {
-        unsafe { mismatched(decoding, path, node, "a case") };
+        // A case is named by text, so what is not text is refused as Raoh's string decoder refuses
+        // it, which is what its `discriminate` and its `oneOf` over strings read a name with.
+        match node {
+            Node::Null => unsafe { found(decoding, "required", None, path, Vec::new()) },
+            other => unsafe { mismatched(decoding, path, other, wanted::STRING) },
+        }
         return Bool::FALSE;
     };
     Bool::from(unsafe { admitted_text(written, capacity, path, decoding) }.is_some())
@@ -817,15 +926,9 @@ pub unsafe extern "C" fn souther_read_tag(
     decoding: *mut Decoding,
 ) -> *const Node {
     let Some(tag) = (unsafe { (*node).member(text(&key).as_bytes()) }) else {
-        unsafe {
-            found(
-                decoding,
-                "missing_field",
-                None,
-                path,
-                vec![("actual", words("nothing")), ("expected", words("a case"))],
-            )
-        };
+        // A tag not there is what Raoh's `discriminate` reads it as: what its string decoder gives
+        // for a value that is absent.
+        unsafe { found(decoding, "required", None, path, Vec::new()) };
         return ptr::null();
     };
     if unsafe { souther_read_case(tag, path, decoding) } == Bool::FALSE {
@@ -851,7 +954,9 @@ pub unsafe extern "C" fn souther_read_is(node: *const Node, name: *const Text) -
     Bool::from(admitted.as_bytes() == unsafe { text(&name) }.as_bytes())
 }
 
-/// Records that the text `node` writes names none of the cases there are, at `path`.
+/// Records that the text `node` writes names no case there is, at `path`: Raoh's `not_allowed` with
+/// the name written. What an object of this generation built before [`souther_read_not_one_of`]
+/// calls, which hands over no names to say were allowed.
 ///
 /// # Safety
 /// As [`souther_read_object`], and `node` is one [`souther_read_case`] has already answered 1 for.
@@ -861,22 +966,89 @@ pub unsafe extern "C" fn souther_read_not_a_case(
     path: *const Path,
     decoding: *mut Decoding,
 ) {
-    // What was written, as the text it is admitted as: every string holds text in NFC and within
-    // what a String holds, which `souther_read_case` already established for this node.
-    let Node::String(written) = (unsafe { &*node }) else {
-        panic!("souther_read_case admitted this node, which holds a string and no other form");
-    };
-    let written = souther_text::admitted(written, STRING_HOLDS)
-        .expect("souther_read_case admitted this text");
+    let written = unsafe { name_written(node) };
     unsafe {
         found(
             decoding,
             "not_allowed",
             None,
             path,
-            vec![("actual", words(&written)), ("expected", words("a case"))],
+            vec![("actual", words(&written))],
         )
     };
+}
+
+/// Records that the text `node` writes is the name of none of an enumeration's cases, at `path`:
+/// Raoh's `not_allowed`, with the names allowed and the name written, as its `oneOf` over strings
+/// reports it, since that constraint states the same rule (spec §sum-discrimination).
+///
+/// # Safety
+/// As [`souther_read_not_a_case`], and `names` is a string of the runtime's layout holding what
+/// `case_names_written` wrote.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_not_one_of(
+    node: *const Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+    names: *const Text,
+) {
+    let written = unsafe { name_written(node) };
+    unsafe {
+        found(
+            decoding,
+            "not_allowed",
+            None,
+            path,
+            vec![("allowed", allowed(names)), ("actual", words(&written))],
+        )
+    };
+}
+
+/// What was written where a case's name is, as the text it is admitted as: every string holds text
+/// in NFC and within what a String holds, which `souther_read_case` already established for it.
+///
+/// # Safety
+/// `node` is one [`souther_read_case`] has already answered 1 for.
+unsafe fn name_written<'a>(node: *const Node) -> std::borrow::Cow<'a, str> {
+    let Node::String(written) = (unsafe { &*node }) else {
+        panic!("souther_read_case admitted this node, which holds a string and no other form");
+    };
+    souther_text::admitted(written, STRING_HOLDS).expect("souther_read_case admitted this text")
+}
+
+/// Records that the tag an object names its case with, at `path`, names none of a sum's cases:
+/// Raoh's `not_allowed`, with the names allowed and nothing else, as its `discriminate` reports it.
+///
+/// # Safety
+/// As [`souther_read_not_one_of`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn souther_read_no_such_tag(
+    _node: *const Node,
+    path: *const Path,
+    decoding: *mut Decoding,
+    names: *const Text,
+) {
+    unsafe {
+        found(
+            decoding,
+            "not_allowed",
+            None,
+            path,
+            vec![("allowed", allowed(names))],
+        )
+    };
+}
+
+/// The names a value was allowed to be, as an issue lists them.
+///
+/// # Safety
+/// `names` is a string of the runtime's layout holding what `case_names_written` wrote.
+unsafe fn allowed(names: *const Text) -> Meta {
+    Meta::List(
+        case_names_read(unsafe { text(&names) }.as_str())
+            .map(words)
+            .collect(),
+    )
 }
 
 /// Records that a value read at `path` breaks a clause its type holds its values to: the type as
@@ -918,7 +1090,7 @@ unsafe fn meets(
     path: *const Path,
     code: &str,
     key: Option<&str>,
-    meta: impl FnOnce() -> Vec<(&'static str, Said)>,
+    meta: impl FnOnce() -> Vec<(&'static str, Meta)>,
 ) -> Bool {
     if !holds {
         unsafe { found(decoding, code, key, path, meta()) };
@@ -956,7 +1128,7 @@ pub unsafe extern "C" fn souther_read_min_length(
     let actual = unsafe { characters(value) };
     unsafe {
         meets(actual >= n, decoding, path, "too_short", None, || {
-            vec![("min", Said::Number(n)), ("actual", Said::Number(actual))]
+            vec![("min", Meta::Int(n)), ("actual", Meta::Int(actual))]
         })
     }
 }
@@ -975,7 +1147,7 @@ pub unsafe extern "C" fn souther_read_max_length(
     let actual = unsafe { characters(value) };
     unsafe {
         meets(actual <= n, decoding, path, "too_long", None, || {
-            vec![("max", Said::Number(n)), ("actual", Said::Number(actual))]
+            vec![("max", Meta::Int(n)), ("actual", Meta::Int(actual))]
         })
     }
 }
@@ -994,10 +1166,7 @@ pub unsafe extern "C" fn souther_read_fixed_length(
     let actual = unsafe { characters(value) };
     unsafe {
         meets(actual == n, decoding, path, "invalid_length", None, || {
-            vec![
-                ("expected", Said::Number(n)),
-                ("actual", Said::Number(actual)),
-            ]
+            vec![("expected", Meta::Int(n)), ("actual", Meta::Int(actual))]
         })
     }
 }
@@ -1006,17 +1175,17 @@ pub unsafe extern "C" fn souther_read_fixed_length(
 /// to, which is the text the author's call was given and not the machine that ran it.
 ///
 /// # Safety
-/// As [`souther_read_min_length`]; `machine` is the first of the words `souther_text::pattern`
-/// compiled, and `written` a string of the runtime's layout.
+/// As [`souther_read_min_length`]; `held` is a pattern the object carries, as
+/// [`crate::souther_string_matches`] takes it, and `written` a string of the runtime's layout.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_pattern(
     path: *const Path,
     decoding: *mut Decoding,
     value: *const Text,
-    machine: *const u32,
+    held: *const crate::kernels::HeldPattern,
     written: *const Text,
 ) -> Bool {
-    let holds = unsafe { crate::souther_string_matches(machine, value) } != Bool::FALSE;
+    let holds = unsafe { crate::souther_string_matches(held, value) } != Bool::FALSE;
     unsafe {
         meets(holds, decoding, path, "invalid_format", None, || {
             vec![("pattern", words(text(&written).as_str()))]
@@ -1042,7 +1211,7 @@ pub unsafe extern "C" fn souther_read_int_min(
             path,
             "out_of_range",
             Some("out_of_range.minimum"),
-            || vec![("min", Said::Number(n)), ("actual", Said::Number(value))],
+            || vec![("min", Meta::Int(n)), ("actual", Meta::Int(value))],
         )
     }
 }
@@ -1065,7 +1234,7 @@ pub unsafe extern "C" fn souther_read_int_max(
             path,
             "out_of_range",
             Some("out_of_range.maximum"),
-            || vec![("max", Said::Number(n)), ("actual", Said::Number(value))],
+            || vec![("max", Meta::Int(n)), ("actual", Meta::Int(value))],
         )
     }
 }
@@ -1087,7 +1256,7 @@ pub unsafe extern "C" fn souther_read_int_positive(
             path,
             "out_of_range",
             Some("out_of_range.positive"),
-            || vec![("min", Said::Number(1)), ("actual", Said::Number(value))],
+            || vec![("min", Meta::Int(1)), ("actual", Meta::Int(value))],
         )
     }
 }
@@ -1110,15 +1279,21 @@ pub unsafe extern "C" fn souther_read_int_non_negative(
             path,
             "out_of_range",
             Some("out_of_range.non_negative"),
-            || vec![("min", Said::Number(0)), ("actual", Said::Number(value))],
+            || vec![("min", Meta::Int(0)), ("actual", Meta::Int(value))],
         )
     }
 }
 
 /// A `Decimal` as metadata holds it: the value, scale and all, which [`metadata`] writes at its
 /// scale.
-unsafe fn amount_said(at: *const Decimal) -> Said {
-    Said::Amount(unsafe { amount(at) })
+unsafe fn amount_said(at: *const Decimal) -> Meta {
+    Meta::Decimal(unsafe { amount(at) })
+}
+
+/// The `Decimal` nought a bound of a `Decimal` is stated against: a `Decimal` and not the `Int` 0,
+/// as Raoh's `DecimalDecoder` holds `BigDecimal.ZERO`, so a host's issue says the same type.
+fn decimal_zero() -> Meta {
+    Meta::Decimal(Amount::of_int(0))
 }
 
 /// `DecimalDecoder.min(n)`: `out_of_range` under `out_of_range.minimum`, with `min` and `actual`,
@@ -1194,7 +1369,7 @@ pub unsafe extern "C" fn souther_read_decimal_positive(
             path,
             "out_of_range",
             Some("out_of_range.positive"),
-            || vec![("min", Said::Number(0)), ("actual", amount_said(value))],
+            || vec![("min", decimal_zero()), ("actual", amount_said(value))],
         )
     }
 }
@@ -1218,7 +1393,7 @@ pub unsafe extern "C" fn souther_read_decimal_non_negative(
             path,
             "out_of_range",
             Some("out_of_range.non_negative"),
-            || vec![("min", Said::Number(0)), ("actual", amount_said(value))],
+            || vec![("min", decimal_zero()), ("actual", amount_said(value))],
         )
     }
 }
@@ -1242,7 +1417,7 @@ unsafe fn sized(decoding: *mut Decoding, path: *const Path, actual: i64, bound: 
     };
     unsafe {
         meets(holds, decoding, path, code, key, || {
-            vec![(name, Said::Number(n)), ("actual", Said::Number(actual))]
+            vec![(name, Meta::Int(n)), ("actual", Meta::Int(actual))]
         })
     }
 }
@@ -1311,26 +1486,33 @@ pub unsafe extern "C" fn souther_read_list_fixed_size(
 }
 
 /// `ListDecoder.unique()` refused: `duplicate_element` with the `duplicates`, the elements the list
-/// holds more than once as a boundary writes them, which generated code wrote into `duplicates`.
-/// Which elements those are is [`crate::souther_list_duplicates`]'s answer.
+/// holds more than once, which generated code wrote into `duplicates` as a boundary writes them,
+/// and each the type `element` names (`META_TYPES`, or `list<T>` of one), which the compiler gave
+/// from the list's declaration. Which elements those are is [`crate::souther_list_duplicates`]'s
+/// answer.
 ///
 /// # Safety
 /// As [`souther_read_invariant`]; `duplicates` is a form the caller owns, and owns no longer once
-/// this returns.
+/// this returns, and `element` is a string of the runtime's layout.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn souther_read_duplicates(
     path: *const Path,
     decoding: *mut Decoding,
     duplicates: *mut Said,
+    element: *const Text,
 ) {
     let duplicates = *unsafe { Box::from_raw(duplicates) };
+    let element = unsafe { text(&element) };
     unsafe {
         found(
             decoding,
             "duplicate_element",
             None,
             path,
-            vec![("duplicates", duplicates)],
+            vec![(
+                "duplicates",
+                Meta::of(&duplicates, &format!("list<{}>", element.as_str())),
+            )],
         )
     };
 }
@@ -1604,31 +1786,36 @@ mod tests {
         assert_eq!(
             int("9223372036854775808"),
             Err(vec![
-                r#" out_of_range {"actual":"number","expected":"Int"}"#.to_string()
+                r#" type_mismatch key=type_mismatch.numeric_range {"expected":{"string":"long"}}"#
+                    .to_string()
             ])
         );
         assert_eq!(
             int("-99999999999999999999999"),
             Err(vec![
-                r#" out_of_range {"actual":"number","expected":"Int"}"#.to_string()
+                r#" type_mismatch key=type_mismatch.numeric_range {"expected":{"string":"long"}}"#
+                    .to_string()
             ])
         );
         assert_eq!(
             int("1.0"),
             Err(vec![
-                r#" type_mismatch {"actual":"number","expected":"Int"}"#.to_string()
+                r#" type_mismatch {"actual":{"string":"number"},"expected":{"string":"long"}}"#
+                    .to_string()
             ])
         );
         assert_eq!(
             int("1e0"),
             Err(vec![
-                r#" type_mismatch {"actual":"number","expected":"Int"}"#.to_string()
+                r#" type_mismatch {"actual":{"string":"number"},"expected":{"string":"long"}}"#
+                    .to_string()
             ])
         );
         assert_eq!(
             int("\"1\""),
             Err(vec![
-                r#" type_mismatch {"actual":"string","expected":"Int"}"#.to_string()
+                r#" type_mismatch {"actual":{"string":"string"},"expected":{"string":"long"}}"#
+                    .to_string()
             ])
         );
         souther_scope_close(scope);
@@ -1645,10 +1832,7 @@ mod tests {
             souther_path_below(b, literal("0"))
         };
         unsafe { souther_read_missing(path, decoding) };
-        assert_eq!(
-            issues(decoding),
-            vec![r#"/a~1b/~0c/0 missing_field {"actual":"nothing","expected":"a field"}"#]
-        );
+        assert_eq!(issues(decoding), vec![r#"/a~1b/~0c/0 required {}"#]);
         souther_scope_close(scope);
     }
 
@@ -1674,8 +1858,8 @@ mod tests {
         assert_eq!(
             issues(decoding),
             vec![
-                r#"/xs/1 type_mismatch {"actual":"boolean","expected":"Int"}"#,
-                r#"/xs/1 type_mismatch {"actual":"boolean","expected":"an array"}"#,
+                r#"/xs/1 type_mismatch {"actual":{"string":"boolean"},"expected":{"string":"long"}}"#,
+                r#"/xs/1 type_mismatch {"actual":{"string":"boolean"},"expected":{"string":"array"}}"#,
             ]
         );
         souther_scope_close(scope);
@@ -1793,8 +1977,8 @@ mod tests {
         assert_eq!(
             issues(decoding),
             vec![
-                r#" invariant_violation {"clause":"notNegative","module":"shop","type":"Money"}"#,
-                r#"/x invariant_violation {"module":"shop","type":"Line"}"#,
+                r#" invariant_violation {"clause":{"string":"notNegative"},"module":{"string":"shop"},"type":{"string":"Money"}}"#,
+                r#"/x invariant_violation {"module":{"string":"shop"},"type":{"string":"Line"}}"#,
             ]
         );
         souther_scope_close(scope);
@@ -1858,21 +2042,21 @@ mod tests {
         assert_eq!(
             issues(decoding),
             vec![
-                r#"/a too_short {"actual":2,"min":3}"#,
-                r#"/b too_long {"actual":4,"max":3}"#,
-                r#"/c invalid_length {"actual":2,"expected":3}"#,
-                r#"/d out_of_range key=out_of_range.minimum {"actual":2,"min":3}"#,
-                r#"/e out_of_range key=out_of_range.maximum {"actual":4,"max":3}"#,
-                r#"/f out_of_range key=out_of_range.positive {"actual":0,"min":1}"#,
-                r#"/g out_of_range key=out_of_range.non_negative {"actual":-1,"min":0}"#,
-                r#"/h out_of_range key=out_of_range.minimum {"actual":1.50,"min":2.00}"#,
-                r#"/i out_of_range key=out_of_range.maximum {"actual":2.50,"max":2}"#,
-                r#"/j out_of_range key=out_of_range.positive {"actual":0.00,"min":0}"#,
-                r#"/k out_of_range key=out_of_range.non_negative {"actual":-0.1,"min":0}"#,
-                r#"/l too_small key=too_small.nonempty {"actual":0,"min":1}"#,
-                r#"/m too_small {"actual":1,"min":2}"#,
-                r#"/n too_big {"actual":3,"max":2}"#,
-                r#"/o invalid_size {"actual":1,"expected":2}"#,
+                r#"/a too_short {"actual":{"int":2},"min":{"int":3}}"#,
+                r#"/b too_long {"actual":{"int":4},"max":{"int":3}}"#,
+                r#"/c invalid_length {"actual":{"int":2},"expected":{"int":3}}"#,
+                r#"/d out_of_range key=out_of_range.minimum {"actual":{"int":2},"min":{"int":3}}"#,
+                r#"/e out_of_range key=out_of_range.maximum {"actual":{"int":4},"max":{"int":3}}"#,
+                r#"/f out_of_range key=out_of_range.positive {"actual":{"int":0},"min":{"int":1}}"#,
+                r#"/g out_of_range key=out_of_range.non_negative {"actual":{"int":-1},"min":{"int":0}}"#,
+                r#"/h out_of_range key=out_of_range.minimum {"actual":{"decimal":"1.50"},"min":{"decimal":"2.00"}}"#,
+                r#"/i out_of_range key=out_of_range.maximum {"actual":{"decimal":"2.50"},"max":{"decimal":"2"}}"#,
+                r#"/j out_of_range key=out_of_range.positive {"actual":{"decimal":"0.00"},"min":{"decimal":"0"}}"#,
+                r#"/k out_of_range key=out_of_range.non_negative {"actual":{"decimal":"-0.1"},"min":{"decimal":"0"}}"#,
+                r#"/l too_small key=too_small.nonempty {"actual":{"int":0},"min":{"int":1}}"#,
+                r#"/m too_small {"actual":{"int":1},"min":{"int":2}}"#,
+                r#"/n too_big {"actual":{"int":3},"max":{"int":2}}"#,
+                r#"/o invalid_size {"actual":{"int":1},"expected":{"int":2}}"#,
             ]
         );
         souther_scope_close(scope);
@@ -1897,10 +2081,46 @@ mod tests {
 
         let decoding = begun("{}");
         let form = crate::external::handed(Said::Array(vec![Said::Number(3), Said::Number(1)]));
-        unsafe { souther_read_duplicates(ptr::null(), decoding, form) };
+        unsafe { souther_read_duplicates(ptr::null(), decoding, form, literal("int")) };
         assert_eq!(
             issues(decoding),
-            vec![r#" duplicate_element {"duplicates":[3,1]}"#]
+            vec![r#" duplicate_element {"duplicates":{"list":[{"int":3},{"int":1}]}}"#]
+        );
+        souther_scope_close(scope);
+    }
+
+    /// The elements `duplicates` lists are each the type the declaration gives them, whatever
+    /// they are written as: a date is not text, and a `Decimal` of scale nought is not an `Int`.
+    #[test]
+    fn the_elements_a_list_repeats_are_the_type_their_declaration_gives() {
+        let scope = souther_scope_open();
+        let decoding = begun("{}");
+        let reported = |elements: Vec<Said>, element: &str| unsafe {
+            souther_read_duplicates(
+                ptr::null(),
+                decoding,
+                crate::external::handed(Said::Array(elements)),
+                literal(element),
+            )
+        };
+        reported(vec![Said::String(b"2026-01-31".to_vec())], "date");
+        reported(
+            vec![Said::Amount(
+                Amount::of_json_number(b"2").expect("a number"),
+            )],
+            "decimal",
+        );
+        reported(
+            vec![Said::Array(vec![Said::Bool(true), Said::Bool(false)])],
+            "list<bool>",
+        );
+        assert_eq!(
+            issues(decoding),
+            vec![
+                r#" duplicate_element {"duplicates":{"list":[{"date":"2026-01-31"}]}}"#,
+                r#" duplicate_element {"duplicates":{"list":[{"decimal":"2"}]}}"#,
+                r#" duplicate_element {"duplicates":{"list":[{"list":[{"bool":true},{"bool":false}]}]}}"#,
+            ]
         );
         souther_scope_close(scope);
     }

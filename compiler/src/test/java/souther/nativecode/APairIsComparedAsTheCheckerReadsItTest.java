@@ -31,7 +31,8 @@ class APairIsComparedAsTheCheckerReadsItTest {
     private static final String SOURCE = """
             module comparing exposing ( atHundred, hundredAt, notHundred, under, atLeast, over, atMost,
                 managerAtMost, skuUnder, amounts, stages, stagesNamed, isWon, wonIs, beforeWon,
-                qualifiedBefore, openIs, sameStage, wonAtMost, closedBefore )
+                qualifiedBefore, openIs, sameStage, wonAtMost, closedBefore, isSeven, isNamedA,
+                deepSeven )
 
             data Lost
             data Won
@@ -44,6 +45,10 @@ class APairIsComparedAsTheCheckerReadsItTest {
             data Level = Int
             data Manager = Level
             data Sku = String
+            data Inner = Int
+            data Code = Inner
+            data Name = String
+            data Key = Code | Name
 
             let stage (n: Int): Stage =
                 if n == 0 then Prospecting
@@ -52,6 +57,12 @@ class APairIsComparedAsTheCheckerReadsItTest {
                 else Lost
 
             let open (n: Int): Open = if n == 0 then Prospecting else Qualified
+
+            let key (n: Int): Key =
+                if n == 0 then Code(Inner(7))
+                else if n == 1 then Code(Inner(8))
+                else if n == 2 then Name("a")
+                else Name("b")
 
             behavior atHundred : (a: Int) -> Bool
             let atHundred (a) = Amount(a) == 100
@@ -113,6 +124,15 @@ class APairIsComparedAsTheCheckerReadsItTest {
                 w <= w && w >= w
             }
 
+            behavior isSeven : (a: Int) -> Bool
+            let isSeven (a) = key(a) == Code(Inner(7))
+
+            behavior isNamedA : (a: Int) -> Bool
+            let isNamedA (a) = Name("a") == key(a)
+
+            behavior deepSeven : (a: Int) -> Bool
+            let deepSeven (a) = 7 == Code(Inner(a))
+
             behavior closedBefore : (a: Int, b: Int) -> Bool
             let closedBefore (a, b) = {
                 let one: Won | Lost = if a == 0 then Won else Lost
@@ -147,11 +167,35 @@ class APairIsComparedAsTheCheckerReadsItTest {
         return new RunOutcome.Answered(new ObservedValue.Bool(value));
     }
 
-    /** What crosses says the checker read the literal as the newtype, for this operator only. */
+    /**
+     * What crosses says the checker opens the newtype beside a literal to what it wraps under every
+     * name it wears, and reads the literal as that, for this operator only.
+     */
     @Test
-    void theCheckerReadsTheLiteralAsTheNewtype() {
+    void theCheckerOpensTheNewtypeBesideALiteral() {
         assertThat(ProgramWriter.written(program))
-                .contains("\"reading\":{\"is\":\"in\",\"type\":{\"ref\":{\"is\":\"declared\",\"declared\":\"comparing.Amount\"}}}");
+                .contains("\"reading\":{\"is\":\"opened\",\"newtype\":{\"ref\":{\"is\":\"declared\","
+                        + "\"declared\":\"comparing.Amount\"}},\"base\":{\"prim\":\"INT\"}}")
+                .contains("\"reading\":{\"is\":\"opened\",\"newtype\":{\"ref\":{\"is\":\"declared\","
+                        + "\"declared\":\"comparing.Code\"}},\"base\":{\"prim\":\"INT\"}}");
+    }
+
+    /**
+     * A newtype a sum lists as a case is a value of the sum as it stands, and beside the sum it is
+     * not opened: opened, a {@code Code} would be the {@code Int} it wraps, which no {@code Key} is.
+     */
+    @Test
+    void aNewtypeBesideTheSumListingItIsComparedAsACaseOfTheSum() throws Exception {
+        for (int a = 0; a < 4; a++) {
+            assertThat(run("isSeven", a)).as("%d", a).isEqualTo(answered(a == 0));
+            assertThat(run("isNamedA", a)).as("%d", a).isEqualTo(answered(a == 2));
+        }
+    }
+
+    @Test
+    void aLiteralBesideANewtypeOverANewtypeIsComparedAllTheWayDown() throws Exception {
+        assertThat(run("deepSeven", 7)).isEqualTo(answered(true));
+        assertThat(run("deepSeven", 8)).isEqualTo(answered(false));
     }
 
     @Test

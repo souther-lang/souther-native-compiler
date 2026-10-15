@@ -11,6 +11,7 @@ package souther
 static uint32_t call_abi_generation(void *fn) { return ((uint32_t (*)(void))fn)(); }
 static int64_t call_scope_open(void *fn) { return ((int64_t (*)(void))fn)(); }
 static uint8_t call_scope_close(void *fn, int64_t scope) { return ((uint8_t (*)(int64_t))fn)(scope); }
+static void call_release(void *fn) { ((void (*)(void))fn)(); }
 */
 import "C"
 
@@ -20,6 +21,7 @@ import (
 	"runtime/cgo"
 	"slices"
 	"strings"
+	"sync"
 	"unsafe"
 )
 
@@ -35,7 +37,14 @@ var (
 // Every Souther library exports the same runtime functions, so a symbol is only looked up through
 // the handle of the file it is wanted from, which is opened RTLD_LOCAL and never linked: two
 // libraries in one program each keep their own arena.
-type nativeFile struct{ handle unsafe.Pointer }
+//
+// release is the library's souther_release, which is set only once the file has answered that it
+// is of [ABIGeneration]: a runtime function carries no generation in its name, so nothing but the
+// generation query is called before the generation is known.
+type nativeFile struct {
+	handle  unsafe.Pointer
+	release unsafe.Pointer
+}
 
 // open loads the library file at path.
 func open(path string) (*nativeFile, error) {
@@ -45,11 +54,48 @@ func open(path string) (*nativeFile, error) {
 	if handle == nil {
 		return nil, fmt.Errorf("souther: cannot load %s: %s", path, C.GoString(C.dlerror()))
 	}
-	return &nativeFile{handle}, nil
+	return &nativeFile{handle: handle}, nil
 }
 
-// close unloads the file. It is called only where nothing was taken from it.
-func (n *nativeFile) close() { C.dlclose(n.handle) }
+// holding counts the loads of each library this program has, by the address of its
+// souther_release.
+//
+// The loader hands the same library back for every open of one file and unloads it when the last
+// of them is closed, so two loads of it share what it keeps beyond any scope: what a release drops
+// for one load that failed is what a call through another may be reading on another goroutine. A
+// library is released only where the last load holding it lets it go, which is where it is
+// unloaded. A library that loaded is kept for as long as the program is, so its count never falls.
+// The lock is held across the release, so a load counted after it finds nothing dropped under it.
+var holding = struct {
+	sync.Mutex
+	loads map[unsafe.Pointer]int
+}{loads: map[unsafe.Pointer]int{}}
+
+// hold sets release, the file's souther_release, and counts this load as holding the library.
+func (n *nativeFile) hold(release unsafe.Pointer) {
+	holding.Lock()
+	defer holding.Unlock()
+	n.release = release
+	holding.loads[release]++
+}
+
+// close unloads the file, releasing the library first where this was the last load holding it: a
+// host that unloads a library drops what the library keeps beyond any scope before it does. A file
+// not known to be of [ABIGeneration] is unloaded without a call. It is called only where nothing
+// was taken from the file, so no call into it through this load is in flight, and none through
+// another load once this was the last.
+func (n *nativeFile) close() {
+	if n.release != nil {
+		holding.Lock()
+		holding.loads[n.release]--
+		if holding.loads[n.release] == 0 {
+			delete(holding.loads, n.release)
+			C.call_release(n.release)
+		}
+		holding.Unlock()
+	}
+	C.dlclose(n.handle)
+}
 
 // symbol is where the library file has name, and whether it has.
 func (n *nativeFile) symbol(name string) (unsafe.Pointer, bool) {
@@ -87,6 +133,7 @@ func (e *MissingSymbols) Error() string {
 var runtimeFunctions = []string{
 	"souther_scope_open",
 	"souther_scope_close",
+	"souther_release",
 	"souther_string_of_utf8",
 	"souther_string_length",
 	"souther_string_bytes",
@@ -114,7 +161,7 @@ var runtimeFunctions = []string{
 
 // ABIGeneration is the ABI generation this package calls a library as, which [Load] refuses any
 // other of.
-const ABIGeneration uint32 = 9
+const ABIGeneration uint32 = 12
 
 // UnsupportedGeneration is a library file of another ABI generation than [ABIGeneration]: Found is
 // the one it answers to, and nought where it has no query for one, which a library of generation 8
@@ -173,6 +220,11 @@ func Load[B any](path string, spec Spec) (*Library[B], error) {
 	}
 	if found := uint32(C.call_abi_generation(query)); found != ABIGeneration {
 		return nil, &UnsupportedGeneration{Path: path, Found: found}
+	}
+	// Of this generation, so its souther_release is the one this generation states, and the file is
+	// released where it is unloaded from here on.
+	if release, ok := native.symbol("souther_release"); ok {
+		native.hold(release)
 	}
 	symbols := make(map[string]unsafe.Pointer, len(spec.Symbols)+2)
 	var missing []string

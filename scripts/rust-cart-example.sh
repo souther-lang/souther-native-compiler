@@ -8,6 +8,6 @@ set -euo pipefail
 
 example="$(cd "$(dirname "$0")/../examples/rust-cart" && pwd)"
 
-"$example/bin/build"
+SOUTHER="${SOUTHER:-$(cd "$(dirname "$0")" && pwd)/souther}" "$example/bin/build"
 cd "$example"
 cargo test --locked

@@ -72,6 +72,7 @@ class AValueIsWrittenHoweverDeeplyItsDeclarationsNestTest {
                 #include <stdio.h>
                 #include <stdlib.h>
                 #include <string.h>
+                """ + Running.BUILT + """
 
                 typedef const void *Value;
 
@@ -80,14 +81,31 @@ class AValueIsWrittenHoweverDeeplyItsDeclarationsNestTest {
                 extern int64_t souther_string_length(Value);
                 extern const uint8_t *souther_string_bytes(Value);
 
-                extern uint32_t chain(int64_t, uint8_t, Value, Value *) __asm__("%1$s");
+                extern uint32_t chainReading(int64_t, uint8_t, Value, const void **) __asm__("%1$s");
                 extern Value chainEncoded(Value) __asm__("%2$s");
-                extern uint32_t bottom(Value *) __asm__("%3$s");
-                extern uint32_t deeper(Value, Value *) __asm__("%4$s");
-                extern uint32_t held(Value, Value *) __asm__("%5$s");
+                extern uint32_t bottomReading(const void **) __asm__("%3$s");
+                extern uint32_t deeperReading(Value, const void **) __asm__("%4$s");
+                extern uint32_t heldReading(Value, const void **) __asm__("%5$s");
                 extern Value heldEncoded(Value) __asm__("%6$s");
                 extern uint32_t sameChain(const void *, Value, Value *) __asm__("%7$s");
                 extern uint32_t sameHeld(const void *, Value, Value *) __asm__("%8$s");
+
+                static void chain(int64_t n, uint8_t more, Value next, Value *into) {
+                    const void *reading = 0;
+                    built(chainReading(n, more, next, &reading), &reading, into);
+                }
+                static void bottom(Value *into) {
+                    const void *reading = 0;
+                    built(bottomReading(&reading), &reading, into);
+                }
+                static void deeper(Value inner, Value *into) {
+                    const void *reading = 0;
+                    built(deeperReading(inner, &reading), &reading, into);
+                }
+                static void held(Value inner, Value *into) {
+                    const void *reading = 0;
+                    built(heldReading(inner, &reading), &reading, into);
+                }
 
                 enum { DEPTH = 1000000 };
 
