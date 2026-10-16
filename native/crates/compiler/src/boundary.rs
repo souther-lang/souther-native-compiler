@@ -33,7 +33,8 @@ pub(crate) struct Boundary<'a> {
     pub runs: FuncId,
     /// Whether what it runs is a behavior's symbol, which takes what the behavior was constructed
     /// with first ([`crate::behavior_signature`]): the boundary takes it first too, and hands it on.
-    /// A row's entry takes nothing more, since a row states what it stands in with.
+    /// A row's entry takes nothing more, since a row states what it stands in with, but for a row of
+    /// a behavior a host implements, which takes the capability of what answers it the same way.
     pub constructed: bool,
     /// What `runs` takes after that, in order. The entry takes the same, and then where to put
     /// what it wrote.

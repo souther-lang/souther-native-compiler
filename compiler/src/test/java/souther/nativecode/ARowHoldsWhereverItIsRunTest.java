@@ -7,6 +7,7 @@ import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedRow;
+import souther.compiler.program.StandsIn;
 import souther.compiler.diag.CompileException;
 
 import java.util.List;
@@ -574,14 +575,66 @@ class ARowHoldsWhereverItIsRunTest {
                     | "what the dependency answered, doubled, owed" : (1) -> <?>
                 """));
         CheckedModule module = program.modules().getFirst();
-        CheckedBehavior twice = module.behaviors().stream()
-                .filter(it -> it.name().name().equals("twice"))
-                .findFirst().orElseThrow();
+        CheckedBehavior twice = behaviorNamed(module, "twice");
         assertThat(twice.rows().getFirst().statement()).isInstanceOf(CheckedRow.AnswerOwed.class);
 
         ObservedValue answered = Running.of(program).rowAnswering(module, twice, 0, List.of());
 
         assertThat(answered).isEqualTo(new ObservedValue.Integer(42));
+    }
+
+    /**
+     * A row of a behavior a host implements runs against whatever its entry is handed for it, and
+     * the row is asked whether that answer keeps it. The compile ran none of these rows, since
+     * nothing it holds answers the behavior, so it is the row that says whether the answer is the
+     * one it states and not the JVM's run.
+     *
+     * <p>What answers here is what the {@code fake} states, which the harness hands the entry as a
+     * capability: one input it agrees with the row about and one it does not, so the run is seen to
+     * be of what was handed rather than of anything the object holds.
+     */
+    @Test
+    void aRowOfAnInjectedBehaviorIsRunAgainstWhatItIsHanded() throws Exception {
+        CheckedProgram program = Checked.of(List.of("""
+                module hosting
+
+                behavior lookUp : (a: Int) -> Int
+
+                behavior twice : (a: Int) -> Int
+                    depends on lookUp
+                let twice (a, lookUp) = lookUp(a) * 2
+
+                fake lookUp
+                    | (1) -> 21
+                    | _ -> 0
+
+                example lookUp
+                    | "what the implementation agrees with" : (1) -> 21
+                    | "what it does not" : (2) -> 5
+
+                example twice
+                    | "what the dependency answered, doubled" : (1) -> 42
+                """));
+        CheckedModule module = program.modules().getFirst();
+        CheckedBehavior lookUp = behaviorNamed(module, "lookUp");
+        CheckedBehavior twice = behaviorNamed(module, "twice");
+        List<StandsIn> implementation =
+                ((CheckedRow.WithStandIns) twice.rows().getFirst().statement()).standsIn();
+        Running running = Running.of(program);
+
+        ObservedValue agreed = running.rowAnswering(module, lookUp, 0, implementation);
+        ObservedValue differed = running.rowAnswering(module, lookUp, 1, implementation);
+
+        assertThat(((CheckedRow.SelfContained) lookUp.rows().get(0).statement()).holds(agreed))
+                .isInstanceOf(Verdict.Held.class);
+        assertThat(((CheckedRow.SelfContained) lookUp.rows().get(1).statement()).holds(differed))
+                .isInstanceOf(Verdict.NotHeld.class);
+    }
+
+    private static CheckedBehavior behaviorNamed(CheckedModule module, String name) {
+        return module.behaviors().stream()
+                .filter(it -> it.name().name().equals(name))
+                .findFirst().orElseThrow();
     }
 
     /**

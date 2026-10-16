@@ -741,7 +741,8 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
     // What each row stands in with: a function answering for each dependency as the row states it,
     // a capability of it, and the capabilities laid out in the order the behavior requires them,
     // which is what the row's entry calls the behavior with. All of it in the object, so a row is run
-    // by its entry alone, handed nothing.
+    // by its entry alone, handed nothing — but for a row of a behavior a host implements, where what
+    // answers is the host's, and the entry is handed its capability (`running_a_row`).
     let mut stood = Stood::default();
     for written in &program.modules {
         // Named out in full, and not `..`'d away, so a field `transport::Module` starts carrying
@@ -933,16 +934,23 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                     .expect("every row was declared an entry before any was defined");
                 context.clear();
                 context.func = Function::with_name_signature(UserFuncName::default(), signature);
-                // Taking nothing: what the row states is written into the body, so an entry with
-                // parameters would be a row whose values came from whoever ran it. What it stands in
-                // with is in the object too.
+                // Taking none of the row's values: what the row states is written into the body, so
+                // an entry with parameters for them would be a row whose values came from whoever ran
+                // it. What it stands in with is in the object too, and what answers a behavior a host
+                // implements is the one thing the entry is handed.
                 let constructs = format!("{}.{}", body.carrier().module(), example.behavior);
+                let requirements =
+                    if targets.reached(&constructs).is == transport::Answers::Injected {
+                        Requirements::Handed
+                    } else {
+                        Requirements::Stood(stood.requirements(&symbol))
+                    };
                 define(
                     &mut context.func,
                     &mut shapes,
                     Handed::Row {
                         constructs: &constructs,
-                        requirements: stood.requirements(&symbol),
+                        requirements,
                     },
                     &[],
                     body.node,
@@ -1173,7 +1181,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             boundaries.push(boundary::Boundary {
                 symbol: boundary_symbol(&entry),
                 runs,
-                constructed: false,
+                constructed: target.is == transport::Answers::Injected,
                 takes: Vec::new(),
                 output: &target.output,
             });
@@ -1447,6 +1455,11 @@ impl<'a> Targets<'a> {
 /// Nothing, and what the behavior answers. The answer's type is read off the behavior's target
 /// rather than off the row, because what a behavior answers is the behavior's and a row that said
 /// it too would be a second place it was written down.
+///
+/// A row of a behavior a host implements takes one thing: the capabilities a published behavior's
+/// symbol is handed first ([`behavior_signature`]), the behavior's own in the one place there is.
+/// Nothing in the object answers such a behavior, so the row runs against whatever the caller hands
+/// it, and a caller handing nothing is answered [`INJECTION_UNBOUND`] as any call is.
 fn running_a_row(
     targets: &Targets,
     module: &str,
@@ -1454,7 +1467,11 @@ fn running_a_row(
     call_conv: CallConv,
 ) -> Lowered<ir::Signature> {
     let target = targets.reached(&format!("{module}.{behavior}"));
-    signature_over(&[], &target.answers(), call_conv)
+    if target.is == transport::Answers::Injected {
+        behavior_signature(&[], &target.answers(), call_conv)
+    } else {
+        signature_over(&[], &target.answers(), call_conv)
+    }
 }
 
 /// What the object makes reachable, from what the module says together with what the object is
@@ -2959,7 +2976,7 @@ fn define(
         Handed::Nothing => 0,
         Handed::Row {
             constructs,
-            requirements,
+            requirements: Requirements::Stood(requirements),
         } => {
             let requirements = match requirements {
                 Some(laid) => {
@@ -2968,8 +2985,23 @@ fn define(
                 }
                 None => builder.ins().iconst(POINTER, 0),
             };
-            bindings.row = Some((constructs.to_string(), requirements));
+            bindings.row = Some(Row {
+                constructs: constructs.to_string(),
+                requirements,
+                handed: false,
+            });
             0
+        }
+        Handed::Row {
+            constructs,
+            requirements: Requirements::Handed,
+        } => {
+            bindings.row = Some(Row {
+                constructs: constructs.to_string(),
+                requirements: builder.block_params(entry)[0],
+                handed: true,
+            });
+            1
         }
         Handed::Requirements(requires) => {
             if !requires.is_empty() {
@@ -3014,12 +3046,22 @@ enum Handed<'a> {
     /// What a behavior was constructed with, first, whatever it requires: a behavior's symbol takes
     /// it ([`behavior_signature`]). The capabilities of `requires`, in order.
     Requirements(&'a [Requirement]),
-    /// Nothing, as a row's entry: the behavior it `constructs` is called with `requirements`, what
-    /// the row stands in with, where it stands in with anything.
+    /// A row's entry: the behavior it `constructs` is called with `requirements`.
     Row {
         constructs: &'a str,
-        requirements: Option<DataId>,
+        requirements: Requirements,
     },
+}
+
+/// What a row's entry calls the behavior it is a row of with.
+#[derive(Clone, Copy)]
+enum Requirements {
+    /// What the row stands in with, laid out in the object, where it stands in with anything; the
+    /// entry is handed nothing.
+    Stood(Option<DataId>),
+    /// The capability of the behavior itself, which a host implements: the entry is handed it,
+    /// first, as a published behavior's symbol is handed what it was constructed with.
+    Handed,
 }
 
 /// What each row stands in with, by the row's entry: the function answering for each dependency,
@@ -4309,8 +4351,9 @@ fn call_behavior(
     let target = lowering.targets.reached(declared);
     let answers = machine_type(&target.answers())?;
     let answer = match through {
-        // A row of a behavior a host implements: nothing in the object answers it, and a row states
-        // no capability of the behavior it is a row of, so the run is handed nothing for it.
+        // A behavior a host implements, reached by a symbol no object defines: nothing in the object
+        // answers it. A row of one is handed its capability (`running_a_row`) and does not come
+        // here; this is what anything else reaching it that way is answered.
         Through::Symbol(_) if target.is == transport::Answers::Injected => {
             let status = builder
                 .ins()
@@ -4703,7 +4746,18 @@ struct Bindings {
     /// What the function was handed capabilities for, where it was handed any.
     environment: Option<Environment>,
     /// The behavior a row's entry constructs, and what it constructs it with.
-    row: Option<(String, ir::Value)>,
+    row: Option<Row>,
+}
+
+/// The behavior a row's entry constructs, and what it constructs it with.
+struct Row {
+    constructs: String,
+    /// The address of the capabilities: of what the row stands in with, or, where `handed`, what the
+    /// entry was handed for the behavior itself.
+    requirements: ir::Value,
+    /// Whether `requirements` holds the capability of the behavior itself, which is what answers
+    /// it, rather than what the behavior is constructed with.
+    handed: bool,
 }
 
 /// The capabilities a function was handed: the variable holding their address, and the behavior
@@ -4770,10 +4824,13 @@ impl Bindings {
     /// for it, where it was handed one, and by its symbol, handed nothing, otherwise — which
     /// `Coherent` held to be a behavior that requires nothing.
     fn through(&self, builder: &mut FunctionBuilder, abort: ir::Block, declared: &str) -> Through {
-        if let Some((constructs, requirements)) = &self.row
-            && constructs == declared
+        if let Some(row) = &self.row
+            && row.constructs == declared
         {
-            return Through::Symbol(*requirements);
+            if row.handed {
+                return Through::Capability(capability_at(builder, abort, row.requirements, 0));
+            }
+            return Through::Symbol(row.requirements);
         }
         if let Some(environment) = &self.environment
             && let Some(at) = environment.requires.iter().position(|it| it == declared)

@@ -127,27 +127,44 @@ fn a_row_standing_in_for_other_than_what_its_behavior_requires_is_refused() {
     );
 }
 
-const UNANSWERED: &str = r#"
+const ANSWERED_BY_WHAT_IS_HANDED: &str = r#"
 #include <inttypes.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 
-extern uint32_t looked(int64_t *) __asm__("PREFIXsouther@.m.lookUp$example$0");
+typedef struct { void (*invoke)(void); const void *environment; } capability;
+
+extern uint32_t looked(const capability *const *, int64_t *)
+    __asm__("PREFIXsouther@.m.lookUp$example$0");
+
+static uint32_t implemented(const void *environment, int64_t a, int64_t *out) {
+    (void) environment;
+    *out = a * 7;
+    return 0;
+}
+
+static const capability implementation = {(void (*)(void)) implemented, NULL};
+static const capability *const handed[] = {&implementation};
 
 int main(void) {
     int64_t answer = -1;
-    uint32_t status = looked(&answer);
+    uint32_t status = looked(NULL, &answer);
+    printf("%u %" PRId64 "\n", status, answer);
+    answer = -1;
+    status = looked(handed, &answer);
     printf("%u %" PRId64 "\n", status, answer);
     return 0;
 }
 "#;
 
 /// A row of a behavior a host implements states what the host's implementation answers, and
-/// nothing in the object answers it: the behavior has no symbol, and the row stands in with no
-/// capability of the behavior it is a row of. So its entry answers `INJECTION_UNBOUND`, as a call
-/// handed nothing for it does, rather than calling something no object defines.
+/// nothing in the object answers it: the behavior has no symbol. So its entry is handed the
+/// capability of what answers it, first, as a published behavior's symbol is handed what it was
+/// constructed with, and runs against that; handed nothing for it, it answers `INJECTION_UNBOUND`,
+/// as any call handed nothing does, rather than calling something no object defines.
 #[test]
-fn a_row_of_what_a_host_implements_answers_unbound() {
+fn a_row_of_what_a_host_implements_runs_against_what_it_is_handed() {
     let mut document: Value = serde_json::from_str(ENSURES).unwrap();
     document["modules"][0]["examples"] = json!([{
         "behavior": "lookUp",
@@ -166,8 +183,8 @@ fn a_row_of_what_a_host_implements_answers_unbound() {
     let object = into.path().join("m.o");
     fs::write(&object, object_for(&document.to_string()).unwrap()).unwrap();
     let harness = into.path().join("harness.c");
-    fs::write(&harness, support::harness(UNANSWERED)).unwrap();
-    let executable = into.path().join("unanswered");
+    fs::write(&harness, support::harness(ANSWERED_BY_WHAT_IS_HANDED)).unwrap();
+    let executable = into.path().join("answered");
     let linked = Command::new("cc")
         .arg("-o")
         .arg(&executable)
@@ -185,6 +202,6 @@ fn a_row_of_what_a_host_implements_answers_unbound() {
 
     assert_eq!(
         String::from_utf8(run.stdout).unwrap(),
-        format!("{} -1\n", souther_native_abi::INJECTION_UNBOUND)
+        format!("{} -1\n0 7\n", souther_native_abi::INJECTION_UNBOUND)
     );
 }
