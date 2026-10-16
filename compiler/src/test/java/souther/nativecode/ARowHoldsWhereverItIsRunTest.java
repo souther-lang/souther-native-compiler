@@ -550,6 +550,41 @@ class ARowHoldsWhereverItIsRunTest {
     }
 
     /**
+     * A row whose answer is owed is run against what it states its behavior's dependencies answer,
+     * as the compile ran it. Whether its answer is owed and whether it needs something stood in for
+     * are two questions, and a run handed none of its stand-ins would stop at the first dependency
+     * rather than answer what the author owes.
+     */
+    @Test
+    void aRowWhoseAnswerIsOwedRunsWithWhatItStatesItsDependenciesAnswer() throws Exception {
+        CheckedProgram program = Checked.of(List.of("""
+                module owing
+
+                behavior lookUp : (a: Int) -> Int
+
+                behavior twice : (a: Int) -> Int
+                    depends on lookUp
+                let twice (a, lookUp) = lookUp(a) * 2
+
+                fake lookUp
+                    | (1) -> 21
+                    | _ -> 0
+
+                example twice
+                    | "what the dependency answered, doubled, owed" : (1) -> <?>
+                """));
+        CheckedModule module = program.modules().getFirst();
+        CheckedBehavior twice = module.behaviors().stream()
+                .filter(it -> it.name().name().equals("twice"))
+                .findFirst().orElseThrow();
+        assertThat(twice.rows().getFirst().statement()).isInstanceOf(CheckedRow.AnswerOwed.class);
+
+        ObservedValue answered = Running.of(program).rowAnswering(module, twice, 0, List.of());
+
+        assertThat(answered).isEqualTo(new ObservedValue.Integer(42));
+    }
+
+    /**
      * Runs every row the program states and asks the row whether the answer keeps it.
      *
      * <p>Every row, and every way a row can arrive. A corpus written to be run is one where each

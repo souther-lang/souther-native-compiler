@@ -714,18 +714,27 @@ public final class ProgramWriter {
      * row is written.
      */
     private String example(CheckedBehavior behavior, int at, CheckedRow row) {
-        List<StandsIn> standIns = row.statement() instanceof CheckedRow.WithStandIns it
-                ? it.standsIn() : List.of();
-        List<CheckedHelper> inputs = switch (row.statement()) {
-            case CheckedRow.SelfContained it -> it.inputDefinitions();
-            case CheckedRow.WithStandIns it -> it.inputDefinitions();
+        List<CheckedHelper> inputs;
+        List<StandsIn> standIns;
+        switch (row.statement()) {
+            case CheckedRow.SelfContained it -> {
+                inputs = it.inputDefinitions();
+                standIns = List.of();
+            }
+            case CheckedRow.WithStandIns it -> {
+                inputs = it.inputDefinitions();
+                standIns = it.standsIn();
+            }
             // Its answer is owed, which is a row nothing holds an answer to and still a row whose
-            // values were read. The entry runs it; what the run answers is nobody's claim yet.
-            case CheckedRow.AnswerOwed it -> it.inputDefinitions();
-            case CheckedRow.NotReproducible it -> null;
-        };
-        if (inputs == null) {
-            return null;
+            // values were read. The entry runs it against what it states its dependencies answer,
+            // as the compile did; what the run answers is nobody's claim yet.
+            case CheckedRow.AnswerOwed it -> {
+                inputs = it.inputDefinitions();
+                standIns = it.standsIn();
+            }
+            case CheckedRow.NotReproducible it -> {
+                return null;
+            }
         }
         StringJoiner standing = new StringJoiner(",", "[", "]");
         for (StandsIn standsIn : standIns) {
