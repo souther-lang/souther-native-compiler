@@ -1479,15 +1479,15 @@ public final class RustBindings {
                 case Manifest.Row.Asserted asserted when asserted.run().available() != null ->
                         arms.append("""
                                     %d => {
-                                        let mut kept: u8 = 0;
+                                        let mut kept = crate::RowOutcome::UNWRITTEN;
                                         let mut answer: rt::Word = std::ptr::null();
                                         // SAFETY: the function is the row's, handed what it takes.
                                         let called = run.call(|| unsafe {
                                             (library.symbols.%s)(capabilities, &mut kept, &mut answer)
                                         });
-                                        // SAFETY: read only where the call answered, which wrote the
+                                        // SAFETY: read only where the call answered and wrote the
                                         // answer, a string of this run.
-                                        crate::RowOutcome::asserted(called, kept, || unsafe {
+                                        crate::RowOutcome::asserted(called, kept, answer, |answer| unsafe {
                                             library.words.text(answer)
                                         })
                                     }
@@ -1500,9 +1500,11 @@ public final class RustBindings {
                                         let called = run.call(|| unsafe {
                                             (library.symbols.%s)(capabilities, &mut answer)
                                         });
-                                        // SAFETY: read only where the call answered, which wrote the
+                                        // SAFETY: read only where the call answered and wrote the
                                         // answer, a string of this run.
-                                        crate::RowOutcome::owed(called, || unsafe { library.words.text(answer) })
+                                        crate::RowOutcome::owed(called, answer, |answer| unsafe {
+                                            library.words.text(answer)
+                                        })
                                     }
                         """.formatted(example.at(), symbol(run)));
                 default -> {
@@ -1513,6 +1515,10 @@ public final class RustBindings {
                         let _ = run;
                         crate::RowOutcome::not_run(row)
                 """ : """
+                        // A row with nothing to run binds nothing: there is nothing to hand.
+                        if !matches!(row.kind(), crate::RowKind::Asserted | crate::RowKind::Owed) {
+                            return crate::RowOutcome::not_run(row);
+                        }
                         let library = run.library();
                         let runtime = rt::Loaded::runtime(library);
                         let handed: [&dyn rt::Requirement; 1] = [self];

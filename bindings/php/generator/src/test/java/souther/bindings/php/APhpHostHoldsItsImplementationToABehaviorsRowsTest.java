@@ -246,7 +246,7 @@ class APhpHostHoldsItsImplementationToABehaviorsRowsTest {
                         ? "not run: {$outcome->why}" : 'run', "\\n";
                 }
                 """)).isEqualTo("""
-                a price at the scale it was written: NotComparable, not run: the library has no way to hold an answer to what the row states
+                a price at the scale it was written: NotComparable, not run: the library has no way to compare an answer with what the row states
                 priced, whatever it costs: Unreproducible, not run: the row's input is not a value
                 """);
     }

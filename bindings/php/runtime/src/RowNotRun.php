@@ -6,7 +6,7 @@ namespace Souther\Runtime;
 
 /**
  * There was nothing to run: the compile could not read the row ({@see RowKind::Unreproducible}),
- * or the library has no way to hold an answer to what it states ({@see RowKind::NotComparable}).
+ * or the library has no way to compare an answer with what it states ({@see RowKind::NotComparable}).
  * Nothing was called.
  */
 final readonly class RowNotRun implements RowOutcome

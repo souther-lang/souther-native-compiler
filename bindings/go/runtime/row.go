@@ -64,7 +64,7 @@ func (k RowKind) String() string {
 }
 
 // notComparable is why a row the library cannot compare an answer with has nothing to run.
-const notComparable = "the library holds no value of what the behavior answers that the row states"
+const notComparable = "the library has no way to compare an answer with what the row states"
 
 // Row is one row of a behavior a host implements, of the behavior I is the interface of, which a
 // host runs against an implementation of its own with [Row.Evaluate]. A generated package lists the

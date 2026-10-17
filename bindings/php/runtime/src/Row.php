@@ -57,7 +57,7 @@ final readonly class Row
     {
         return $run === null
             ? new self($binding, $behavior, null, $at, $name, $shown, RowKind::NotComparable,
-                'the library has no way to hold an answer to what the row states')
+                'the library has no way to compare an answer with what the row states')
             : new self($binding, $behavior, $run, $at, $name, $shown, RowKind::Asserted, null);
     }
 
@@ -110,24 +110,36 @@ final readonly class Row
         $session = $binding::session();
         $ffi = $session->call();
         $library = $session->library();
-        // Kept until the call returns: the capability is let go of with what made it.
-        $handed = Bound::of(null, Implemented::by($binding, $behavior, $implementation));
+        try {
+            // Kept until the call returns: the capability is let go of with what made it.
+            $handed = Bound::of(null, Implemented::by($binding, $behavior, $implementation));
+            $requirements = $handed->requirements($session);
+        } catch (SoutherFailure $failure) {
+            return new RowEnded($failure);
+        }
         $answer = $ffi->new('souther_string');
         if ($this->kind === RowKind::Asserted) {
+            // Nought or one is what the library writes: a room left as it was is no verdict.
             $kept = $ffi->new('uint8_t');
-            $status = $ffi->{$this->run}($handed->requirements($session), FFI::addr($kept),
-                FFI::addr($answer));
+            $kept->cdata = 2;
+            $status = $ffi->{$this->run}($requirements, FFI::addr($kept), FFI::addr($answer));
         } else {
             $kept = null;
-            $status = $ffi->{$this->run}($handed->requirements($session), FFI::addr($answer));
+            $status = $ffi->{$this->run}($requirements, FFI::addr($answer));
         }
         if ($status !== $library->status('ANSWERED')) {
             return new RowEnded($library->failure($status));
+        }
+        // An answer always, and a verdict where the row states one: a function that answered and
+        // left either room as it was broke the protocol, which is not a row that failed.
+        if (FFI::isNull($answer) || $kept !== null && $kept->cdata > 1) {
+            return new RowEnded(new InjectionProtocolViolation(
+                'the row answered and wrote no ' . (FFI::isNull($answer) ? 'answer' : 'verdict')));
         }
         $written = $session->text($answer);
         if ($kept === null) {
             return new RowAnswered($written);
         }
-        return $kept->cdata !== 0 ? new RowKept($written) : new RowNotKept($written);
+        return $kept->cdata === 1 ? new RowKept($written) : new RowNotKept($written);
     }
 }

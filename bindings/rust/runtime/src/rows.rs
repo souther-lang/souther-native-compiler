@@ -12,6 +12,7 @@
 //! comes back beside the verdict for a report, and is never compared here.
 
 use crate::failure::Failure;
+use crate::native::Word;
 use std::fmt;
 
 /// What a row names itself: the name it was written with, or which of its behavior's rows it is,
@@ -174,28 +175,51 @@ pub enum RowOutcome {
 }
 
 impl RowOutcome {
-    /// What a row stating an answer came to, where its function answered `called` and wrote
-    /// `kept`, and `answer` reads what it wrote of the answer.
+    /// The room a row's function writes whether the answer keeps the row into, before the call:
+    /// neither of the two values it writes, so that a room left as it was is told from a verdict.
+    #[doc(hidden)]
+    pub const UNWRITTEN: u8 = 2;
+
+    /// What a row stating an answer came to, where its function answered `called`, wrote `kept`
+    /// and left `answer` in the room for the answer, which `read` reads.
+    ///
+    /// Nought or one is what the library writes, and an answer always: a function that answered
+    /// and left either room as it was is no verdict and no answer, and comes to
+    /// [`Failure::ProtocolViolation`], as a call answering what it should not does.
     #[doc(hidden)]
     pub fn asserted(
         called: Result<(), Failure>,
         kept: u8,
-        answer: impl FnOnce() -> String,
+        answer: Word,
+        read: impl FnOnce(Word) -> String,
     ) -> Self {
         match called {
-            Ok(()) if kept != 0 => RowOutcome::Kept { answer: answer() },
-            Ok(()) => RowOutcome::NotKept { answer: answer() },
             Err(failure) => RowOutcome::Ended(failure),
+            Ok(()) if answer.is_null() || kept > 1 => RowOutcome::Ended(Failure::ProtocolViolation),
+            Ok(()) if kept == 1 => RowOutcome::Kept {
+                answer: read(answer),
+            },
+            Ok(()) => RowOutcome::NotKept {
+                answer: read(answer),
+            },
         }
     }
 
-    /// What a row whose answer is owed came to, where its function answered `called` and
-    /// `answer` reads what it wrote of the answer.
+    /// What a row whose answer is owed came to, where its function answered `called` and left
+    /// `answer` in the room for the answer, which `read` reads; a room left as it was comes to
+    /// [`Failure::ProtocolViolation`], as for [`RowOutcome::asserted`].
     #[doc(hidden)]
-    pub fn owed(called: Result<(), Failure>, answer: impl FnOnce() -> String) -> Self {
+    pub fn owed(
+        called: Result<(), Failure>,
+        answer: Word,
+        read: impl FnOnce(Word) -> String,
+    ) -> Self {
         match called {
-            Ok(()) => RowOutcome::Owed { answer: answer() },
             Err(failure) => RowOutcome::Ended(failure),
+            Ok(()) if answer.is_null() => RowOutcome::Ended(Failure::ProtocolViolation),
+            Ok(()) => RowOutcome::Owed {
+                answer: read(answer),
+            },
         }
     }
 
@@ -264,6 +288,9 @@ impl fmt::Display for RowOutcome {
 mod tests {
     use super::*;
 
+    /// A room for the answer a function wrote into; what it points at is never read here.
+    const WRITTEN: Word = c"written".as_ptr().cast();
+
     const NAMED: Row = Row::new(
         "held.priced",
         0,
@@ -284,17 +311,39 @@ mod tests {
     /// comes to the failure, whatever room was written, and nothing of the answer is read then.
     #[test]
     fn a_row_comes_to_what_its_function_wrote_and_never_reads_an_answer_it_did_not() {
-        let kept = RowOutcome::asserted(Ok(()), 1, || "1.50".to_owned());
+        let kept = RowOutcome::asserted(Ok(()), 1, WRITTEN, |_| "1.50".to_owned());
         assert!(kept.kept());
         assert_eq!(kept.answer(), Some("1.50"));
-        let not = RowOutcome::asserted(Ok(()), 0, || "2".to_owned());
+        let not = RowOutcome::asserted(Ok(()), 0, WRITTEN, |_| "2".to_owned());
         assert!(!not.kept());
         assert_eq!(not.to_string(), "not kept, answering 2");
-        let ended = RowOutcome::asserted(Err(Failure::Unbound), 1, || unreachable!());
+        let ended = RowOutcome::asserted(Err(Failure::Unbound), 1, WRITTEN, |_| unreachable!());
         assert!(matches!(ended, RowOutcome::Ended(Failure::Unbound)));
-        let owed = RowOutcome::owed(Ok(()), || "5".to_owned());
+        let owed = RowOutcome::owed(Ok(()), WRITTEN, |_| "5".to_owned());
         assert!(!owed.kept(), "an owed row has no verdict, and is not kept");
         assert_eq!(owed.answer(), Some("5"));
+    }
+
+    /// A function that answered and left a room as it was wrote no verdict and no answer, which
+    /// is the library breaking the protocol and not a row that failed, and nothing is read.
+    #[test]
+    fn a_room_left_as_it_was_is_a_protocol_violation_and_not_a_verdict() {
+        for (kept, answer) in [
+            (RowOutcome::UNWRITTEN, WRITTEN),
+            (1, std::ptr::null()),
+            (0, std::ptr::null()),
+        ] {
+            let came = RowOutcome::asserted(Ok(()), kept, answer, |_| unreachable!());
+            assert!(
+                matches!(came, RowOutcome::Ended(Failure::ProtocolViolation)),
+                "{came}"
+            );
+        }
+        let owed = RowOutcome::owed(Ok(()), std::ptr::null(), |_| unreachable!());
+        assert!(
+            matches!(owed, RowOutcome::Ended(Failure::ProtocolViolation)),
+            "{owed}"
+        );
     }
 
     /// A row with nothing to run says why, and the binding handing one that runs here is refused.
@@ -317,7 +366,7 @@ mod tests {
     /// What a test asserts says which row and what it came to.
     #[test]
     fn asserting_a_row_kept_says_which_row_and_what_it_came_to() {
-        let not = RowOutcome::asserted(Ok(()), 0, || "{\"amount\":1.51}".to_owned());
+        let not = RowOutcome::asserted(Ok(()), 0, WRITTEN, |_| "{\"amount\":1.51}".to_owned());
         let said =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| not.assert_kept(&NAMED)))
                 .unwrap_err();

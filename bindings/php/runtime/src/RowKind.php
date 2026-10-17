@@ -26,8 +26,8 @@ enum RowKind
     case Unreproducible;
 
     /**
-     * The row states an answer the library has no way to hold an answer to, so there is nothing to
-     * run either; {@see Row::$why} says so.
+     * The row states an answer the library has no way to compare an answer with, so there is
+     * nothing to run either; {@see Row::$why} says so.
      */
     case NotComparable;
 }
