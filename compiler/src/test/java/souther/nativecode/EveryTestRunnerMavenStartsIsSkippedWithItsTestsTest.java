@@ -10,7 +10,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -59,14 +58,7 @@ class EveryTestRunnerMavenStartsIsSkippedWithItsTestsTest {
 
     /** The root pom and every module's, wherever a module sits. */
     private static List<Path> poms() {
-        try (Stream<Path> files = Files.walk(Repository.root())) {
-            return files.filter(it -> it.getFileName().toString().equals("pom.xml"))
-                    .filter(it -> Repository.root().relativize(it).toString()
-                            .matches("(?!.*(^|/)(target|\\.git|\\.wt|vendor|node_modules)/).*"))
-                    .sorted().toList();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+        return Repository.ownFiles(name -> name.equals("pom.xml"));
     }
 
     private static String read(Path pom) {
