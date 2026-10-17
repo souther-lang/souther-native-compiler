@@ -261,6 +261,19 @@ what it threw to throw again where the outermost call returns, since a host's ex
 unwind through generated code. Anything else it answers is `INJECTION_PROTOCOL_VIOLATION` by the
 time a caller sees it. A call through a requirement bound to null answers `INJECTION_UNBOUND`.
 
+Each row of a behavior a host implements is listed under its injection in the manifest, and a row
+that can be run has a function a host runs it through against its own implementation. Both take the
+capabilities with the implementation's own capability first, as a behavior bound to it lays them
+out, and answer a status, writing nothing where it is not `ANSWERED`. A row that states an answer is
+`_b_<behavior>_example_<row>`, which writes whether the answer keeps the row, decided in the library
+by the language's equality, and the answer in external form, a string of the scope the call is made
+in. One whose answer is owed is `_b_<behavior>_owed_<row>`, which writes the answer alone, since
+the row states nothing it could keep. `<row>` is where the row stands among the behavior's rows,
+from nought. A row the library has no way to compare an answer with, and one the compile could not
+read, are listed with nothing to run. The answer is for a report, and a host that compared it would
+part from the language where the two texts differ and the values do not: a decimal at another
+scale, a set in another order.
+
 PHP's FFI makes a new C entry each time a closure is handed to C and keeps it until the request
 ends, so a runtime there makes the function pointer once for a behavior and tells its
 implementations apart by what each is handed first. The layout above allows it everywhere.
