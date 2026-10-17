@@ -31,7 +31,7 @@ package souther.bindings;
 public final class BindingApi {
 
     /** The major of this API: see the rule above. */
-    public static final int MAJOR = 1;
+    public static final int MAJOR = 2;
 
     /** The attribute naming the generator a jar is, the same across its versions. */
     public static final String ID = "Souther-Binding-Id";
