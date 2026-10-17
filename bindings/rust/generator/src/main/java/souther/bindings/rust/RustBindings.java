@@ -50,7 +50,7 @@ public final class RustBindings {
     /** What says a directory is a Rust binding this wrote, and may be replaced whole. */
 
     /** The version of the runtime crate what this writes calls; held to the crate's by a test. */
-    static final String RUNTIME_VERSION = "0.1";
+    static final String RUNTIME_VERSION = "0.2";
 
     /**
      * The oldest Rust a crate this writes builds with, which is the runtime crate's, since it depends
@@ -65,7 +65,8 @@ public final class RustBindings {
      */
     static final List<String> ROOT = List.of("Library", "Run", "Scope", "Decoding", "AlreadyRunning",
             "Construction", "Date", "DateTime", "Decimal", "Failure", "HostError", "Instant",
-            "LoadError", "NotADecimal", "NotATemporal", "Reading", "Time", "raoh", "__ffi");
+            "LoadError", "NotADecimal", "NotATemporal", "NotRun", "Reading", "Row", "RowIdentity",
+            "RowKind", "RowOutcome", "Time", "raoh", "__ffi");
 
     private final Manifest manifest;
     private final String crate;
@@ -1404,7 +1405,7 @@ public final class RustBindings {
                         };
                         %s { implemented }
                     }
-                }
+                %s}
 
                 // SAFETY: the capability and the runtime are those of what it wraps.
                 unsafe impl rt::Requirement for %s<'_> {
@@ -1432,9 +1433,127 @@ public final class RustBindings {
                 parameters.stream().map(p -> ", " + p).collect(Collectors.joining()),
                 answers.owned(), dispatch, trait, it.key(), implementation, dispatch,
                 implementation, trait, dispatch, it.key(), injection.implement(), entry,
-                implementation, implementation, entry, String.join(", ", cParameters), dispatch,
+                implementation, examples(it, injection), implementation, entry,
+                String.join(", ", cParameters), dispatch,
                 made, arguments.stream().map(a -> ", " + a).collect(Collectors.joining()),
                 written));
+    }
+
+    /**
+     * What the type an implementation of {@code injection} is made into says of the behavior's
+     * rows: {@code examples}, listing them as the manifest does, and {@code evaluate}, running one
+     * against the implementation and answering what it came to. There is no third that runs every
+     * row: what an implementation answers from is what a test arranges around it, and the test
+     * that changes that between rows is the one that owns the loop, as the JVM's
+     * {@code BoundExamples} leaves it.
+     *
+     * <p>A row is run through its function with the implementation's own capability first, laid
+     * out as a behavior bound to it lays it out ({@code rt::Bound}), which refuses one another
+     * runtime made. Whether the answer keeps the row is the library's to say; what comes back of
+     * the answer is its external form, for a report, and nothing here compares it.
+     */
+    private String examples(BehaviorType it, Manifest.Injection injection) {
+        StringBuilder rows = new StringBuilder();
+        StringBuilder arms = new StringBuilder();
+        for (Manifest.Example example : injection.examples()) {
+            String identity = switch (example.identity()) {
+                case Manifest.RowIdentity.Named(String name) ->
+                        "crate::RowIdentity::Named(" + RustNames.literal(name) + ")";
+                case Manifest.RowIdentity.Unnamed(int ordinal) ->
+                        "crate::RowIdentity::Unnamed(" + ordinal + ")";
+            };
+            String kind = switch (example.row()) {
+                case Manifest.Row.Asserted(Manifest.Reach<Function> run) ->
+                        run.available() == null ? "crate::RowKind::NotComparable" : "crate::RowKind::Asserted";
+                case Manifest.Row.Owed owed -> "crate::RowKind::Owed";
+                case Manifest.Row.Unreproducible(String why) ->
+                        "crate::RowKind::Unreproducible(" + RustNames.literal(why) + ")";
+            };
+            rows.append("            crate::Row::new(\n")
+                    .append("                ").append(RustNames.literal(it.key())).append(",\n")
+                    .append("                ").append(example.at()).append(",\n")
+                    .append("                ").append(identity).append(",\n")
+                    .append("                ").append(kind).append(",\n")
+                    .append("            ),\n");
+            switch (example.row()) {
+                case Manifest.Row.Asserted asserted when asserted.run().available() != null ->
+                        arms.append("""
+                                    %d => {
+                                        let mut kept: u8 = 0;
+                                        let mut answer: rt::Word = std::ptr::null();
+                                        // SAFETY: the function is the row's, handed what it takes.
+                                        let called = run.call(|| unsafe {
+                                            (library.symbols.%s)(capabilities, &mut kept, &mut answer)
+                                        });
+                                        // SAFETY: read only where the call answered, which wrote the
+                                        // answer, a string of this run.
+                                        crate::RowOutcome::asserted(called, kept, || unsafe {
+                                            library.words.text(answer)
+                                        })
+                                    }
+                        """.formatted(example.at(),
+                                symbol(Objects.requireNonNull(asserted.run().available()))));
+                case Manifest.Row.Owed(Function run) -> arms.append("""
+                                    %d => {
+                                        let mut answer: rt::Word = std::ptr::null();
+                                        // SAFETY: the function is the row's, handed what it takes.
+                                        let called = run.call(|| unsafe {
+                                            (library.symbols.%s)(capabilities, &mut answer)
+                                        });
+                                        // SAFETY: read only where the call answered, which wrote the
+                                        // answer, a string of this run.
+                                        crate::RowOutcome::owed(called, || unsafe { library.words.text(answer) })
+                                    }
+                        """.formatted(example.at(), symbol(run)));
+                default -> {
+                }
+            }
+        }
+        String evaluated = arms.isEmpty() ? """
+                        let _ = run;
+                        crate::RowOutcome::not_run(row)
+                """ : """
+                        let library = run.library();
+                        let runtime = rt::Loaded::runtime(library);
+                        let handed: [&dyn rt::Requirement; 1] = [self];
+                        // SAFETY: nothing is bound, and what is laid out is this implementation's own
+                        // capability, first, as a row's function takes it.
+                        let bound = unsafe { rt::Bound::new(runtime, None, &handed) };
+                        let capabilities = match bound.requirements(runtime) {
+                            Ok(capabilities) => capabilities,
+                            Err(failure) => return crate::RowOutcome::Ended(failure),
+                        };
+                        match row.at() {
+                %s            _ => crate::RowOutcome::not_run(row),
+                        }
+                """.formatted(arms);
+        return """
+
+                    /// The rows of `%s`, in the order they are written, which [`Self::evaluate`] runs
+                    /// one of.
+                    pub fn examples() -> &'static [crate::Row] {
+                        const ROWS: &[crate::Row] = &[
+                %s        ];
+                        ROWS
+                    }
+
+                    /// What `row`, one of [`Self::examples`], comes to with this implementation answering
+                    /// it, run in `run`: whether the answer keeps the row, as the library's equality says,
+                    /// and the answer in external form for a report; the answer alone where the row's is
+                    /// owed; the failure where it ended without one, as a call reaching the implementation
+                    /// would; or why the row has nothing to run.
+                    ///
+                    /// One row, once: what the implementation answers from is what the caller arranges
+                    /// around it, and the caller owns the loop.
+                    ///
+                    /// # Panics
+                    ///
+                    /// Where `row` is not one of [`Self::examples`], and where the implementation
+                    /// panicked, which is raised again here, as a call reaching it raises it.
+                    pub fn evaluate<'run>(&self, run: &mut crate::Run<'run>, row: &crate::Row) -> crate::RowOutcome {
+                        assert!(Self::examples().contains(row), "{row} is not a row of `%s`");
+                %s    }
+                """.formatted(it.key(), rows, it.key(), evaluated);
     }
 
     /**
@@ -1549,7 +1668,8 @@ public final class RustBindings {
 
                 pub use souther_binding_runtime::{
                     AlreadyRunning, Construction, Date, DateTime, Decimal, Failure, HostError, Instant,
-                    LoadError, NotADecimal, NotATemporal, Reading, Time, raoh,
+                    LoadError, NotADecimal, NotATemporal, NotRun, Reading, Row, RowIdentity, RowKind,
+                    RowOutcome, Time, raoh,
                 };
 
                 mod __ffi;

@@ -4,7 +4,8 @@ What every Rust binding of a Souther library built by souther-native-compiler ru
 the handles a value is held as, and calls into the library and back. An application does not
 depend on this crate by itself. It depends on the crate `souther compile --target native --binding rust` wrote for its
 model, which depends on this one and re-exports what a host names (`Construction`, `Reading`,
-`Failure`, `Decimal`, the temporal types and `raoh`).
+`Failure`, `Decimal`, the temporal types, `Row` and `RowOutcome` with what they are made of, and
+`raoh`).
 
 ## Building a library and its Rust binding
 
@@ -182,6 +183,54 @@ panic is caught before it reaches the library and raised again where the call re
 call comes to that failure itself, as a direct call handing the same value over would, and not to a
 `Failure::Host` of it. What Rust has no way to hold is not written: a behavior the manifest says a
 host cannot call, a field with no reader, a type this binding has no representation for.
+
+## Holding an implementation to the rows of its behavior
+
+The rows of a behavior a host implements (`example priced | ...`) are what an implementation of it
+is held to, and the binding lists them and runs them one at a time, as the JVM's `BoundExamples`
+does. `PricedImplementation::examples()` is every row of `priced`, in the order they are written, as
+`&'static [Row]`: where the row stands among them (`at`), what it names itself (`identity()`, a
+`RowIdentity::Named` with the name it was written with or a `RowIdentity::Unnamed` saying which row
+it is, from one, and `shown()` for a report), and what a host does with it (`kind()`). A row is
+`RowKind::Asserted` where it states an answer, `RowKind::Owed` where its answer is owed (`<?>`),
+`RowKind::NotComparable` where it states an answer the library has no way to compare one with, and
+`RowKind::Unreproducible` where the compile could not read it, with why.
+
+`implementation.evaluate(run, row)` runs one row against that implementation in the caller's run
+and answers a `RowOutcome`. The row's function is the library's, handed the implementation's own
+capability, and it says whether the answer keeps the row by the language's equality: an answer of
+`1.5` keeps a row stating `1.50m`, and a set in another order keeps a row stating the set. The answer
+comes back in its external form beside that, for a report, and the binding never compares it.
+`Kept` and `NotKept` carry the answer, `Owed` carries the answer and no verdict, since the row
+states nothing it could keep, `Ended` carries the `Failure` the row ended with where it ended without
+an answer, as a call of the behavior would have (the implementation's own failure is `Failure::Host`,
+a clause the answer breaks is `Failure::Abort`), and `NotRun` says why a row with nothing to run was
+not run. A panic in the implementation is raised again out of `evaluate`, as out of any call. A row
+of another behavior is refused with a panic.
+
+There is no call that runs every row. What an implementation answers from is what the test
+arranges around it, the rows of a table or what a clock says, and the test that changes that
+between rows owns the loop:
+
+    #[test]
+    fn every_price_the_rows_state_is_kept() {
+        // SAFETY: the library the binding was generated from.
+        let library = unsafe { Library::load(&path) }.unwrap();
+        let prices = PricedImplementation::new(&library, Shelf::over(&database));
+        library
+            .run(|run| {
+                for row in PricedImplementation::examples() {
+                    if row.kind() == RowKind::Asserted {
+                        prices.evaluate(run, row).assert_kept(row);
+                    }
+                }
+            })
+            .unwrap();
+    }
+
+`assert_kept` panics unless the answer kept the row, saying which row and what it came to
+(`held.priced a price: not kept, answering {"amount":1.51}`). Which of the other outcomes a suite
+fails is the suite's to say.
 
 ## A whole application
 
