@@ -209,3 +209,40 @@ fn a_row_of_what_a_host_implements_runs_against_what_it_is_handed() {
         format!("{} -1\n0 7\n", souther_native_abi::INJECTION_UNBOUND)
     );
 }
+
+/// A row the compile could not read stands at a place among its behavior's rows as a row it read
+/// does, and is of a behavior its module declares: one claiming the place of another, or naming a
+/// behavior the module does not declare, is the two halves disagreeing.
+#[test]
+fn a_row_the_compile_could_not_read_is_held_to_its_place_and_its_behavior() {
+    let unread = |behavior: &str, at: usize| {
+        json!({
+            "behavior": behavior,
+            "at": at,
+            "identity": {"unnamed": at + 1},
+            "why": "a value it cannot build"
+        })
+    };
+    for (unreproducible, refusal) in [
+        (
+            json!([unread("twice", 0)]),
+            "has two rows both written at 0",
+        ),
+        (
+            json!([unread("twice", 1), unread("twice", 1)]),
+            "has two rows both written at 1",
+        ),
+        (
+            json!([unread("thrice", 1)]),
+            "a behavior it does not declare",
+        ),
+    ] {
+        let mut document: Value = serde_json::from_str(ENSURES).unwrap();
+        document["modules"][0]["examples"] = json!([row(0, 1, None)]);
+        document["modules"][0]["unreproducible"] = unreproducible;
+
+        let refused = object_for(&document.to_string()).expect_err(refusal);
+
+        assert!(refused.to_string().contains(refusal), "{refused}");
+    }
+}
