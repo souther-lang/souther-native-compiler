@@ -43,7 +43,7 @@ class AValueThatHandsOverAnotherValueCrossesTest {
         String written = ProgramWriter.written(Checked.of(List.of(MODULE)));
 
         assertThat(written).isEqualTo("""
-                {"transport":33,"declarations":[{"module":"m","name":"P","by":"amodule","is":"product",\
+                {"transport":34,"declarations":[{"module":"m","name":"P","by":"amodule","is":"product",\
                 "fields":[{"name":"n","binding":0,"codec":{"is":"scalar","scalar":"INT"}}],"invariants":[]}],"behaviors":[],\
                 "modules":[{"name":"m","publishes":["m.P"],"helpers":[],\
                 "values":[{"module":"m","name":"ks","handovers":[],\
@@ -65,7 +65,7 @@ class AValueThatHandsOverAnotherValueCrossesTest {
                 "body":{"core":"read","binding":1,"type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]},\
                 "type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]},\
                 "type":{"ref":{"is":"declared","declared":"m.P"}},"aborts":[]}}],\
-                "definitions":[],"examples":[]}]}""");
+                "definitions":[],"examples":[],"unreproducible":[]}]}""");
     }
 
     /** What the driver is tested against is this, written to a file rather than described there
