@@ -16,7 +16,7 @@ abstract class Binding
      * binding generated before would call something this does not have, or call it as something it
      * is not; a binding says which it was generated for and refuses to load over any other.
      */
-    public const PROTOCOL = 12;
+    public const PROTOCOL = 13;
 
     /**
      * What each version of the protocol moved, by its number, oldest first. The versions before the
@@ -65,6 +65,11 @@ abstract class Binding
             . 'Session::decoded: the value, or the issue of the clause that did not hold, named as '
             . 'the type\'s decoder names it, in place of Session::constructed, which answered a '
             . 'bare invariant_violation (NativeLibrary::ABI_GENERATION)',
+        13 => 'the class of a behavior a host implements lists its example rows and evaluates one '
+            . 'against an implementation, the library saying whether the answer keeps the row: a '
+            . 'row is a Row of a RowKind, and evaluating it comes to a RowOutcome, one of RowKept, '
+            . 'RowNotKept, RowAnswered, RowEnded and RowNotRun (Row::asserted, Row::owed, '
+            . 'Row::unreproducible, Row::evaluate; NativeLibrary::ABI_GENERATION)',
     ];
 
     /**

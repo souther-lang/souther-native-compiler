@@ -280,10 +280,10 @@ implementations apart by what each is handed first. The layout above allows it e
 
 ## What a library exports, and how it is linked
 
-What the library exports is what the header declares, and nothing else. A row's entry and a boundary
-stay in the object, and so does every symbol one object built here calls in another. The runtime is
-a static archive, which gives a link only what something asks it for, so the link names each
-function a host calls as wanted. By hand, what the driver runs is:
+What the library exports is what the header declares, and nothing else. The entry the compile runs
+a row through and a boundary stay in the object, and so does every symbol one object built here calls
+in another. The runtime is a static archive, which gives a link only what something asks it for, so
+the link names each function a host calls as wanted. By hand, what the driver runs is:
 
     # macOS
     cc -dynamiclib -o libsouther.dylib -Wl,-install_name,@rpath/libsouther.dylib \

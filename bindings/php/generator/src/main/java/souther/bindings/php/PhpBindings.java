@@ -69,7 +69,7 @@ public final class PhpBindings {
      * The version of what generated code calls of the runtime package that this writes against:
      * {@code Binding::PROTOCOL} in {@code bindings/php/runtime}, which a test holds to this.
      */
-    static final int RUNTIME_PROTOCOL = 12;
+    static final int RUNTIME_PROTOCOL = 13;
 
     private final Manifest manifest;
     private final String root;
@@ -1254,7 +1254,7 @@ public final class PhpBindings {
     /**
      * The class an application extends to implement {@code injection}: an abstract {@code apply}
      * typed as the model says, which the library calls in the innermost run going, the way it calls
-     * a closure handed to {@code Injections}.
+     * a closure handed to {@code Injections}, and the behavior's rows ({@link #rows}).
      */
     private void injectedClass(Manifest.Module module, Manifest.Injection injection,
                                BehaviorClass it) throws IOException {
@@ -1274,14 +1274,95 @@ public final class PhpBindings {
         StringBuilder php = header(it.namespace());
         php.append(doc("", "What implements `" + it.key() + "`, which the library asks a host to"
                 + " implement. An instance is handed to what is bound to it, and the library calls"
-                + " its `apply` wherever what was bound to it reaches the behavior."));
+                + " its `apply` wherever what was bound to it reaches the behavior. `examples` lists"
+                + " the rows the behavior is held to, and `evaluate` holds an instance to one."));
         php.append("abstract class ").append(it.className()).append("\n{\n");
         php.append(docLines(List.of("Answers `" + it.key() + "`, in the innermost run going. An"
                 + " exception thrown here comes back out of the call into the library that reached"
                 + " it."), described, answers));
         php.append("    abstract public function apply(").append(String.join(", ", parameters))
-                .append("): ").append(answers.phpType()).append(";\n}\n");
+                .append("): ").append(answers.phpType()).append(";\n");
+        php.append(rows(injection, it));
+        php.append("}\n");
         file(it.namespace(), it.className(), php);
+    }
+
+    /**
+     * What the class of {@code injection} lists its {@code example} rows through and evaluates one
+     * of them through, against an implementation a host hands it: {@code examples}, in the order
+     * the rows are written, and {@code evaluate}, which makes a capability of the implementation as
+     * a run handed it would and calls the row's function with it. Both are final, so a host's own
+     * method of either name is refused where its class is declared, rather than standing in for
+     * what reads the model.
+     *
+     * <p>The rows are written out here, from the manifest, and not asked of the library: a data
+     * provider is called before any test has loaded one. Each is keyed by what it names itself,
+     * since a data provider's key is what a test runner reports a case as; a name the model writes
+     * that is another row's too, which only a row named as an unnamed one is shown can be, is keyed
+     * by where it stands as well, as a key is one case.
+     */
+    private String rows(Manifest.Injection injection, BehaviorClass it) {
+        String behavior = quotedInSingle(it.key());
+        Map<String, Long> shown = injection.examples().stream().collect(Collectors.groupingBy(
+                example -> example.identity().shown(), Collectors.counting()));
+        Set<String> keys = new HashSet<>(shown.keySet());
+        StringBuilder rows = new StringBuilder();
+        for (Manifest.Example example : injection.examples()) {
+            String identity = example.identity().shown();
+            String key = identity;
+            if (shown.get(identity) > 1) {
+                // And again where that is a name too: a key is one case, whatever the rows are named.
+                do {
+                    key = key + " (" + example.at() + ")";
+                } while (!keys.add(key));
+            }
+            String name = example.identity() instanceof Manifest.RowIdentity.Named named
+                    ? "'" + quotedInSingle(named.name()) + "'" : "null";
+            // What the row is made as, and the one thing that kind is made of beside what every
+            // row is: the function running it, or why nothing does.
+            Map.Entry<String, String> made = switch (example.row()) {
+                case Manifest.Row.Asserted asserted -> Map.entry("asserted",
+                        asserted.run().available() instanceof Function run
+                                ? "'" + run.name() + "'" : "null");
+                case Manifest.Row.Owed owed -> Map.entry("owed", "'" + owed.run().name() + "'");
+                case Manifest.Row.Unreproducible unreproducible -> Map.entry("unreproducible",
+                        "'" + quotedInSingle(unreproducible.why()) + "'");
+            };
+            rows.append("            '").append(quotedInSingle(key)).append("' => [")
+                    .append(RUNTIME).append("Row::").append(made.getKey()).append("(")
+                    .append(bindingClass()).append("::class, '").append(behavior).append("', ")
+                    .append(example.at()).append(", ").append(name).append(", '")
+                    .append(quotedInSingle(identity)).append("', ").append(made.getValue())
+                    .append(")],\n");
+        }
+        return """
+
+                    /**
+                     * The `example` rows of `%s`, in the order they are written, each keyed by what it
+                     * names itself and held in an array of one, as a PHPUnit data provider hands a
+                     * test its arguments. Each is evaluated against an implementation by `evaluate`.
+                     *
+                     * @return array<string, array{\\Souther\\Runtime\\Row}>
+                     */
+                    final public static function examples(): array
+                    {
+                        return [
+                %s        ];
+                    }
+
+                    /**
+                     * What `$implementation` answers `$row`, one of the rows `examples` lists, in the
+                     * innermost run going: kept or not kept, as the library holds the answer to the row
+                     * by the language's equality; answered, where the row's answer is owed; ended, where
+                     * the run ended without an answer, the implementation's exception among them; or
+                     * not run, where there is nothing to run. Each evaluation calls the implementation
+                     * afresh, in whatever the world it answers out of holds by then.
+                     */
+                    final public static function evaluate(self $implementation, \\Souther\\Runtime\\Row $row): \\Souther\\Runtime\\RowOutcome
+                    {
+                        return $row->evaluate(%s::class, '%s', $implementation->apply(...));
+                    }
+                """.formatted(it.key(), rows, bindingClass(), behavior);
     }
 
     /**
