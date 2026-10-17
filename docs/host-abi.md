@@ -270,7 +270,13 @@ by the language's equality, and the answer in external form, a string of the sco
 in. One whose answer is owed is `_b_<behavior>_owed_<row>`, which writes the answer alone, since
 the row states nothing it could keep. `<row>` is where the row stands among the behavior's rows,
 from nought. A row the library has no way to compare an answer with, and one the compile could not
-read, are listed with nothing to run. The answer is for a report, and a host that compared it would
+read, are listed with nothing to run. The first is this backend's own shortfall and says nothing of
+the row: the checker refuses a row no answer can keep, as of souther 0.4.1, so a row listed
+with `no_comparison` is one whose stated value this backend has no restatement of at the type the
+behavior answers, or whose answer holds a function, which nothing here compares. A row with nothing
+to run held the implementation to nothing, and a suite that counts only failures passes it
+unseen, so the bindings answer it as an outcome of its own, which a test says it skipped. The
+answer is for a report, and a host that compared it would
 part from the language where the two texts differ and the values do not: a decimal at another
 scale, a set in another order.
 

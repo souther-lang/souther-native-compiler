@@ -255,7 +255,9 @@ it came to. `Answer` is the answer in external form, for a report and nothing el
 ended row came to, as a call of the behavior would (a `*souther.HostError` where the implementation
 returned an error, a `*souther.Abort` where the library ended it); a panic in the implementation is
 raised again. `Failed` is whether the answer did not keep the row or the row ended, and `String`
-says the outcome in one line.
+says the outcome in one line. A row that was `NotRun` has not failed and was not held to anything
+either, so the test below skips it rather than letting it pass: `Kept` is what says the
+implementation kept the row.
 
 Nothing runs every row at once. What an implementation answers from, a database or a clock, is the
 test's, and each subtest runs on a goroutine of its own, so a test opens a run in each:

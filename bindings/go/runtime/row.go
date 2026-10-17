@@ -237,7 +237,9 @@ func (o RowOutcome) Disposition() Disposition { return o.disposition }
 func (o RowOutcome) Kept() bool { return o.disposition == Kept }
 
 // Failed is whether the row was run and its answer did not keep it, or it ended with no answer.
-// A row with nothing to run has not failed, and nor has an owed row that was answered.
+// A row with nothing to run has not failed, and nor has an owed row that was answered. Neither was
+// held to anything either, so a test that passes a row on !Failed alone passes one it never ran:
+// [RowOutcome.Kept] is what says the implementation kept the row.
 func (o RowOutcome) Failed() bool { return o.disposition == NotKept || o.disposition == Ended }
 
 // Answer is the answer in the language's external form, and whether there is one: there is for a

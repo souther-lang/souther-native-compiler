@@ -205,7 +205,7 @@ comes back in its external form beside that, for a report, and the binding never
 states nothing it could keep, `Ended` carries the `Failure` the row ended with where it ended without
 an answer, as a call of the behavior would have (the implementation's own failure is `Failure::Host`,
 a clause the answer breaks is `Failure::Abort`), and `NotRun` says why a row with nothing to run was
-not run. A panic in the implementation is raised again out of `evaluate`, as out of any call. A row
+not run, which held the implementation to nothing and is not a row it kept. A panic in the implementation is raised again out of `evaluate`, as out of any call. A row
 of another behavior is refused with a panic.
 
 There is no call that runs every row. What an implementation answers from is what the test

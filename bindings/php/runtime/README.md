@@ -243,8 +243,10 @@ keyed by what it names itself, which is what a PHPUnit data provider hands a tes
 A row says where it stands (`$at`, from nought), the name it was written with (`$name`, null for a
 row written with none, which a key and `$shown` call `row 2`), and what it is (`$kind`, a `RowKind`):
 `Asserted`, a row stating an answer; `Owed`, a row whose answer is `<?>`; `Unreproducible`, one the
-compile could not read; and `NotComparable`, one stating what the library has no way to hold an
-answer to. The last two have nothing to run, and `$why` says why. The rows are written into the
+compile could not read; and `NotComparable`, one stating what the library has no way to compare an
+answer with. The last two have nothing to run, and `$why` says why. A `RowNotRun` held the
+implementation to nothing, so a test asserting `RowKept`, as the one above does, fails it rather
+than letting it pass unseen; one that would rather skip it says so with `markTestSkipped`. The rows are written into the
 binding from the manifest, so listing them needs no library loaded and no run.
 
 `LabelOf::evaluate($implementation, $row)` is called inside a run. It makes a capability of the
