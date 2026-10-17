@@ -58,7 +58,7 @@ fn over_answering(op: &str, left: &str, right: &str, answers: &str) -> String {
         r#"{{"reached":{{"is":"own","module":"calculation","name":"f"}},"parameters":[{{"name":"a","type":{left}}},{{"name":"b","type":{right}}}],"body":{body}}}"#
     );
     format!(
-        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{{"module":"counting","name":"Amount","by":"amodule","is":"newtype","field":{{"name":"value","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"behaviors":[],"modules":[{{"name":"calculation","publishes":[],"helpers":[{held}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#
+        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{{"module":"counting","name":"Amount","by":"amodule","is":"newtype","field":{{"name":"value","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"behaviors":[],"modules":[{{"name":"calculation","publishes":[],"helpers":[{held}],"values":[],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#
     )
 }
 
@@ -237,7 +237,7 @@ fn a_function_at_a_behaviors_boundary_is_not_a_document_this_driver_reads() {
             r#""behaviors":[{{"module":"m","name":"choose","is":"injected","parameters":{{"named":[{{"name":"f","input":"#,
             r#"{{"fn":{{"takes":[{{"prim":"INT"}}],"answers":{{"prim":"INT"}}}}}}}}]}},"#,
             r#""output":{{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
-            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#,
         ),
         TRANSPORT_VERSION
     );
@@ -341,7 +341,7 @@ fn a_transport_of_an_earlier_shape_is_refused_by_its_version() {
         r#""modules":[{"name":"m","publishes":[],"#,
         r#""helpers":[{"declared":"m.f","parameters":[],"#,
         r#""body":{"core":"int","value":1,"type":{"prim":"INT"},"aborts":[]}}],"#,
-        r#""values":[],"entries":[],"definitions":[],"examples":[]}]}"#,
+        r#""values":[],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}]}"#,
     );
 
     let refused = object_for(earlier).expect_err("a transport of another version");
@@ -364,7 +364,7 @@ fn an_answer_that_is_a_set_crosses_as_its_members() {
             r#"{{"transport":{},"declarations":[],"#,
             r#""behaviors":[{{"module":"m","name":"many","is":"injected","parameters":{{"named":[]}},"#,
             r#""output":{{"is":"setof","element":{{"is":"scalar","scalar":"INT"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
-            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#,
         ),
         TRANSPORT_VERSION
     );
@@ -388,7 +388,7 @@ fn an_answer_with_a_primitive_among_its_cases_is_lowered() {
             r#"{{"is":"declared","declared":"m.NotFound"}}]}},"#,
             r#""cases":[{{"is":"primitive","prim":"INT"}},{{"is":"declared","declared":"m.NotFound"}}],"#,
             r#""form":{{"is":"discriminated","tag":"type","contents":"value"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
-            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#,
         ),
         TRANSPORT_VERSION
     );
@@ -417,7 +417,7 @@ fn a_published_value_reached_at_two_different_types_is_the_halves_disagreeing() 
             r#"{{"is":"body","declared":"m.g","parameters":[],"publication":"kept","#,
             r#""body":{{"core":"call","reaches":{{"is":"publishedvalue","module":"other","name":"x"}},"#,
             r#""arguments":[],"type":{{"prim":"BOOL"}},"aborts":[]}}}}"#,
-            r#"],"examples":[]}}]}}"#,
+            r#"],"examples":[],"unreproducible":[]}}]}}"#,
         ),
         TRANSPORT_VERSION
     );
@@ -444,7 +444,7 @@ fn composed_document() -> String {
             r#"{{"is":"body","declared":"m.inner","parameters":["a"],"publication":"kept","body":{{"core":"read","binding":0,"type":{{"prim":"INT"}},"aborts":[]}}}},"#,
             r#"{{"is":"composed","declared":"m.outer","publication":"published","stages":["#,
             r#"{{"behavior":"m.inner","routing":{{"is":"always"}}}}]}}"#,
-            r#"],"examples":[]}}]}}"#,
+            r#"],"examples":[],"unreproducible":[]}}]}}"#,
         ),
         TRANSPORT_VERSION
     )
@@ -575,7 +575,7 @@ fn an_applys_answer_disagreeing_with_its_functions_own_type_is_the_halves_disagr
             r#""body":{{"core":"apply","function":{{"core":"read","binding":0,"#,
             r#""type":{{"fn":{{"takes":[],"answers":{{"ref":{{"is":"declared","declared":"m.A"}}}}}}}},"aborts":[]}},"#,
             r#""arguments":[],"type":{{"ref":{{"is":"declared","declared":"m.B"}}}},"aborts":[]}}}}],"#,
-            r#""values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#""values":[],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#,
         ),
         TRANSPORT_VERSION
     );
@@ -608,7 +608,7 @@ fn a_published_answer_with_a_date_field_is_written_out() {
             r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
             r#"{{"is":"body","declared":"m.same","parameters":["p"],"publication":"published","#,
             r#""body":{{"core":"read","binding":0,"type":{{"ref":{{"is":"declared","declared":"m.Priced"}}}},"aborts":[]}}}}"#,
-            r#"],"examples":[]}}]}}"#,
+            r#"],"examples":[],"unreproducible":[]}}]}}"#,
         ),
         TRANSPORT_VERSION
     );
@@ -634,7 +634,7 @@ fn answering_a_sum(case_fields: &str, form: &str) -> String {
             r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":["#,
             r#"{{"is":"body","declared":"m.same","parameters":["s"],"publication":"published","#,
             r#""body":{{"core":"read","binding":0,"type":{{"ref":{{"is":"declared","declared":"m.S"}}}},"aborts":[]}}}}"#,
-            r#"],"examples":[]}}]}}"#
+            r#"],"examples":[],"unreproducible":[]}}]}}"#
         ),
         TRANSPORT_VERSION, case_fields, form
     )
@@ -695,7 +695,7 @@ fn a_construction_disagreeing_with_what_its_field_carries_is_the_halves_disagree
             r#""body":{{"core":"construct","declared":"m.P","#,
             r#""values":[{{"core":"int","value":42,"type":{{"prim":"INT"}},"aborts":[]}}],"#,
             r#""type":{{"ref":{{"is":"declared","declared":"m.P"}}}},"aborts":[]}}}}"#,
-            r#"],"examples":[]}}]}}"#,
+            r#"],"examples":[],"unreproducible":[]}}]}}"#,
         ),
         TRANSPORT_VERSION
     );
@@ -729,7 +729,7 @@ fn building(codec: &str, value: &str) -> String {
             r#"{{"is":"body","declared":"m.make","parameters":[],"publication":"kept","#,
             r#""body":{{"core":"construct","declared":"m.P","values":[{}],"#,
             r#""type":{{"ref":{{"is":"declared","declared":"m.P"}}}},"aborts":[]}}}}"#,
-            r#"],"examples":[]}}]}}"#
+            r#"],"examples":[],"unreproducible":[]}}]}}"#
         ),
         TRANSPORT_VERSION, codec, value
     )
@@ -855,7 +855,7 @@ fn an_answer_whose_cases_are_not_what_its_type_descends_to_is_the_halves_disagre
             r#""output":{{"is":"cases","type":{{"union":[{{"is":"declared","declared":"m.A"}},"#,
             r#"{{"is":"declared","declared":"m.B"}}]}},"#,
             r#""cases":[{{"is":"declared","declared":"m.A"}}],"form":{{"is":"enumeration"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
-            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#,
         ),
         TRANSPORT_VERSION
     );
@@ -915,7 +915,7 @@ fn an_answer_written_by_no_case_is_refused_where_it_is_read() {
             r#"{{"is":"declared","declared":"m.NotFound"}}]}},"#,
             r#""cases":[],"#,
             r#""form":{{"is":"discriminated","tag":"type","contents":"value"}}}},"requirements":[],"ensures":{{"at":"none"}}}}],"#,
-            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#,
         ),
         TRANSPORT_VERSION
     );

@@ -12,12 +12,14 @@ import souther.compiler.core.EnsuresEnforcement;
 import souther.compiler.core.ConstraintProjection;
 import souther.compiler.core.Kernel;
 import souther.compiler.diag.Region;
+import souther.compiler.observe.RowIdentity;
 import souther.compiler.core.ValueShape;
 import souther.compiler.program.BehaviorTarget;
 import souther.compiler.program.CheckedAlternativesForm;
 import souther.compiler.program.CheckedBoundaryInput;
 import souther.compiler.program.CheckedBoundaryOutput;
 import souther.compiler.program.CheckedCodecShape;
+import souther.compiler.program.CheckedAssertion;
 import souther.compiler.program.CheckedBehavior;
 import souther.compiler.program.CheckedData;
 import souther.compiler.program.CheckedHelper;
@@ -96,7 +98,7 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 33;
+    public static final int TRANSPORT_VERSION = 34;
 
     private final CheckedProgram program;
 
@@ -676,12 +678,15 @@ public final class ProgramWriter {
             entries.add(entry(entry));
         }
         StringJoiner examples = new StringJoiner(",", "[", "]");
+        StringJoiner unreproducible = new StringJoiner(",", "[", "]");
         for (CheckedBehavior behavior : module.behaviors()) {
             List<CheckedRow> rows = behavior.rows();
             for (int at = 0; at < rows.size(); at++) {
-                String entry = example(behavior, at, rows.get(at));
-                if (entry != null) {
-                    examples.add(entry);
+                CheckedRow row = rows.get(at);
+                if (row.statement() instanceof CheckedRow.NotReproducible why) {
+                    unreproducible.add(unreproducible(behavior, at, row.identity(), why));
+                } else {
+                    examples.add(example(behavior, at, row));
                 }
             }
         }
@@ -699,31 +704,37 @@ public final class ProgramWriter {
                 + ",\"values\":" + values
                 + ",\"entries\":" + entries
                 + ",\"definitions\":" + definitions
-                + ",\"examples\":" + examples + "}";
+                + ",\"examples\":" + examples
+                + ",\"unreproducible\":" + unreproducible + "}";
     }
 
     /**
-     * An entry that runs one of a behavior's rows, or nothing where the row states no values.
+     * An entry that runs one of a behavior's rows, and what the row states of the answer.
      *
      * <p>Numbered by where the row stands among the behavior's rows and not by how many entries
      * have been written, so a row the compile could not read leaves its number unused rather than
      * moving every row after it onto a number that was somebody else's.
      *
-     * <p>A row the compile could not read is the one case with no entry, and it is the one case
-     * where there is nothing to run: the values it would hand over were never read. Every other
-     * row is written.
+     * <p>What it states of the answer is what the checker resolved it to
+     * ({@link CheckedRow.SelfContained#assertion}): a call of the definition computing the stated
+     * value, or the case stated, or that the answer is owed. Not the value the compile observed,
+     * since holding an answer to a row is a question asked where the answer is, and asked of a
+     * computation the language settled rather than of a value this writer would have to read.
      */
     private String example(CheckedBehavior behavior, int at, CheckedRow row) {
         List<CheckedHelper> inputs;
         List<StandsIn> standIns;
+        String expects;
         switch (row.statement()) {
             case CheckedRow.SelfContained it -> {
                 inputs = it.inputDefinitions();
                 standIns = List.of();
+                expects = expects(it.assertion());
             }
             case CheckedRow.WithStandIns it -> {
                 inputs = it.inputDefinitions();
                 standIns = it.standsIn();
+                expects = expects(it.assertion());
             }
             // Its answer is owed, which is a row nothing holds an answer to and still a row whose
             // values were read. The entry runs it against what it states its dependencies answer,
@@ -731,10 +742,10 @@ public final class ProgramWriter {
             case CheckedRow.AnswerOwed it -> {
                 inputs = it.inputDefinitions();
                 standIns = it.standsIn();
+                expects = "{\"is\":\"owed\"}";
             }
-            case CheckedRow.NotReproducible it -> {
-                return null;
-            }
+            case CheckedRow.NotReproducible it -> throw new IllegalArgumentException(
+                    "a row the compile could not read has no entry: " + it.why());
         }
         StringJoiner standing = new StringJoiner(",", "[", "]");
         for (StandsIn standsIn : standIns) {
@@ -742,8 +753,44 @@ public final class ProgramWriter {
         }
         return "{\"behavior\":" + quoted(behavior.name().name())
                 + ",\"at\":" + at
+                + ",\"identity\":" + rowIdentity(row.identity())
                 + ",\"body\":" + applied(behavior, inputs)
-                + ",\"standsIn\":" + standing + "}";
+                + ",\"standsIn\":" + standing
+                + ",\"expects\":" + expects + "}";
+    }
+
+    /** What a row states of the answer, as the checker resolved it. */
+    private String expects(CheckedAssertion assertion) {
+        return switch (assertion) {
+            case CheckedAssertion.Value(CheckedHelper computing) ->
+                    "{\"is\":\"value\",\"value\":" + computed(computing) + "}";
+            case CheckedAssertion.Case(TypeSymbol expected) ->
+                    "{\"is\":\"case\",\"case\":" + identity(expected) + "}";
+        };
+    }
+
+    /**
+     * A row the compile could not read, and why: it hands over no values, so there is nothing to
+     * run, and it is said rather than left out, so that a reader counting a behavior's rows counts
+     * the ones that were written.
+     */
+    private String unreproducible(CheckedBehavior behavior, int at, RowIdentity identity,
+                                  CheckedRow.NotReproducible why) {
+        return "{\"behavior\":" + quoted(behavior.name().name())
+                + ",\"at\":" + at
+                + ",\"identity\":" + rowIdentity(identity)
+                + ",\"why\":" + quoted(why.why().toString()) + "}";
+    }
+
+    /**
+     * What a row names itself: the name it was written with, or which of its behavior's rows it is
+     * where it was written with none. What a report says, and not a key.
+     */
+    private static String rowIdentity(RowIdentity identity) {
+        return switch (identity) {
+            case RowIdentity.Named(String name) -> "{\"named\":" + quoted(name) + "}";
+            case RowIdentity.Unnamed(int ordinal) -> "{\"unnamed\":" + ordinal + "}";
+        };
     }
 
     /**

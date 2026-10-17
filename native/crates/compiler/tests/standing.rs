@@ -28,6 +28,7 @@ fn row(at: usize, a: i64, otherwise: Option<i64>) -> Value {
     json!({
         "behavior": "twice",
         "at": at,
+        "identity": {"unnamed": at + 1},
         "body": {
             "core": "call",
             "reaches": {"is": "behavior", "declared": "m.twice"},
@@ -40,7 +41,8 @@ fn row(at: usize, a: i64, otherwise: Option<i64>) -> Value {
             "name": "lookUp",
             "entries": [{"arguments": [int(1)], "answer": int(21)}],
             "otherwise": otherwise.map(int)
-        }]
+        }],
+        "expects": {"is": "owed"}
     })
 }
 
@@ -169,6 +171,7 @@ fn a_row_of_what_a_host_implements_runs_against_what_it_is_handed() {
     document["modules"][0]["examples"] = json!([{
         "behavior": "lookUp",
         "at": 0,
+        "identity": {"unnamed": 1},
         "body": {
             "core": "call",
             "reaches": {"is": "behavior", "declared": "m.lookUp"},
@@ -176,7 +179,8 @@ fn a_row_of_what_a_host_implements_runs_against_what_it_is_handed() {
             "type": {"prim": "INT"},
             "aborts": []
         },
-        "standsIn": []
+        "standsIn": [],
+        "expects": {"is": "owed"}
     }]);
 
     let into = tempdir().unwrap();

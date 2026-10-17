@@ -48,7 +48,7 @@ fn document() -> String {
         read(0)
     );
     format!(
-        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[],"behaviors":[{{"module":"unran","name":"kept","is":"body","parameters":{{"named":[{{"name":"a","input":{{"is":"scalar","scalar":"INT"}}}}]}},"output":{{"is":"scalar","scalar":"INT"}},"ensures":{{"at":"none"}},"requirements":[]}}],"modules":[{{"name":"unran","publishes":[],"helpers":[{held}],"values":[],"entries":[],"definitions":[{{"is":"body","declared":"unran.kept","parameters":["a"],"publication":"published","body":{called}}}],"examples":[]}}]}}"#
+        r#"{{"transport":{TRANSPORT_VERSION},"declarations":[],"behaviors":[{{"module":"unran","name":"kept","is":"body","parameters":{{"named":[{{"name":"a","input":{{"is":"scalar","scalar":"INT"}}}}]}},"output":{{"is":"scalar","scalar":"INT"}},"ensures":{{"at":"none"}},"requirements":[]}}],"modules":[{{"name":"unran","publishes":[],"helpers":[{held}],"values":[],"entries":[],"definitions":[{{"is":"body","declared":"unran.kept","parameters":["a"],"publication":"published","body":{called}}}],"examples":[],"unreproducible":[]}}]}}"#
     )
 }
 

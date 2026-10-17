@@ -43,10 +43,10 @@ public final class ManifestReader {
     public static final String FORMAT = "souther-native-interface";
 
     /** The version of what a manifest says that this reads. */
-    public static final int VERSION = 15;
+    public static final int VERSION = 16;
 
     /** The ABI generation the functions a manifest names answer to, which this reads. */
-    public static final int ABI = 12;
+    public static final int ABI = 13;
 
     private ManifestReader() {
     }
@@ -198,7 +198,7 @@ public final class ManifestReader {
     }
 
     private static final Set<String> REASONS = Set.of("no_representation", "no_value",
-            "no_discriminator");
+            "no_discriminator", "no_comparison");
 
     private static final Decoder<JsonNode, String> REASON = string().flatMap(written ->
             REASONS.contains(written) ? Result.ok(written)
@@ -383,6 +383,27 @@ public final class ManifestReader {
             field("takes", list(PARAMETER)),
             field("answers", WORD)).strict(Implementation::new);
 
+    private static final Decoder<JsonNode, Manifest.RowIdentity> ROW_IDENTITY = oneOf(
+            strict(field("named", string()).asDecoder()
+                    .<Manifest.RowIdentity>map(Manifest.RowIdentity.Named::new), Set.of("named")),
+            strict(field("unnamed", int_()).asDecoder()
+                    .<Manifest.RowIdentity>map(Manifest.RowIdentity.Unnamed::new),
+                    Set.of("unnamed")));
+
+    private static final Decoder<JsonNode, Manifest.Row> ROW = oneOf(
+            strict(field("asserted", reach(FUNCTION)).asDecoder()
+                    .<Manifest.Row>map(Manifest.Row.Asserted::new), Set.of("asserted")),
+            strict(field("owed", FUNCTION).asDecoder()
+                    .<Manifest.Row>map(Manifest.Row.Owed::new), Set.of("owed")),
+            strict(field("unreproducible", string()).asDecoder()
+                    .<Manifest.Row>map(Manifest.Row.Unreproducible::new),
+                    Set.of("unreproducible")));
+
+    private static final Decoder<JsonNode, Manifest.Example> EXAMPLE = combine(
+            field("at", int_()),
+            field("identity", ROW_IDENTITY),
+            field("row", ROW)).strict(Manifest.Example::new);
+
     private static Decoder<JsonNode, Injection> injection(Zip zip) {
         return combine(
                 field("name", string()),
@@ -390,11 +411,13 @@ public final class ManifestReader {
                 field("answers", TYPE),
                 field("signature", SIGNATURE),
                 field("implementation", IMPLEMENTATION),
-                field("implement", string()))
-                .strict((name, parameters, answers, signature, implementation, implement) ->
+                field("implement", string()),
+                field("examples", list(EXAMPLE)))
+                .strict((name, parameters, answers, signature, implementation, implement,
+                         examples) ->
                         new Injection(name, parameters, answers, zip.crossings(
                                 parameters.stream().map(NamedParameter::type).toList(), answers,
-                                signature), implementation, implement));
+                                signature), implementation, implement, examples));
     }
 
     private static Decoder<JsonNode, PublishedValue> value(Zip zip) {

@@ -266,6 +266,15 @@ impl<'a> Coherent<'a> {
                     stands_in_for_what_it_requires(&owner, &behavior, example, &locals, &targets)?;
                     (owner, Vec::new())
                 }
+                // Of the type the row writes, and not held to what the behavior answers: a row may
+                // state a value of another type, and the type it states is part of what it states.
+                Owner::Expected(example) => {
+                    let behavior = format!("{}.{}", body.carrier().module(), example.behavior);
+                    (
+                        format!("what row {} of {behavior} states it answers", example.at),
+                        Vec::new(),
+                    )
+                }
                 Owner::StoodIn { example, at } => {
                     let behavior = format!("{}.{}", body.carrier().module(), example.behavior);
                     let stood = &example.stands_in[at];

@@ -30,6 +30,7 @@ mod ordering;
 mod patterns;
 mod replaced;
 mod restating;
+mod rows;
 mod sets;
 mod specialize;
 pub mod transport;
@@ -733,6 +734,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             Owner::Entry(_)
             | Owner::Definition(_)
             | Owner::Example(_)
+            | Owner::Expected(_)
             | Owner::StoodIn { .. }
             | Owner::Invariant { .. }
             | Owner::Ensures { .. } => {}
@@ -757,6 +759,8 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             entries: value_entries,
             definitions: _,
             examples,
+            // A row the compile could not read has nothing to run, and no entry.
+            unreproducible: _,
         } = written;
         for entry in value_entries {
             // Exported under value_symbol, which is the one thing about a value ever addressed
@@ -965,6 +969,9 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             Owner::Invariant { .. } | Owner::Ensures { .. } => {}
             // Lowered into the function answering for the dependency, below.
             Owner::StoodIn { .. } => {}
+            // Lowered into what holds the row's answer to it, below, where the row is one a host
+            // runs.
+            Owner::Expected(_) => {}
         }
     }
 
@@ -992,6 +999,63 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             )?;
             accepted(module.define_function(stood.answering(&row, at), &mut context));
         }
+    }
+
+    // What holds the answer of a row of a behavior a host implements to what the row states, where
+    // the row states an answer: the row run against the capability it is handed, and the answer
+    // compared with what the checker says the row states. A row whose stated value the object does
+    // not hold as a value of what the behavior answers has no comparison here, and says so on the
+    // surface rather than refusing the object it is a row of.
+    let mut keeping: HashMap<String, Result<FuncId, manifest::Refusal>> = HashMap::new();
+    for body in runs.bodies() {
+        let Owner::Example(example) = body.owner else {
+            continue;
+        };
+        let constructs = format!("{}.{}", body.carrier().module(), example.behavior);
+        let target = targets.reached(&constructs);
+        if target.is != transport::Answers::Injected {
+            continue;
+        }
+        let answers = target.answers();
+        let comparable = match &example.expects {
+            transport::Expects::Owed => continue,
+            transport::Expects::Value { value } => {
+                restating::restatement(value.ty(), &answers).is_ok()
+            }
+            transport::Expects::Case { .. } => says_its_case(&answers),
+        };
+        let row = example_symbol(body.carrier().module(), &example.behavior, example.at);
+        if !comparable {
+            index::unique(
+                &mut keeping,
+                row,
+                Err(manifest::Refusal {
+                    reason: manifest::Reason::NoComparison,
+                    path: vec![manifest::Step::Answers],
+                }),
+            );
+            continue;
+        }
+        let runs_the_row = *entries
+            .get(&row)
+            .expect("every row was declared an entry before any was defined");
+        let signature = keeping_signature(&answers, call_conv)?;
+        let id =
+            accepted(module.declare_function(&format!("{row}$keeps"), Linkage::Local, &signature));
+        context.clear();
+        context.func = Function::with_name_signature(UserFuncName::default(), signature);
+        define_keeping(
+            &mut context.func,
+            &mut shapes,
+            runs_the_row,
+            &example.expects,
+            &answers,
+            frontend,
+            &lowerings.at(body.carrier()),
+            &mut module,
+        )?;
+        accepted(module.define_function(id, &mut context));
+        index::unique(&mut keeping, row, Ok(id));
     }
 
     // A composition has no body: it applies behaviors by name, and nothing it does is resolved
@@ -1236,6 +1300,54 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         })
         .collect();
     host::define_injections(&mut emitting, &mut surface, &mut crossings, &injections)?;
+    // What a host runs each row of a behavior it implements through, against an implementation of
+    // its own, and every row of one, whether or not there is anything to run.
+    let mut rows = Vec::new();
+    for written in &program.modules {
+        for example in &written.examples {
+            let target = targets.reached(&format!("{}.{}", written.name, example.behavior));
+            if defined[&target.declared()] != Defined::ByTheHost {
+                continue;
+            }
+            let entry = example_symbol(&written.name, &example.behavior, example.at);
+            let runs = match &example.expects {
+                transport::Expects::Owed => rows::Runs::Owed(
+                    *entries
+                        .get(&entry)
+                        .expect("every row was declared an entry before any was defined"),
+                ),
+                transport::Expects::Value { .. } | transport::Expects::Case { .. } => {
+                    rows::Runs::Asserted(keeping.remove(&entry).expect(
+                        "every row of a behavior a host implements that states an answer was \
+                         given what holds an answer to it, or why nothing does",
+                    ))
+                }
+            };
+            rows.push(rows::Row {
+                module: &written.name,
+                behavior: &example.behavior,
+                at: example.at,
+                identity: &example.identity,
+                output: &target.output,
+                runs,
+            });
+        }
+        for unread in &written.unreproducible {
+            let target = targets.reached(&format!("{}.{}", written.name, unread.behavior));
+            if defined[&target.declared()] != Defined::ByTheHost {
+                continue;
+            }
+            rows.push(rows::Row {
+                module: &written.name,
+                behavior: &unread.behavior,
+                at: unread.at,
+                identity: &unread.identity,
+                output: &target.output,
+                runs: rows::Runs::Unreproducible(&unread.why),
+            });
+        }
+    }
+    rows::define(&mut emitting, &mut codecs, &mut surface, &rows)?;
     // What a host builds and reads every list above through, and calls and makes every function
     // value above through.
     host::define_crossings(&mut emitting, &mut surface, &crossings)?;
@@ -3222,6 +3334,86 @@ fn define_stand_in(
             builder.ins().return_(&[missed]);
         }
     }
+
+    builder.seal_block(abort);
+    builder.switch_to_block(abort);
+    let status = builder.block_params(abort)[0];
+    builder.ins().return_(&[status]);
+
+    builder.finalize(frontend);
+    Ok(())
+}
+
+/// What holds the answer of a row of a behavior a host implements to what the row states: the
+/// capabilities the row's entry is handed, and room for whether the answer keeps the row, then room
+/// for the answer, answering a status as every generated function does.
+fn keeping_signature(answers: &Ty, call_conv: CallConv) -> Lowered<ir::Signature> {
+    let mut signature = signature_over(&[], answers, call_conv)?;
+    signature.params.insert(0, AbiParam::new(POINTER));
+    signature.params.insert(0, AbiParam::new(POINTER));
+    Ok(signature)
+}
+
+/// The row run through `runs_the_row`, handed the capabilities this is handed, and its answer held
+/// to `expects`: whether it is the value the checker says the row states, by the language's
+/// equality once that value is restated as what the behavior answers ([`restate`]), or whether it
+/// is the case the row states. Where the run ends without an answer, its status goes back as it
+/// came and neither room is written.
+///
+/// Comparing where the answer is, and not in a host: what being the same value means — a set is its
+/// elements, a decimal the amount it stands for — is the language's, and the equality a stand-in's
+/// table is looked up with is already that.
+#[allow(clippy::too_many_arguments)]
+fn define_keeping(
+    function: &mut Function,
+    shapes: &mut FunctionBuilderContext,
+    runs_the_row: FuncId,
+    expects: &transport::Expects,
+    answers: &Ty,
+    frontend: TargetFrontendConfig,
+    lowering: &Lowering,
+    module: &mut ObjectModule,
+) -> Lowered<()> {
+    let mut builder = FunctionBuilder::new(function, shapes);
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+    let given = builder.block_params(entry).to_vec();
+    let (requirements, kept, out) = (given[0], given[1], given[2]);
+
+    let abort = builder.create_block();
+    builder.append_block_param(abort, types::I32);
+    let mut bindings = Bindings::default();
+
+    let held = machine_type(answers)?;
+    let answer = call_reached(
+        &mut builder,
+        module,
+        abort,
+        runs_the_row,
+        held,
+        &[requirements],
+    );
+    let keeps = match expects {
+        transport::Expects::Value { value } => {
+            let stated = lower(&mut builder, lowering, module, &mut bindings, abort, value)?;
+            let stated = restate(&mut builder, lowering, module, stated, value.ty(), answers)?;
+            equality::equal(&mut builder, lowering, module, answers, answer, stated)?
+        }
+        transport::Expects::Case { case } => {
+            let which = Tagged::of(answer, answers).which(&mut builder);
+            let expected = token_of(&mut builder, lowering.declared, module, case)?;
+            builder.ins().icmp(IntCC::Equal, which, expected)
+        }
+        transport::Expects::Owed => {
+            unreachable!("a row whose answer is owed states nothing for an answer to keep")
+        }
+    };
+    builder.ins().store(TRUSTED, keeps, kept, 0);
+    builder.ins().store(TRUSTED, answer, out, 0);
+    let ok = builder.ins().iconst(types::I32, i64::from(ANSWERED));
+    builder.ins().return_(&[ok]);
 
     builder.seal_block(abort);
     builder.switch_to_block(abort);

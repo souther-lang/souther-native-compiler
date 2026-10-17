@@ -72,7 +72,7 @@ fn program(declarations: Value, helpers: Value, publishes: Value) -> Value {
         "behaviors": [],
         "modules": [{
             "name": "m", "publishes": publishes, "helpers": helpers,
-            "values": [], "entries": [], "definitions": [], "examples": []
+            "values": [], "entries": [], "definitions": [], "examples": [], "unreproducible": []
         }]
     })
 }

@@ -2,7 +2,7 @@
 //!
 //! Written as types and not built as JSON, so that what a manifest of one version says is a thing
 //! the compiler holds this code to. A field renamed here is a change to these types, and the
-//! fixture `tests/interface-v15.json` is what version 15 is: every manifest this writes is read
+//! fixture `tests/interface-v16.json` is what version 16 is: every manifest this writes is read
 //! back by these same types, which refuse a member they do not name.
 //!
 //! [`VERSION`] moves when what a manifest says is read differently. What the functions it names
@@ -119,6 +119,13 @@ pub(crate) const MOVES: &[(u32, &str)] = &[
          library for (`souther_abi_generation`) before it reads anything, and no generated code \
          calls them; at ABI generation 9, where a temporal crosses as the numbers it means, a \
          scope takes the place of a mark, and the rooms a host lays out have no fields",
+    ),
+    (
+        16,
+        "a behavior a host implements lists its rows (`examples`): one stating an answer, run \
+         through a function that says whether the answer keeps it, one whose answer is owed, run \
+         through one that does not, and one the compile could not read, with why and nothing to \
+         run; at ABI generation 13",
     ),
 ];
 
@@ -426,6 +433,7 @@ impl std::fmt::Display for Refusal {
             Reason::NoRepresentation => "no representation for a host",
             Reason::NoValue => "no value to hand over",
             Reason::NoDiscriminator => "a union with nothing to say which case it is",
+            Reason::NoComparison => "no comparison with what is answered",
         })?;
         for (at, step) in self.path.iter().enumerate() {
             f.write_str(if at == 0 { ", at " } else { ", " })?;
@@ -458,6 +466,9 @@ pub(crate) enum Reason {
     /// A union no declaration names, which a host would be handed with nothing to say which case
     /// it is: only a behavior's answer is told its case ([`Answer::union`]).
     NoDiscriminator,
+    /// A value a row states that the object does not hold as a value of what the behavior answers,
+    /// so it has nothing to compare an answer with by the language's equality.
+    NoComparison,
 }
 
 /// One step into what a function hands over or is handed.
@@ -619,6 +630,49 @@ pub(crate) struct Injection {
     /// for a function every time it is handed to C (PHP's FFI keeps each until the request ends)
     /// would otherwise grow with every capability it makes.
     pub implement: String,
+    /// Its rows, in the order they are written, each with what a host runs it through against a
+    /// capability made through `implement`, where there is anything to run.
+    pub examples: Vec<Example>,
+}
+
+/// One row of a behavior a host implements.
+///
+/// Three kinds and not one with fields that may be missing, so that a row whose answer is owed is
+/// not something a binding can read a verdict off, and a row with nothing to run is not something
+/// it can run.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Example {
+    /// Where the row stands among the behavior's rows, counted from nought: what its function is
+    /// spelt under, and not a key, since a row added above it moves it.
+    pub at: usize,
+    pub identity: RowIdentity,
+    pub row: Row,
+}
+
+/// What a row names itself: the name it was written with, or which of its behavior's rows it is
+/// where it was written with none, counted from one as a report shows it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub(crate) enum RowIdentity {
+    Named(String),
+    Unnamed(u32),
+}
+
+/// What a host does with one row.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub(crate) enum Row {
+    /// The row states an answer. Run through a function of `_b_<behavior>_example_<row>`'s kind,
+    /// which writes whether the answer keeps the row and the answer in external form, or, where the
+    /// object cannot hold an answer to what the row states, why not.
+    Asserted(Reach<Function>),
+    /// The row's answer is owed. Run through a function of `_b_<behavior>_owed_<row>`'s kind,
+    /// which writes the answer alone: there is nothing an answer keeps or does not.
+    Owed(Function),
+    /// The compile could not read the row, so it hands over no values and there is nothing to
+    /// run; why, as the checker says it.
+    Unreproducible(String),
 }
 
 /// What a published behavior takes, as the model says it.
@@ -946,19 +1000,19 @@ mod tests {
         }
     }
 
-    /// What version 15 is. Read by these types, which refuse a member they do not name, and
+    /// What version 16 is. Read by these types, which refuse a member they do not name, and
     /// written back the same: a field renamed or a kind reshaped here stops matching the fixture
     /// the Java half's test also holds a written manifest to.
-    const V15: &str = include_str!("../tests/interface-v15.json");
+    const V16: &str = include_str!("../tests/interface-v16.json");
 
     #[test]
-    fn version_fifteen_is_read_and_written_back_as_it_is() {
-        let read: Manifest = serde_json::from_str(V15).expect("version 15 reads");
+    fn version_sixteen_is_read_and_written_back_as_it_is() {
+        let read: Manifest = serde_json::from_str(V16).expect("version 16 reads");
         assert_eq!(read.format, FORMAT);
         assert_eq!(read.version, VERSION);
         let mut written = serde_json::to_string_pretty(&read).unwrap();
         written.push('\n');
-        assert_eq!(written, V15);
+        assert_eq!(written, V16);
     }
 
     /// A surface an object of an earlier release carries is refused as that, and not as whichever
