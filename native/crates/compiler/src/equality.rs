@@ -543,10 +543,17 @@ mod tests {
             (json!({"union": [{"is": "primitive", "prim": "INT"}]}), true),
             (function.clone(), false),
             (json!({"list": function.clone()}), false),
-            (json!({"map": {"key": {"prim": "STRING"}, "value": function.clone()}}), false),
+            (
+                json!({"map": {"key": {"prim": "STRING"}, "value": function.clone()}}),
+                false,
+            ),
             (json!({"tuple": [{"prim": "INT"}, function]}), false),
         ] {
-            assert_eq!(comparable(&ty(written.clone()), &declared), compares, "{written}");
+            assert_eq!(
+                comparable(&ty(written.clone()), &declared),
+                compares,
+                "{written}"
+            );
         }
     }
 }
