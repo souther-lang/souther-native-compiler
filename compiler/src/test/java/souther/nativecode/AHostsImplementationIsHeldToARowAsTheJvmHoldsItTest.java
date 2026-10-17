@@ -32,7 +32,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * own {@link CheckedRow.SelfContained#holds}. What is compared is the two verdicts. The answers are
  * chosen where a comparison made by anything but the language's equality would part from it: a
  * decimal at another scale, a set and a map in another order, a case stated with nothing under it
- * and answered with something, and answers that do not keep the row beside each that does.
+ * and answered with something, a primitive carried into a union no declaration names, and answers
+ * that do not keep the row beside each that does.
  *
  * <p>The implementation reads what it answers out of the language's external form through the
  * answer type's own decoder, so the value the library holds is one the library built and not one
@@ -41,7 +42,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class AHostsImplementationIsHeldToARowAsTheJvmHoldsItTest {
 
     private static final String HELD = """
-            module held exposing ( Price, Tags, Found, Missing, Outcome, priced, tagged, looked, counted )
+            module held exposing ( Price, Tags, Found, Missing, Outcome, priced, tagged, looked, numbered,
+                                   counted )
 
             data Price = { amount: Decimal }
             data Tags = { tags: Set<Int>, by: Map<String, Int> }
@@ -52,6 +54,7 @@ class AHostsImplementationIsHeldToARowAsTheJvmHoldsItTest {
             behavior priced : (n: Int) -> Price
             behavior tagged : (n: Int) -> Tags
             behavior looked : (n: Int) -> Outcome
+            behavior numbered : (n: Int) -> Int | Missing
             behavior counted : (n: Int) -> Int
 
             example priced
@@ -64,6 +67,10 @@ class AHostsImplementationIsHeldToARowAsTheJvmHoldsItTest {
                 | "found, whatever it holds" : (1) -> Found
                 | "found with what it holds" : (2) -> Found { id = 2 }
                 | "missing" : (3) -> Missing
+
+            example numbered
+                | "a number where a union is answered" : (1) -> 1
+                | "missing where a number could be" : (2) -> Missing
 
             example counted
                 | "three" : (1) -> 3
@@ -115,6 +122,11 @@ class AHostsImplementationIsHeldToARowAsTheJvmHoldsItTest {
                 new Answer("looked", 2, "{\"type\":\"Missing\"}", new ObservedValue.Unit(missing)),
                 new Answer("looked", 2, "{\"type\":\"Found\",\"id\":2}",
                         foundWith(found, 2)),
+                new Answer("numbered", 0, "1", new ObservedValue.Integer(1)),
+                new Answer("numbered", 0, "2", new ObservedValue.Integer(2)),
+                new Answer("numbered", 0, "Missing", new ObservedValue.Unit(missing)),
+                new Answer("numbered", 1, "Missing", new ObservedValue.Unit(missing)),
+                new Answer("numbered", 1, "2", new ObservedValue.Integer(2)),
                 new Answer("counted", 0, "3", new ObservedValue.Integer(3)),
                 new Answer("counted", 0, "4", new ObservedValue.Integer(4)));
 
@@ -163,6 +175,7 @@ class AHostsImplementationIsHeldToARowAsTheJvmHoldsItTest {
             #include <inttypes.h>
             #include <stdint.h>
             #include <stdio.h>
+            #include <stdlib.h>
             #include <string.h>
             #include "souther.h"
 
@@ -189,6 +202,23 @@ class AHostsImplementationIsHeldToARowAsTheJvmHoldsItTest {
             #define answer_priced answer_Price
             #define answer_tagged answer_Tags
             #define answer_looked answer_Outcome
+
+            /* A number carried into the union, or the one value of Missing. */
+            static souther_status answer_numbered(void *userdata, int64_t n, souther_value *out) {
+                (void) n;
+                const char *written = userdata;
+                if (strcmp(written, "Missing") != 0) {
+                    *out = souther_case_int_make(strtoll(written, NULL, 10));
+                    return 0;
+                }
+                souther_decoded made = NULL;
+                souther_status status = souther@_m_held_t_Missing_construct(&made);
+                if (status != 0) {
+                    return status;
+                }
+                *out = souther_decoded_value(made);
+                return 0;
+            }
 
             static souther_status answer_counted(void *userdata, int64_t n, int64_t *out) {
                 (void) n;
