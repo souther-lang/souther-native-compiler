@@ -261,16 +261,28 @@ what it threw to throw again where the outermost call returns, since a host's ex
 unwind through generated code. Anything else it answers is `INJECTION_PROTOCOL_VIOLATION` by the
 time a caller sees it. A call through a requirement bound to null answers `INJECTION_UNBOUND`.
 
+Each `example` row of such a behavior is a function too, which holds what a host's implementation
+answers to the row. Each takes the capabilities a published behavior is called with, the behavior's
+own capability at index 0. A row stating an answer is `_b_<behavior>_example_<row>`, taking room for
+a `Bool` and room for a `souther_string`: on `ANSWERED` it writes whether the answer keeps the row,
+decided by the language's equality in the library, and the answer in external form, which is for a
+report and not for a host to compare. A row whose answer is owed is `_b_<behavior>_owed_<row>`,
+taking room for the answer alone, since the row states nothing it could keep. On any other status
+neither writes anything. `<row>` is where the row stands among the behavior's rows, from nought. The
+manifest lists the rows under the behavior with what each names itself, and says of a row stating
+what the library cannot hold an answer to, and of one the compile could not read, that there is
+nothing to run.
+
 PHP's FFI makes a new C entry each time a closure is handed to C and keeps it until the request
 ends, so a runtime there makes the function pointer once for a behavior and tells its
 implementations apart by what each is handed first. The layout above allows it everywhere.
 
 ## What a library exports, and how it is linked
 
-What the library exports is what the header declares, and nothing else. A row's entry and a boundary
-stay in the object, and so does every symbol one object built here calls in another. The runtime is
-a static archive, which gives a link only what something asks it for, so the link names each
-function a host calls as wanted. By hand, what the driver runs is:
+What the library exports is what the header declares, and nothing else. The entry the compile runs
+a row through and a boundary stay in the object, and so does every symbol one object built here calls
+in another. The runtime is a static archive, which gives a link only what something asks it for, so
+the link names each function a host calls as wanted. By hand, what the driver runs is:
 
     # macOS
     cc -dynamiclib -o libsouther.dylib -Wl,-install_name,@rpath/libsouther.dylib \
