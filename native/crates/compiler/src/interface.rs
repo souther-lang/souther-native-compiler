@@ -577,7 +577,7 @@ impl Surface {
     }
 
     /// A row of `behavior`, which a host implements and which [`Surface::injection`] already put
-    /// here, and what a host runs it through.
+    /// here, and what a host runs it through. A behavior's rows come here in the order they stand.
     pub(crate) fn example(
         &mut self,
         module: &str,
@@ -608,7 +608,6 @@ impl Surface {
         injection
             .examples
             .push(manifest::Example { at, identity, row });
-        injection.examples.sort_by_key(|it| it.at);
     }
 
     /// A value a module of this object publishes, and what a host reads it through, or why nothing

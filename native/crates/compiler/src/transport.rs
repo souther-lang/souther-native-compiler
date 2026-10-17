@@ -232,7 +232,19 @@ impl Program {
                     )
                 })
         });
-        let modules = self.modules.iter().flat_map(|written| {
+        // What a row states of the answer is run only where a host's answer is held to it, in the
+        // rows of a behavior a host implements. A row of a behavior with a body is held to what it
+        // states by whoever ran it, so its stated value is nobody's to run here, and checking and
+        // specializing it would refuse an object over a value nothing calls.
+        let held: std::rc::Rc<std::collections::HashSet<String>> = std::rc::Rc::new(
+            self.behaviors
+                .iter()
+                .filter(|it| it.is == Answers::Injected)
+                .map(|it| it.declared())
+                .collect(),
+        );
+        let modules = self.modules.iter().flat_map(move |written| {
+            let held = std::rc::Rc::clone(&held);
             let Module {
                 name,
                 // What the module publishes of its data names declarations and holds no body.
@@ -279,8 +291,12 @@ impl Program {
                         })
                     });
                 let expected = match &it.expects {
-                    Expects::Value { value } => Some(Body::at(module, Owner::Expected(it), value)),
-                    Expects::Case { .. } | Expects::Owed => None,
+                    Expects::Value { value }
+                        if held.contains(&format!("{module}.{}", it.behavior)) =>
+                    {
+                        Some(Body::at(module, Owner::Expected(it), value))
+                    }
+                    Expects::Value { .. } | Expects::Case { .. } | Expects::Owed => None,
                 };
                 std::iter::once(Body::at(module, Owner::Example(it), &it.body))
                     .chain(stood)

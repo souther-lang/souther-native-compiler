@@ -1013,7 +1013,10 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
         };
         let constructs = format!("{}.{}", body.carrier().module(), example.behavior);
         let target = targets.reached(&constructs);
-        if target.is != transport::Answers::Injected {
+        // The rows a host is held to are the rows the surface lists below: of a behavior a host
+        // implements and this document declares. One declared by another build is reached through
+        // a capability as well, and its rows are that build's to list.
+        if defined[&target.declared()] != Defined::ByTheHost {
             continue;
         }
         let answers = target.answers();
@@ -1021,6 +1024,7 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             transport::Expects::Owed => continue,
             transport::Expects::Value { value } => {
                 restating::restatement(value.ty(), &answers).is_ok()
+                    && equality::comparable(&answers, lowerings.at(body.carrier()).declared)
             }
             transport::Expects::Case { .. } => says_its_case(&answers),
         };
@@ -1347,6 +1351,9 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             });
         }
     }
+    // A behavior's rows are listed where they stand among its rows, the unreproducible among the
+    // rest; the sort is stable, so the rows of one behavior keep to its own order.
+    rows.sort_by_key(|it| it.at);
     rows::define(&mut emitting, &mut codecs, &mut surface, &rows)?;
     // What a host builds and reads every list above through, and calls and makes every function
     // value above through.
