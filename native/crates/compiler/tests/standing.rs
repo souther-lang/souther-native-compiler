@@ -28,6 +28,7 @@ fn row(at: usize, a: i64, otherwise: Option<i64>) -> Value {
     json!({
         "behavior": "twice",
         "at": at,
+        "identity": {"unnamed": at + 1},
         "body": {
             "core": "call",
             "reaches": {"is": "behavior", "declared": "m.twice"},
@@ -40,7 +41,8 @@ fn row(at: usize, a: i64, otherwise: Option<i64>) -> Value {
             "name": "lookUp",
             "entries": [{"arguments": [int(1)], "answer": int(21)}],
             "otherwise": otherwise.map(int)
-        }]
+        }],
+        "expects": {"is": "owed"}
     })
 }
 
@@ -127,31 +129,49 @@ fn a_row_standing_in_for_other_than_what_its_behavior_requires_is_refused() {
     );
 }
 
-const UNANSWERED: &str = r#"
+const ANSWERED_BY_WHAT_IS_HANDED: &str = r#"
 #include <inttypes.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 
-extern uint32_t looked(int64_t *) __asm__("PREFIXsouther@.m.lookUp$example$0");
+typedef struct { void (*invoke)(void); const void *environment; } capability;
+
+extern uint32_t looked(const capability *const *, int64_t *)
+    __asm__("PREFIXsouther@.m.lookUp$example$0");
+
+static uint32_t implemented(const void *environment, int64_t a, int64_t *out) {
+    (void) environment;
+    *out = a * 7;
+    return 0;
+}
+
+static const capability implementation = {(void (*)(void)) implemented, NULL};
+static const capability *const handed[] = {&implementation};
 
 int main(void) {
     int64_t answer = -1;
-    uint32_t status = looked(&answer);
+    uint32_t status = looked(NULL, &answer);
+    printf("%u %" PRId64 "\n", status, answer);
+    answer = -1;
+    status = looked(handed, &answer);
     printf("%u %" PRId64 "\n", status, answer);
     return 0;
 }
 "#;
 
 /// A row of a behavior a host implements states what the host's implementation answers, and
-/// nothing in the object answers it: the behavior has no symbol, and the row stands in with no
-/// capability of the behavior it is a row of. So its entry answers `INJECTION_UNBOUND`, as a call
-/// handed nothing for it does, rather than calling something no object defines.
+/// nothing in the object answers it: the behavior has no symbol. So its entry is handed the
+/// capability of what answers it, first, as a published behavior's symbol is handed what it was
+/// constructed with, and runs against that; handed nothing for it, it answers `INJECTION_UNBOUND`,
+/// as any call handed nothing does, rather than calling something no object defines.
 #[test]
-fn a_row_of_what_a_host_implements_answers_unbound() {
+fn a_row_of_what_a_host_implements_runs_against_what_it_is_handed() {
     let mut document: Value = serde_json::from_str(ENSURES).unwrap();
     document["modules"][0]["examples"] = json!([{
         "behavior": "lookUp",
         "at": 0,
+        "identity": {"unnamed": 1},
         "body": {
             "core": "call",
             "reaches": {"is": "behavior", "declared": "m.lookUp"},
@@ -159,15 +179,16 @@ fn a_row_of_what_a_host_implements_answers_unbound() {
             "type": {"prim": "INT"},
             "aborts": []
         },
-        "standsIn": []
+        "standsIn": [],
+        "expects": {"is": "owed"}
     }]);
 
     let into = tempdir().unwrap();
     let object = into.path().join("m.o");
     fs::write(&object, object_for(&document.to_string()).unwrap()).unwrap();
     let harness = into.path().join("harness.c");
-    fs::write(&harness, support::harness(UNANSWERED)).unwrap();
-    let executable = into.path().join("unanswered");
+    fs::write(&harness, support::harness(ANSWERED_BY_WHAT_IS_HANDED)).unwrap();
+    let executable = into.path().join("answered");
     let linked = Command::new("cc")
         .arg("-o")
         .arg(&executable)
@@ -185,6 +206,43 @@ fn a_row_of_what_a_host_implements_answers_unbound() {
 
     assert_eq!(
         String::from_utf8(run.stdout).unwrap(),
-        format!("{} -1\n", souther_native_abi::INJECTION_UNBOUND)
+        format!("{} -1\n0 7\n", souther_native_abi::INJECTION_UNBOUND)
     );
+}
+
+/// A row the compile could not read stands at a place among its behavior's rows as a row it read
+/// does, and is of a behavior its module declares: one claiming the place of another, or naming a
+/// behavior the module does not declare, is the two halves disagreeing.
+#[test]
+fn a_row_the_compile_could_not_read_is_held_to_its_place_and_its_behavior() {
+    let unread = |behavior: &str, at: usize| {
+        json!({
+            "behavior": behavior,
+            "at": at,
+            "identity": {"unnamed": at + 1},
+            "why": "a value it cannot build"
+        })
+    };
+    for (unreproducible, refusal) in [
+        (
+            json!([unread("twice", 0)]),
+            "has two rows both written at 0",
+        ),
+        (
+            json!([unread("twice", 1), unread("twice", 1)]),
+            "has two rows both written at 1",
+        ),
+        (
+            json!([unread("thrice", 1)]),
+            "a behavior it does not declare",
+        ),
+    ] {
+        let mut document: Value = serde_json::from_str(ENSURES).unwrap();
+        document["modules"][0]["examples"] = json!([row(0, 1, None)]);
+        document["modules"][0]["unreproducible"] = unreproducible;
+
+        let refused = object_for(&document.to_string()).expect_err(refusal);
+
+        assert!(refused.to_string().contains(refusal), "{refused}");
+    }
 }

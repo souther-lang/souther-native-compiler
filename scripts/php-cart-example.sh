@@ -49,6 +49,9 @@ copy="$work/examples/php-cart"
 "$copy/bin/build"
 composer config --working-dir="$copy" repositories.runtime \
     "{\"type\": \"path\", \"url\": \"$runtime\", \"options\": {\"symlink\": false, \"versions\": {\"souther-lang/php-runtime\": \"$version\"}}}"
-composer update --working-dir="$copy" --no-interaction --no-progress --quiet souther-lang/php-runtime
+# Required at the clone's version and not at the example's constraint, which names the published
+# releases: a runtime that moved past them, to 0.2.0 from ^0.1, is not one the constraint admits.
+composer require --working-dir="$copy" --no-interaction --no-progress --quiet \
+    "souther-lang/php-runtime:$version"
 cd "$copy"
 vendor/bin/phpunit

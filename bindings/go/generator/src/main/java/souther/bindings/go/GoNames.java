@@ -217,4 +217,41 @@ final class GoNames {
         }
         return out.toString();
     }
+
+    /**
+     * {@code text} as a Go string literal that reads back as the same text: a quote and a backslash
+     * escaped, and each code point that is not a graphic character (a control, a format character, a
+     * separator other than a space, one with no assignment) written as its escape, so that what the
+     * literal holds is what a reader sees of it.
+     *
+     * @throws NotBindable where the text holds half of a surrogate pair, which is no text a Go string
+     *                     holds as UTF-8
+     */
+    static String quoted(String text) {
+        StringBuilder out = new StringBuilder("\"");
+        text.codePoints().forEach(it -> {
+            if (Character.getType(it) == Character.SURROGATE) {
+                throw new NotBindable("text holds half of a surrogate pair, which Go has no string of: "
+                        + text);
+            } else if (it == '"' || it == '\\') {
+                out.append('\\').appendCodePoint(it);
+            } else if (it == ' ' || graphic(it)) {
+                out.appendCodePoint(it);
+            } else if (it <= 0xffff) {
+                out.append(String.format("\\u%04x", it));
+            } else {
+                out.append(String.format("\\U%08x", it));
+            }
+        });
+        return out.append('"').toString();
+    }
+
+    private static boolean graphic(int codePoint) {
+        return switch (Character.getType(codePoint)) {
+            case Character.CONTROL, Character.FORMAT, Character.PRIVATE_USE,
+                 Character.UNASSIGNED, Character.SPACE_SEPARATOR, Character.LINE_SEPARATOR,
+                 Character.PARAGRAPH_SEPARATOR -> false;
+            default -> true;
+        };
+    }
 }

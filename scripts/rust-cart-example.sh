@@ -44,6 +44,9 @@ echo "souther-binding-runtime $version is not on crates.io: building examples/ru
 mkdir "$work/examples"
 cp -R "$root/examples/cart-model" "$work/examples/"
 rsync -a --exclude /target --exclude /build "$example/" "$work/examples/rust-cart/"
+# Built outside the clone, where its rust-toolchain.toml does not reach, so the copy carries it:
+# the compile-fail tests hold rustc's own diagnostics, which another toolchain words otherwise.
+cp "$root/rust-toolchain.toml" "$work/"
 # Laid out as Cargo lays out the source of a crate from a registry, which is where trybuild looks to
 # write a path into another crate as $CARGO/<crate>-$VERSION, as the expected output has it.
 patched="$work/registry/src/clone-0000000000000000/souther-binding-runtime-$version"

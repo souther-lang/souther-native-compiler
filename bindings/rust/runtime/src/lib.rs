@@ -34,6 +34,7 @@ mod decoding;
 mod failure;
 mod keep;
 mod native;
+mod rows;
 mod run;
 mod temporal;
 
@@ -47,6 +48,7 @@ pub use keep::{FunctionImplementFn, HostedFunction};
 pub use native::{
     ABI_GENERATION, Construction, LoadError, NativeLibrary, Reading, Word, Words, made,
 };
+pub use rows::{NotRun, Row, RowIdentity, RowKind, RowOutcome};
 pub use run::{
     AlreadyRunning, Held, HostFailure, Loaded, RawScope, Run, Runtime, Scope, ScopeCloseFn,
     ScopeOpenFn, host, implemented, run,

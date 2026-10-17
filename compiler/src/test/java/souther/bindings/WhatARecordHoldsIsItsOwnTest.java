@@ -55,6 +55,9 @@ class WhatARecordHoldsIsItsOwnTest {
 
             behavior priceOf : (n: Int) -> Int
 
+            example priceOf
+                | "one at three" : (1) -> 3
+
             behavior quote : (n: Int) -> Int
                 depends on priceOf
             let quote (n, priceOf) = priceOf(n) * 2

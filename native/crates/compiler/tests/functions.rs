@@ -233,7 +233,7 @@ fn publishing() -> Value {
     json!({
         "transport": TRANSPORT_VERSION, "declarations": [], "behaviors": [],
         "modules": [{"name": "m", "publishes": [], "helpers": [], "values": values,
-                     "entries": entries, "definitions": [], "examples": []}]
+                     "entries": entries, "definitions": [], "examples": [], "unreproducible": []}]
     })
 }
 
@@ -253,7 +253,7 @@ fn reaching() -> Value {
                      "definitions": [{"is": "body", "declared": "r.g", "parameters": ["a"],
                                       "publication": "published",
                                       "body": applied(bump, vec![read(0, int())])}],
-                     "examples": []}]
+                     "examples": [], "unreproducible": []}]
     })
 }
 

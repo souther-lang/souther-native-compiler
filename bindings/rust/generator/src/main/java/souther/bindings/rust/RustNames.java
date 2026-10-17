@@ -95,6 +95,30 @@ final class RustNames {
         return name.isEmpty() ? name : Character.toUpperCase(name.charAt(0)) + name.substring(1);
     }
 
+    /**
+     * {@code text} as a Rust string literal: what the model wrote, a row's name or why a row could
+     * not be read, which may hold anything a string holds. A quote and a backslash are escaped, and
+     * every character outside printable ASCII is written as its code point, so the literal is the
+     * text whatever the file is read as.
+     */
+    static String literal(String text) {
+        StringBuilder written = new StringBuilder("\"");
+        text.codePoints().forEach(it -> {
+            switch (it) {
+                case '"' -> written.append("\\\"");
+                case '\\' -> written.append("\\\\");
+                default -> {
+                    if (it >= 0x20 && it < 0x7f) {
+                        written.appendCodePoint(it);
+                    } else {
+                        written.append("\\u{").append(Integer.toHexString(it)).append('}');
+                    }
+                }
+            }
+        });
+        return written.append('"').toString();
+    }
+
     private static boolean isIdentifier(String name) {
         if (name.isEmpty() || name.equals("_")) {
             return name.equals("_");

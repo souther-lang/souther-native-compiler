@@ -22,7 +22,7 @@
 //! and is not answered here.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cranelift::codegen::ir::condcodes::IntCC;
 use cranelift::codegen::ir::{self, AbiParam, Function, InstBuilder, types};
@@ -206,6 +206,79 @@ pub(crate) fn equal(
             let compared = builder.ins().call(comparing, &[a, b]);
             Ok(builder.inst_results(compared)[0])
         }
+    }
+}
+
+/// Whether [`equal`] answers a truth for two values of `ty` rather than refusing them, at `ty` and
+/// at every type a value of it holds: what a value of a declared type holds is walked into, and a
+/// declaration already being walked is taken to compare, since what it holds is asked about where
+/// it was first reached.
+///
+/// Asked before anything is lowered, so that a comparison nothing here can make is said of the
+/// one thing that asked for it rather than refusing the object it would have been part of.
+pub(crate) fn comparable(ty: &Ty, declared: &crate::Declared) -> bool {
+    comparable_within(ty, declared, &mut HashSet::new())
+}
+
+fn comparable_within(ty: &Ty, declared: &crate::Declared, walking: &mut HashSet<String>) -> bool {
+    // In the order `equal` asks, so that each type is answered as `equal` answers it.
+    match ty {
+        Ty::Prim { .. } => true,
+        Ty::Fn { .. } | Ty::Var { .. } | Ty::Nothing { .. } | Ty::Never { .. } => false,
+        Ty::Ref {
+            named: Case::Primitive { .. },
+        } => false,
+        Ty::Ref {
+            named: Case::Language { .. },
+        } => true,
+        _ if ty.holds_no_value() => true,
+        Ty::Set { set } => comparable_within(set, declared, walking),
+        Ty::Map { map } => {
+            comparable_within(&map.key, declared, walking)
+                && comparable_within(&map.value, declared, walking)
+        }
+        Ty::Option { option } => comparable_within(option, declared, walking),
+        Ty::List { list } => comparable_within(list, declared, walking),
+        Ty::Tuple { tuple } => tuple
+            .iter()
+            .all(|it| comparable_within(it, declared, walking)),
+        Ty::Union { union } => union
+            .iter()
+            .all(|case| case_comparable(case, declared, walking)),
+        Ty::Ref {
+            named: Case::Declared { declared: name },
+        } => {
+            if !walking.insert(name.clone()) {
+                return true;
+            }
+            match declared.laid(name) {
+                Declaration::Product { fields, .. } => fields
+                    .iter()
+                    .all(|it| comparable_within(&it.codec.ty(), declared, walking)),
+                Declaration::Newtype { field, .. } => {
+                    comparable_within(&field.codec.ty(), declared, walking)
+                }
+                Declaration::Unit { .. } => true,
+                Declaration::Sum { cases, .. } => cases
+                    .iter()
+                    .all(|case| case_comparable(case, declared, walking)),
+            }
+        }
+    }
+}
+
+/// Whether two values both of `case` compare, as [`Comparing::as_the_case`] compares them: a
+/// primitive a union carries by what it carries, and a case the language gives as the one value.
+fn case_comparable(case: &Case, declared: &crate::Declared, walking: &mut HashSet<String>) -> bool {
+    match case {
+        Case::Declared { .. } => comparable_within(
+            &Ty::Ref {
+                named: case.clone(),
+            },
+            declared,
+            walking,
+        ),
+        Case::Primitive { .. } | Case::Language { .. } => true,
     }
 }
 
@@ -443,5 +516,44 @@ impl Comparing<'_, '_, '_, '_> {
 
         self.builder.switch_to_block(walked);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn ty(written: serde_json::Value) -> Ty {
+        serde_json::from_value(written).unwrap()
+    }
+
+    /// A type compares where `equal` answers a truth for it at every type a value of it holds, and
+    /// not where one of those is a function, which nothing compares; a primitive a union carries
+    /// compares by what it carries.
+    #[test]
+    fn a_type_compares_where_every_type_its_values_hold_compares() {
+        let declared = crate::Declared {
+            shapes: HashMap::new(),
+        };
+        let function = json!({"fn": {"takes": [{"prim": "INT"}], "answers": {"prim": "INT"}}});
+        for (written, compares) in [
+            (json!({"prim": "DECIMAL"}), true),
+            (json!({"set": {"prim": "STRING"}}), true),
+            (json!({"union": [{"is": "primitive", "prim": "INT"}]}), true),
+            (function.clone(), false),
+            (json!({"list": function.clone()}), false),
+            (
+                json!({"map": {"key": {"prim": "STRING"}, "value": function.clone()}}),
+                false,
+            ),
+            (json!({"tuple": [{"prim": "INT"}, function]}), false),
+        ] {
+            assert_eq!(
+                comparable(&ty(written.clone()), &declared),
+                compares,
+                "{written}"
+            );
+        }
     }
 }

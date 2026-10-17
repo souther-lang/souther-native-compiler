@@ -145,8 +145,8 @@ spelt apart: `souther<n>`, `<n>` being the ABI generation, then the module as `_
 segment of its dotted name, then `_b_<behavior>`, `_v_<value>`, `_t_<type>`, or `_l_` and the shape
 a list's element crosses in, or `_fn_` and the shape of a function value, and then what is done with
 it. A name is written as it is where it is ASCII letters and digits, with `_` doubled and any other
-character as `_u<hex>_`, its code point. So `shop.quote` is `souther12_m_shop_b_quote` at generation
-12, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
+character as `_u<hex>_`, its code point. So `shop.quote` is `souther13_m_shop_b_quote` at generation
+13, and a behavior named `数量` is `..._b__u6570__u91cf_`. Inside a name `_` is only ever followed by
 `_` or `u`, which keeps every spelling readable back to the names it was made from. The functions
 that spell each name are in [`native/crates/abi/src/lib.rs`](../native/crates/abi/src/lib.rs), each
 with what the function it names takes and answers.
@@ -261,16 +261,35 @@ what it threw to throw again where the outermost call returns, since a host's ex
 unwind through generated code. Anything else it answers is `INJECTION_PROTOCOL_VIOLATION` by the
 time a caller sees it. A call through a requirement bound to null answers `INJECTION_UNBOUND`.
 
+Each row of a behavior a host implements is listed under its injection in the manifest, and a row
+that can be run has a function a host runs it through against its own implementation. Both take the
+capabilities with the implementation's own capability first, as a behavior bound to it lays them
+out, and answer a status, writing nothing where it is not `ANSWERED`. A row that states an answer is
+`_b_<behavior>_example_<row>`, which writes whether the answer keeps the row, decided in the library
+by the language's equality, and the answer in external form, a string of the scope the call is made
+in. One whose answer is owed is `_b_<behavior>_owed_<row>`, which writes the answer alone, since
+the row states nothing it could keep. `<row>` is where the row stands among the behavior's rows,
+from nought. A row the library has no way to compare an answer with, and one the compile could not
+read, are listed with nothing to run. The first is this backend's own shortfall and says nothing of
+the row: the checker refuses a row no answer can keep, as of souther 0.4.1, so a row listed
+with `no_comparison` is one whose stated value this backend has no restatement of at the type the
+behavior answers, or whose answer holds a function, which nothing here compares. A row with nothing
+to run held the implementation to nothing, and a suite that counts only failures passes it
+unseen, so the bindings answer it as an outcome of its own, which a test says it skipped. The
+answer is for a report, and a host that compared it would
+part from the language where the two texts differ and the values do not: a decimal at another
+scale, a set in another order.
+
 PHP's FFI makes a new C entry each time a closure is handed to C and keeps it until the request
 ends, so a runtime there makes the function pointer once for a behavior and tells its
 implementations apart by what each is handed first. The layout above allows it everywhere.
 
 ## What a library exports, and how it is linked
 
-What the library exports is what the header declares, and nothing else. A row's entry and a boundary
-stay in the object, and so does every symbol one object built here calls in another. The runtime is
-a static archive, which gives a link only what something asks it for, so the link names each
-function a host calls as wanted. By hand, what the driver runs is:
+What the library exports is what the header declares, and nothing else. The entry the compile runs
+a row through and a boundary stay in the object, and so does every symbol one object built here calls
+in another. The runtime is a static archive, which gives a link only what something asks it for, so
+the link names each function a host calls as wanted. By hand, what the driver runs is:
 
     # macOS
     cc -dynamiclib -o libsouther.dylib -Wl,-install_name,@rpath/libsouther.dylib \

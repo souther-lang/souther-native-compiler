@@ -266,6 +266,15 @@ impl<'a> Coherent<'a> {
                     stands_in_for_what_it_requires(&owner, &behavior, example, &locals, &targets)?;
                     (owner, Vec::new())
                 }
+                // Of the type the row writes, and not held to what the behavior answers: a row may
+                // state a value of another type, and the type it states is part of what it states.
+                Owner::Expected(example) => {
+                    let behavior = format!("{}.{}", body.carrier().module(), example.behavior);
+                    (
+                        format!("what row {} of {behavior} states it answers", example.at),
+                        Vec::new(),
+                    )
+                }
                 Owner::StoodIn { example, at } => {
                     let behavior = format!("{}.{}", body.carrier().module(), example.behavior);
                     let stood = &example.stands_in[at];
@@ -394,6 +403,11 @@ impl<'a> Reached<'a> {
             entries: HashMap::new(),
         };
         let mut rows = HashMap::new();
+        let declared: std::collections::HashSet<(&str, &str)> = program
+            .behaviors
+            .iter()
+            .map(|it| (it.module.as_str(), it.name.as_str()))
+            .collect();
         for written in &program.modules {
             let module = written.name.as_str();
             if !spells_a_module(module) {
@@ -497,18 +511,30 @@ impl<'a> Reached<'a> {
                     || format!("two entries are both written for {declared}"),
                 )?;
             }
-            for example in &written.examples {
-                index::once(
-                    &mut rows,
-                    (module, example.behavior.as_str(), example.at),
-                    (),
-                    || {
-                        format!(
-                            "{module}.{} has two rows both written at {}",
-                            example.behavior, example.at
-                        )
-                    },
-                )?;
+            // A row is at one place among its behavior's rows, whether the compile read it or not,
+            // and of a behavior its module declares: a row the compile could not read hands over
+            // no body to be held to its behavior, so that its behavior is one is held here.
+            let read = written
+                .examples
+                .iter()
+                .map(|it| (it.behavior.as_str(), it.at));
+            let unread = written
+                .unreproducible
+                .iter()
+                .map(|it| (it.behavior.as_str(), it.at));
+            for (behavior, at) in read.chain(unread) {
+                index::once(&mut rows, (module, behavior, at), (), || {
+                    format!("{module}.{behavior} has two rows both written at {at}")
+                })?;
+            }
+            for unread in &written.unreproducible {
+                if !declared.contains(&(module, unread.behavior.as_str())) {
+                    bail!(
+                        "{module} has a row it could not read of {}, a behavior it does not \
+                         declare: the two halves disagree",
+                        unread.behavior
+                    );
+                }
             }
         }
         Ok(reached)

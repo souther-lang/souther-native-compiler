@@ -49,7 +49,7 @@
         <skipTests>false</skipTests>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
-        <souther.version>0.4.0</souther.version>
+        <souther.version>0.4.1-SNAPSHOT</souther.version>
         <jspecify.version>1.0.0</jspecify.version>
         <junit.version>5.14.0</junit.version>
         <assertj.version>3.27.6</assertj.version>
@@ -66,8 +66,8 @@
              souther-bindings-api they are compiled against, and the ABI generations the code they write
              is for. Held to BindingApi.MAJOR and ManifestReader.ABI by the launcher's tests, which load
              the jars as the command does and are refused otherwise. -->
-        <souther.bindings.api>1</souther.bindings.api>
-        <souther.abi.generations>12</souther.abi.generations>
+        <souther.bindings.api>2</souther.bindings.api>
+        <souther.abi.generations>13</souther.abi.generations>
     </properties>
 
     <!-- Where a souther snapshot is published, for a build that takes one before its release: Central
@@ -185,6 +185,12 @@
                                 junit.jupiter.execution.parallel.mode.classes.default = concurrent
                             </configurationParameters>
                         </properties>
+                        <!-- What a test makes in the temporary directory, it makes in the build's
+                             own, and a test watching that directory reads only this build's: the
+                             machine's is shared with whatever else runs on it, and reading one of a
+                             million entries took a class that runs alone twenty seconds. Fixed
+                             when the JVM starts, so it is an argument and not a property set after. -->
+                        <argLine>-Djava.io.tmpdir=${project.build.directory}</argLine>
                         <systemPropertyVariables>
                             <souther.repository>${maven.multiModuleProjectDirectory}</souther.repository>
                             <souther.native.driver>${maven.multiModuleProjectDirectory}/native/target/debug/souther-native-driver</souther.native.driver>

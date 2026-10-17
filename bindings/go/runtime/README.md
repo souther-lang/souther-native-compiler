@@ -236,6 +236,57 @@ requirement it was handed nothing for is `souther.ErrUnbound`, and a computation
 without an answer for a reason of its own is a `*souther.Abort` carrying the status and the name
 the manifest gives it.
 
+## Holding an implementation to the rows of its behavior
+
+The rows of a behavior a host implements are what its implementation is held to, and
+`<Name>Examples()` lists them in the order they are written, each a `souther.Row`. A row says where
+it stands (`At`), what it names itself (`Identity`, and `Shown` for a report: its name, or `row n`
+where it has none), and what can be done with it (`Kind`): `Asserted`, a row stating an answer;
+`Owed`, a row whose answer is owed (`<?>`); and two with nothing to run, `NotComparable`, a row
+stating an answer the library cannot compare one with, and `Unreproducible`, a row the compile could
+not read, each with `Why`.
+
+`row.Evaluate(r, implementation)` makes the implementation into the behavior's capability in `r`,
+as `Implement<Name>` does, and runs that one row with it. Whether the answer keeps the row is the
+library's to say, by the language's equality: a decimal at another scale than the row writes, or a
+set in another order, keeps it, which the external form does not. The `souther.RowOutcome` says
+which of `Kept`, `NotKept`, `Answered` (an owed row's answer, with no verdict), `Ended` and `NotRun`
+it came to. `Answer` is the answer in external form, for a report and nothing else; `Err` is what an
+ended row came to, as a call of the behavior would (a `*souther.HostError` where the implementation
+returned an error, a `*souther.Abort` where the library ended it); a panic in the implementation is
+raised again. `Failed` is whether the answer did not keep the row or the row ended, and `String`
+says the outcome in one line. A row that was `NotRun` has not failed and was not held to anything
+either, so the test below skips it rather than letting it pass: `Kept` is what says the
+implementation kept the row.
+
+Nothing runs every row at once. What an implementation answers from, a database or a clock, is the
+test's, and each subtest runs on a goroutine of its own, so a test opens a run in each:
+
+    func TestTheQuotesKeepTheRows(t *testing.T) {
+        for _, row := range shop.QuotedExamples() {
+            t.Run(row.Shown(), func(t *testing.T) {
+                err := library.Run(func(r *quotes.Run) error {
+                    outcome := row.Evaluate(r, priceList{db: openFixture(t)})
+                    switch {
+                    case outcome.Failed():
+                        t.Error(outcome)
+                    case outcome.Disposition() == souther.NotRun:
+                        t.Skip(outcome)
+                    default:
+                        t.Log(outcome)
+                    }
+                    return nil
+                })
+                if err != nil {
+                    t.Fatal(err)
+                }
+            })
+        }
+    }
+
+A row of the behavior `I` is a `quotes.Row[I]` for a host that names one, and a row of another
+behavior is another type.
+
 ## Names
 
 Every name is the model's with its first letter a capital, which is what Go exports. A name whose
@@ -260,7 +311,7 @@ binding's own would have to be, where that name is another's in the package.
 
 ## The protocol and the ABI generation
 
-What a generated package may call of this module is its protocol (`souther.Protocol`, now 3). The
+What a generated package may call of this module is its protocol (`souther.Protocol`, now 7). The
 surface of each protocol is recorded under [`protocol`](protocol), a test fails where the surface
 is not what the record says, and a generated package does not compile against another protocol
 than the one it was written for. A change to what a generated package may call is a new protocol,
@@ -269,7 +320,7 @@ not an edit of one.
 That is separate from the library's ABI generation. This module calls a library of one generation
 (`souther.ABIGeneration`) and asks each library for its generation before anything else, as above.
 A function generated for a behavior or a type also carries the generation in its name
-(`souther12_m_shop_b_quote`), so a binding generated against another generation finds none of its
+(`souther13_m_shop_b_quote`), so a binding generated against another generation finds none of its
 functions.
 
 ## Platforms and versions

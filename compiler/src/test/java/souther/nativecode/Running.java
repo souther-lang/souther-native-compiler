@@ -6,6 +6,7 @@ import souther.compiler.abort.AbortKind;
 import souther.compiler.observe.ObservedValue;
 import souther.compiler.observe.StoodIn;
 import souther.compiler.program.CheckedBehavior;
+import souther.compiler.program.CheckedImplementation;
 import souther.compiler.program.CheckedModule;
 import souther.compiler.program.CheckedProgram;
 import souther.compiler.program.CheckedSignature;
@@ -634,10 +635,17 @@ final class Running {
                     entries.add(new Entry(reached, "souther" + ABI + "." + reached, takes,
                             behavior.requirements()));
                 }
+                // A row of a behavior a host implements is handed what answers it, as a behavior
+                // is handed what it requires: the behavior itself is the one thing it requires.
+                List<ValueName.Behavior> answering =
+                        behavior.implementation() instanceof CheckedImplementation.Injected
+                                ? List.of(behavior.name()) : null;
                 for (int at = 0; at < behavior.rows().size(); at++) {
                     String symbol = "souther" + ABI + "." + reached + "$example$" + at;
-                    if (carried.contains(PREFIX + symbol + "$boundary")) {
-                        entries.add(new Entry(reached + ".example." + at, symbol, List.of(), null));
+                    if (carried.contains(PREFIX + symbol + "$boundary")
+                            && (answering == null || everyOneStandsIn(answering))) {
+                        entries.add(new Entry(reached + ".example." + at, symbol, List.of(),
+                                answering));
                     }
                 }
             }
