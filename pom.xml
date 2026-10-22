@@ -49,7 +49,7 @@
         <skipTests>false</skipTests>
         <java.version>25</java.version>
         <maven.compiler.release>${java.version}</maven.compiler.release>
-        <souther.version>0.4.1-SNAPSHOT</souther.version>
+        <souther.version>0.4.1</souther.version>
         <jspecify.version>1.0.0</jspecify.version>
         <junit.version>5.14.0</junit.version>
         <assertj.version>3.27.6</assertj.version>
