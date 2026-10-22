@@ -108,6 +108,17 @@ against, so in a clone the examples' `bin/build` is run with `$SOUTHER` naming
 that CLI looks and runs a command with `$SOUTHER` naming it, so
 `scripts/with-the-souther-cli <souther> scripts/rust-cart-example.sh` is the example as a user runs it.
 
+The examples require each runtime as an application does, at a release from its registry:
+`souther-binding-runtime` from crates.io, the Go runtime module from the module proxy, and
+`souther-lang/php-runtime` from Packagist; their locks name that release. A binding built from a
+clone requires the runtime at the version the clone's runtime is, and between a change to a runtime
+and its publication that version is in no registry. So `scripts/<language>-cart-example.sh` asks the
+registry for the clone's version first. Where it is there, the example is built and tested as it is
+committed, its lock held to it; where it is not, the script builds a copy of the example with the
+runtime taken from the clone (a `[patch]`, a `replace`, a path repository) and leaves the committed
+example as it is. The release build is one of the latter for any runtime it changed, since a
+runtime is published after the release.
+
 The Go runtime is a module of its own in a directory of this repository, and its version is its own:
 the file `bindings/go/runtime/VERSION`, beside its `go.mod`, which the Go generator is built with
 and requires. It is not the compiler's, which has no reason to move when the runtime does not, and
@@ -137,6 +148,13 @@ Nothing is published from CI. The release workflow keeps the publication and cre
 release, and what goes to a registry is published by hand, once the Souther the backend names is on
 Maven Central.
 
+A release is numbered after the Souther it is built against: `v0.4.1` is built against Souther
+0.4.1. The CLI runs a backend only under exactly that Souther, so each Souther release has one of
+these, and a number of the backend's own would say nothing the Souther's does not. A fix here
+between two Souther releases is tagged `v<souther>-<n>`, `v0.4.1-1` after `v0.4.1`, which the CLI
+takes as the newer of the two built against Souther 0.4.1. The runtimes and the bindings' modules
+keep numbers of their own, since they move only when they change.
+
 The version a release has is the tag's. The workflow sets every module to it
 (`versions:set`) before it builds anything, so the poms of the tagged commit keep their snapshot
 version, and nothing is committed for the release but what it is built against: `souther.version` in
@@ -150,7 +168,7 @@ The publication reaches Maven Central from the workflow's `maven-repository` art
 nowhere else, because it is the only copy of a compiler carrying the checksums. The owner downloads
 it and runs [`scripts/publish-to-central.sh`](../scripts/publish-to-central.sh) on it:
 
-    git tag v0.1.0 <commit> && git push origin v0.1.0
+    git tag v0.4.1 <commit> && git push origin v0.4.1
     gh run list --workflow release.yml --limit 1
     gh run watch <run> --exit-status
     gh run download <run> -n maven-repository -D <directory>

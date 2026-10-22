@@ -540,7 +540,7 @@ fn carrying() -> String {
      "form":{{"is":"discriminated","tag":"type","contents":"value"}}}}],
   "behaviors":[],
   "modules":[{{"name":"m","publishes":["m.A","m.Q"],"helpers":[],"values":[],"entries":[],
-              "definitions":[],"examples":[]}}]}}"#
+              "definitions":[],"examples":[],"unreproducible":[]}}]}}"#
     )
 }
 
@@ -624,7 +624,7 @@ fn a_published_value_holding_what_has_no_value_is_described_and_read_by_nothing(
                 r#""entries":[{{"value":{{"module":"m","name":"v"}},"#,
                 r#""body":{{"core":"call","reaches":{{"is":"value","module":"m","name":"v"}},"#,
                 r#""arguments":[],"type":{listed},"aborts":[]}}}}],"#,
-                r#""definitions":[],"examples":[]}}]}}"#
+                r#""definitions":[],"examples":[],"unreproducible":[]}}]}}"#
             ),
             version = TRANSPORT_VERSION,
             listed = listed,

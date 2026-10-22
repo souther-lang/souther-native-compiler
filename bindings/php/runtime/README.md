@@ -220,6 +220,52 @@ exception an implementation throws is the one that comes back out of the call th
 an implementation answering a value of another type than the behavior answers comes back as a
 `TypeError`.
 
+## Holding an implementation to a behavior's rows
+
+The class of a behavior a host implements lists the behavior's `example` rows and evaluates one of
+them against an instance, so a host's own implementation, over its own database or clock, is held to
+the rows the model states beside the behavior. For a behavior `labelOf`, `LabelOf::examples()`
+answers the rows in the order they are written, each a `Souther\Runtime\Row` in an array of one and
+keyed by what it names itself, which is what a PHPUnit data provider hands a test:
+
+    public static function rows(): array
+    {
+        return LabelOf::examples();
+    }
+
+    #[DataProvider('rows')]
+    public function testTheShelfAnswersTheRow(Row $row): void
+    {
+        $outcome = $this->binding->run(fn () => LabelOf::evaluate($this->shelf, $row));
+        $this->assertInstanceOf(RowKept::class, $outcome);
+    }
+
+A row says where it stands (`$at`, from nought), the name it was written with (`$name`, null for a
+row written with none, which a key and `$shown` call `row 2`), and what it is (`$kind`, a `RowKind`):
+`Asserted`, a row stating an answer; `Owed`, a row whose answer is `<?>`; `Unreproducible`, one the
+compile could not read; and `NotComparable`, one stating what the library has no way to compare an
+answer with. The last two have nothing to run, and `$why` says why. A `RowNotRun` held the
+implementation to nothing, so a test asserting `RowKept`, as the one above does, fails it rather
+than letting it pass unseen; one that would rather skip it says so with `markTestSkipped`. The rows are written into the
+binding from the manifest, so listing them needs no library loaded and no run.
+
+`LabelOf::evaluate($implementation, $row)` is called inside a run. It makes a capability of the
+implementation as a run handed it would, calls the row's function in the library, and answers a
+`RowOutcome`: `RowKept` or `RowNotKept`, each with the answer in the language's external form; or
+`RowAnswered`, with the answer and no verdict, for an owed row; or `RowEnded`, where the run ended
+without an answer, holding what a call of the behavior would have thrown for the same end (the
+exception the implementation threw, itself, an `UnboundInjection`, or a `SoutherAbort`); or
+`RowNotRun`, with why, where there is nothing to run, and nothing is called. Whether an answer keeps
+the row is the library's to say, by the language's equality: `1.5` keeps a row stating `1.50m`, and
+a set keeps one in any order. The answer's text is there for a report and is not compared with
+anything. A row handed to the evaluation of another behavior is an `\InvalidArgumentException`.
+
+There is no function that runs every row. What an implementation answers depends on what the world
+it reads holds when it is asked, and that is the test's to arrange between one row and the next, so
+the loop is the test's too. A row may be evaluated as often as a test likes, and nothing of one
+evaluation is kept for the next. `examples` and `evaluate` are final, so an implementation that
+declares a method of either name is refused when its class is declared.
+
 ## Loading the library
 
 The runtime loads a library once per process, told apart by device and inode rather than by the path
@@ -234,7 +280,7 @@ library a load of that file would be.
 Before anything else, the runtime asks the library `souther_abi_generation()` and refuses one that
 answers another generation than the one it calls, or none, with `UnsupportedGeneration`. A binding
 says which version of the runtime's surface it was generated for, and refuses to load over a runtime
-that says another (`Souther\Runtime\Binding::PROTOCOL`, 11 at present) with a `\LogicException`
+that says another (`Souther\Runtime\Binding::PROTOCOL`, 13 at present) with a `\LogicException`
 naming both. A binding whose numbering of the library's statuses differs from the declarations it
 loads, or from another binding's that loaded the same library first, is refused the same way.
 

@@ -6,12 +6,21 @@
 # go.mod and go.sum are what go mod tidy leaves, go.mod names the Go the runtime module does, and
 # no type switch over a union or a sum's cases leaves one out.
 #
+# The example requires the runtime from the Go module proxy, as an application does. Where this
+# clone's runtime is at a version the proxy does not have, which is the case from a change to the
+# runtime until its tag is published, the binding this clone writes requires that version, and the
+# example is built as a copy of itself with the runtime replaced by the clone's: go.mod and go.sum,
+# which name the release, are not held to what go mod tidy leaves then.
+#
 # Needs what go-from-the-command-line.sh needs. SQLite is modernc.org/sqlite, which is Go.
 set -euo pipefail
 
 . "$(dirname "$0")/require-go.sh"
 
-example="$(cd "$(dirname "$0")/../examples/go-cart" && pwd)"
+root="$(cd "$(dirname "$0")/.." && pwd)"
+example="$root/examples/go-cart"
+runtime="$root/bindings/go/runtime"
+export SOUTHER="${SOUTHER:-$root/scripts/souther}"
 
 # A go.mod has to say a Go, and the example's is the runtime module's, where the version is stated.
 said="$(sed -nE 's/^go[[:space:]]+([0-9][0-9.]*)[[:space:]]*$/\1/p' "$example/go.mod")"
@@ -20,15 +29,32 @@ if [ "$said" != "$go_version" ]; then
     exit 1
 fi
 
-SOUTHER="${SOUTHER:-$(cd "$(dirname "$0")" && pwd)/souther}" "$example/bin/build"
-cd "$example"
+module="$(sed -nE 's#^module[[:space:]]+([^[:space:]]+)[[:space:]]*$#\1#p' "$runtime/go.mod")"
+version="$(tr -d '[:space:]' < "$runtime/VERSION")"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+if (cd "$work" && go list -m "$module@v$version" > /dev/null 2>&1); then
+    "$example/bin/build"
+    cd "$example"
+    go mod tidy -diff
+else
+    echo "$module v$version is not on the module proxy: building examples/go-cart over $runtime" >&2
+    mkdir "$work/examples"
+    cp -R "$root/examples/cart-model" "$work/examples/"
+    rsync -a --exclude /build "$example/" "$work/examples/go-cart/"
+    "$work/examples/go-cart/bin/build"
+    cd "$work/examples/go-cart"
+    go mod edit -replace "$module=$runtime"
+    go mod tidy
+fi
+
 unformatted="$(gofmt -l .)"
 if [ -n "$unformatted" ]; then
     echo "gofmt would change these:" >&2
     echo "$unformatted" >&2
     exit 1
 fi
-go mod tidy -diff
 go vet ./...
 # Every type switch over a union or a sum's cases names every case, a default notwithstanding: Go
 # does not check that, and the binding declares each such interface a sum type for this check.

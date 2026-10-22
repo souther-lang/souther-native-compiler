@@ -337,26 +337,11 @@ class EveryDocumentNamesWhatIsThereTest {
     }
 
     /** Every Markdown file of the repository that is its own, and none a build or a tool brought. */
-    private static List<Path> documents() throws IOException {
-        try (Stream<Path> all = Files.walk(ROOT)) {
-            List<Path> documents = all
-                    .filter(it -> it.toString().endsWith(".md"))
-                    .filter(it -> {
-                        for (Path part : ROOT.relativize(it)) {
-                            String name = part.toString();
-                            if (name.startsWith(".") || name.equals("target") || name.equals("vendor")
-                                    || name.equals("node_modules")) {
-                                return false;
-                            }
-                        }
-                        return true;
-                    })
-                    .sorted()
-                    .toList();
-            assertThat(documents).contains(ROOT.resolve("README.md"),
-                    ROOT.resolve("docs/host-abi.md"), ROOT.resolve("docs/writing-a-binding.md"));
-            return documents;
-        }
+    private static List<Path> documents() {
+        List<Path> documents = Repository.ownFiles(name -> name.endsWith(".md"));
+        assertThat(documents).contains(ROOT.resolve("README.md"),
+                ROOT.resolve("docs/host-abi.md"), ROOT.resolve("docs/writing-a-binding.md"));
+        return documents;
     }
 
     private static String read(Path file) throws IOException {

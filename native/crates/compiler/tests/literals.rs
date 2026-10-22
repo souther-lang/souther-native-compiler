@@ -17,7 +17,7 @@ fn a_literal_spelt_twice_is_held_once() {
             r#"{{"is":"body","declared":"m.twice","parameters":[],"publication":"published","#,
             r#""body":{{"core":"binary","op":"CONCAT","reading":{{"is":"astheystand"}},"ordering":null,"left":{text},"right":{text},"#,
             r#""type":{{"prim":"STRING"}},"aborts":["REQUIRED_FORM_HAS_NO_PLACE"]}}}}"#,
-            r#"],"examples":[]}}]}}"#
+            r#"],"examples":[],"unreproducible":[]}}]}}"#
         ),
         transport = TRANSPORT_VERSION,
         text = text

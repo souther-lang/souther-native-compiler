@@ -1,6 +1,6 @@
 [package]
 name = "souther-binding-runtime"
-version = "0.1.0"
+version = "0.2.0"
 description = "What every Rust binding of a Souther library built by souther-native-compiler runs on: a run's arena, handles, and calls into the library and back"
 edition = "2024"
 # Raoh's, which every generated crate depends on beside this one: a host is held to the older of

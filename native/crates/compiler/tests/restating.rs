@@ -405,7 +405,7 @@ fn document() -> String {
         "declarations": declarations(),
         "behaviors": targets,
         "modules": [{"name": "m", "publishes": ["m.A", "m.P", "m.R", "m.Q"], "helpers": [], "values": [],
-                     "entries": [], "definitions": definitions, "examples": []}]
+                     "entries": [], "definitions": definitions, "examples": [], "unreproducible": []}]
     })
     .to_string()
 }

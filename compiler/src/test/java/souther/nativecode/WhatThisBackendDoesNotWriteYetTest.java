@@ -45,7 +45,7 @@ class WhatThisBackendDoesNotWriteYetTest {
             + "\"left\":{\"core\":\"read\",\"binding\":0,\"type\":{\"nothing\":{}},\"aborts\":[]},"
             + "\"right\":{\"core\":\"read\",\"binding\":1,\"type\":{\"nothing\":{}},\"aborts\":[]},"
             + "\"type\":{\"prim\":\"BOOL\"},\"aborts\":[]}}],\"values\":[],\"entries\":[],"
-            + "\"definitions\":[],\"examples\":[]}]}");
+            + "\"definitions\":[],\"examples\":[],\"unreproducible\":[]}]}");
 
     /**
      * The type crosses. What a primitive is called is the language's and whether there is a

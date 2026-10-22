@@ -44,7 +44,7 @@ fn document(behaviors: &[String], helpers: &[String], definitions: &[String]) ->
             r#""field":{{"name":"v","binding":0,"codec":{{"is":"scalar","scalar":"INT"}}}},"invariants":[]}}],"#,
             r#""behaviors":[{}],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[{}],"#,
-            r#""examples":[]}}]}}"#
+            r#""examples":[],"unreproducible":[]}}]}}"#
         ),
         behaviors.join(","),
         helpers.join(","),
@@ -802,17 +802,23 @@ fn a_second_statement_transport_10_dropped_is_not_read() {
 
 /// The same document with `m`'s rows replaced by those given.
 fn with_rows(document: &str, rows: &[String]) -> String {
-    let none = r#""examples":[]"#;
+    let none = r#""examples":[],"unreproducible":[]"#;
     assert_eq!(
         document.matches(none).count(),
         1,
         "one module to put rows in"
     );
-    document.replace(none, &format!(r#""examples":[{}]"#, rows.join(",")))
+    document.replace(
+        none,
+        &format!(r#""examples":[{}],"unreproducible":[]"#, rows.join(",")),
+    )
 }
 
 fn row(behavior: &str, at: usize, body: &str) -> String {
-    format!(r#"{{"behavior":"{behavior}","at":{at},"body":{body},"standsIn":[]}}"#)
+    let named = at + 1;
+    format!(
+        r#"{{"behavior":"{behavior}","at":{at},"identity":{{"unnamed":{named}}},"body":{body},"standsIn":[],"expects":{{"is":"owed"}}}}"#
+    )
 }
 
 /// `m.b`, taking nothing and answering an `Int` its body makes.
@@ -912,7 +918,7 @@ fn a_value_an_entry_or_a_module_written_twice_is_the_halves_disagreeing() {
     );
     let module = |helpers: &str| {
         format!(
-            r#"{{"name":"m","publishes":[],"helpers":[{helpers}],"values":[],"entries":[],"definitions":[],"examples":[]}}"#
+            r#"{{"name":"m","publishes":[],"helpers":[{helpers}],"values":[],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}}"#
         )
     };
     let document = helpers(&[]).replace(
@@ -1732,7 +1738,7 @@ fn with_clauses(fields: &str, invariants: &str, helpers: &[String]) -> String {
             r#""fields":[{}],"invariants":[{}]}}],"#,
             r#""behaviors":[],"#,
             r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"#,
-            r#""examples":[]}}]}}"#
+            r#""examples":[],"unreproducible":[]}}]}}"#
         ),
         fields,
         invariants,
@@ -2253,7 +2259,7 @@ fn a_newtype_that_wraps_itself_is_the_halves_disagreeing() {
             read(1, n)
         );
         format!(
-            r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":{TRANSPORT_VERSION},"declarations":[{}],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#,
             declarations.join(","),
             h(&[n, n], &body)
         )
@@ -2791,7 +2797,7 @@ fn a_construction_of_another_builds_type_names_the_reason_its_clauses_give() {
                 r#"{{"module":"m","name":"R","by":"onthepath","is":"product","#,
                 r#""fields":[{}],"headers":[{}]}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[{}],"values":[],"#,
-                r#""entries":[],"definitions":[],"examples":[]}}]}}"#
+                r#""entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#
             ),
             field("count", 0, "INT"),
             headers,
@@ -2971,7 +2977,7 @@ fn a_present_carrier_is_named_by_what_it_holds() {
 fn a_handover_carries_a_value_the_module_builds() {
     let value = |carries: &str| {
         format!(
-            r#"{{"transport":{TRANSPORT_VERSION},"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[]}}]}}"#,
+            r#"{{"transport":{TRANSPORT_VERSION},"declarations":[],"behaviors":[],"modules":[{{"name":"m","publishes":[],"helpers":[],"values":[{{"module":"m","name":"ks","handovers":[],"body":{}}},{{"module":"m","name":"ys","handovers":[{{"parameter":"dep","type":{INT},"carries":{{"module":"m","name":"{carries}"}}}}],"body":{}}}],"entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#,
             int(1),
             read(0, INT)
         )
@@ -3460,7 +3466,7 @@ fn what_clauses_are_answered_under_crosses_where_another_build_runs_them() {
                 r#"{{"module":"m","name":"R","by":"{}","is":"product","#,
                 r#""fields":[{}]{}}}],"behaviors":[],"#,
                 r#""modules":[{{"name":"m","publishes":[],"helpers":[],"values":[],"#,
-                r#""entries":[],"definitions":[],"examples":[]}}]}}"#
+                r#""entries":[],"definitions":[],"examples":[],"unreproducible":[]}}]}}"#
             ),
             by,
             field("count", 0, "INT"),

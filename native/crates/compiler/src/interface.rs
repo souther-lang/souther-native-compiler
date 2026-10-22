@@ -77,6 +77,13 @@ impl HostFunction {
     }
 }
 
+/// What a host runs a row through, by the kind of row: one stating an answer, or why the object
+/// cannot hold an answer to it, and one whose answer is owed.
+pub(crate) enum RowRun {
+    Asserted(Result<HostFunction, Refusal>),
+    Owed(HostFunction),
+}
+
 /// A behavior's or a published value's call as it is emitted, and the shape each value it takes and
 /// answers crosses in, which is what the manifest says beside it.
 #[derive(Clone, Debug)]
@@ -564,8 +571,43 @@ impl Surface {
             signature: signature(crosses.0, crosses.1),
             implementation: implementation.described(),
             implement: implement.to_string(),
+            examples: Vec::new(),
         };
         self.module(module).injections.push(injection);
+    }
+
+    /// A row of `behavior`, which a host implements and which [`Surface::injection`] already put
+    /// here, and what a host runs it through. A behavior's rows come here in the order they stand.
+    pub(crate) fn example(
+        &mut self,
+        module: &str,
+        behavior: &str,
+        at: usize,
+        identity: &crate::transport::RowIdentity,
+        row: Result<RowRun, String>,
+    ) {
+        let row = match row {
+            Ok(RowRun::Asserted(run)) => manifest::Row::Asserted(reach(run, |it| it.described())),
+            Ok(RowRun::Owed(run)) => manifest::Row::Owed(run.described()),
+            Err(why) => manifest::Row::Unreproducible(why),
+        };
+        let identity = match identity {
+            crate::transport::RowIdentity::Named(name) => {
+                manifest::RowIdentity::Named(name.clone())
+            }
+            crate::transport::RowIdentity::Unnamed(ordinal) => {
+                manifest::RowIdentity::Unnamed(*ordinal)
+            }
+        };
+        let injection = self
+            .module(module)
+            .injections
+            .iter_mut()
+            .find(|it| it.name == behavior)
+            .expect("a row of a behavior a host implements follows the behavior onto the surface");
+        injection
+            .examples
+            .push(manifest::Example { at, identity, row });
     }
 
     /// A value a module of this object publishes, and what a host reads it through, or why nothing
@@ -874,18 +916,29 @@ fn functions(manifest: &Manifest) -> impl Iterator<Item = &manifest::Function> {
         let declarations = module.declarations.iter().flat_map(declaration_functions);
         let lists = module.lists.iter().flat_map(list_functions);
         let functions = module.functions.iter().filter_map(|it| it.call.as_ref());
+        let rows = module.injections.iter().flat_map(row_functions);
         behaviors
             .chain(constructions)
             .chain(values)
             .chain(declarations)
             .chain(lists)
             .chain(functions)
+            .chain(rows)
     });
     let cases = manifest
         .cases
         .iter()
         .flat_map(|it| std::iter::once(&it.make).chain(&it.read));
     cases.chain(modules)
+}
+
+/// Every function a row of a behavior a host implements is run through, in the order the rows
+/// are written.
+fn row_functions(injection: &manifest::Injection) -> impl Iterator<Item = &manifest::Function> {
+    injection.examples.iter().filter_map(|it| match &it.row {
+        manifest::Row::Asserted(Reach::Available(run)) | manifest::Row::Owed(run) => Some(run),
+        manifest::Row::Asserted(Reach::Unavailable(_)) | manifest::Row::Unreproducible(_) => None,
+    })
 }
 
 /// The function a call reaches through, where one does.
@@ -1099,6 +1152,10 @@ pub(crate) fn declarations(manifest: &Manifest) -> String {
             written.push_str(&format!("/* injected {name}.{} */\n", injection.name));
             written.push_str(&declared_injection(injection));
             written.push('\n');
+            for run in row_functions(injection) {
+                written.push_str(&declared(run));
+                written.push('\n');
+            }
         }
         for value in &module.values {
             if let Some(read) = available(&value.read) {

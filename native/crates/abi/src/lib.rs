@@ -208,6 +208,13 @@ pub const GENERATIONS: &[(u32, &str)] = &[
          by `souther_construct_begin`; and how a host calls each function generated for it is \
          recorded by kind (`HOST_ENTRIES`) (souther-native-compiler#157)",
     ),
+    (
+        13,
+        "a host runs a row of a behavior it implements against an implementation of its own: \
+         `_b_<behavior>_example_<row>` takes the capability and writes whether the answer keeps \
+         the row and the answer in external form, and `_b_<behavior>_owed_<row>`, for a row whose \
+         answer is owed, writes the answer alone (souther-native-compiler#163)",
+    ),
 ];
 
 /// Whether a module's name can stand in a symbol: it carries no `$`, which is what every symbol
@@ -489,6 +496,27 @@ pub fn host_bind_symbol(module: &str, behavior: &str) -> String {
 /// answers is held to [`IMPLEMENTATION_ANSWERS`]; a capability made any other way is not.
 pub fn host_implement_symbol(module: &str, behavior: &str) -> String {
     format!("{}_implement", host_under(module, 'b', behavior))
+}
+
+/// Where a host runs the row at `at` among a behavior's rows against an implementation of its own,
+/// where the row states an answer: `(capabilities, room for whether the answer keeps the row, room
+/// for the answer in external form) -> status`. The capabilities are laid out as a published
+/// behavior's call is handed what it was constructed with, the behavior's own in the one place
+/// there is; handed none, it answers [`INJECTION_UNBOUND`]. Both rooms are written only where it
+/// answers [`ANSWERED`].
+///
+/// Whether the answer keeps the row is decided in the object, by the language's equality over the
+/// value the checker says the row states, and not by the external form, which is for a report.
+pub fn host_example_symbol(module: &str, behavior: &str, at: usize) -> String {
+    format!("{}_example_{at}", host_under(module, 'b', behavior))
+}
+
+/// Where a host runs the row at `at` among a behavior's rows, where the row's answer is owed:
+/// `(capabilities, room for the answer in external form) -> status`, as
+/// [`host_example_symbol`] without the room for whether the answer keeps the row, since the row
+/// states nothing an answer keeps or does not.
+pub fn host_owed_symbol(module: &str, behavior: &str, at: usize) -> String {
+    format!("{}_owed_{at}", host_under(module, 'b', behavior))
 }
 
 /// Where a host asks which case the answer of a behavior is, where the behavior answers a union no
@@ -2505,6 +2533,27 @@ pub const IMPLEMENTATION_ENTRY: HostEntry = HostEntry {
     answers: Some(HostWord::Status),
 };
 
+/// `_b_<behavior>_example_<row>`: [`host_example_symbol`].
+pub const EXAMPLE_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>_example_<row>",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Requirements)),
+        EntryPart::Word(HostParameter::Room(HostWord::Bool)),
+        EntryPart::Word(HostParameter::Room(HostWord::String)),
+    ],
+    answers: Some(HostWord::Status),
+};
+
+/// `_b_<behavior>_owed_<row>`: [`host_owed_symbol`].
+pub const OWED_ENTRY: HostEntry = HostEntry {
+    spelt: "_b_<behavior>_owed_<row>",
+    takes: &[
+        EntryPart::Word(HostParameter::Given(HostWord::Requirements)),
+        EntryPart::Word(HostParameter::Room(HostWord::String)),
+    ],
+    answers: Some(HostWord::Status),
+};
+
 /// `_b_<behavior>_answer_case`: [`host_behavior_answer_case_symbol`].
 pub const ANSWER_CASE_ENTRY: HostEntry = HostEntry {
     spelt: "_b_<behavior>_answer_case",
@@ -2636,6 +2685,8 @@ pub const HOST_ENTRIES: &[HostEntry] = &[
     BIND_ENTRY,
     IMPLEMENT_ENTRY,
     IMPLEMENTATION_ENTRY,
+    EXAMPLE_ENTRY,
+    OWED_ENTRY,
     ANSWER_CASE_ENTRY,
     VALUE_ENTRY,
     CONSTRUCT_ENTRY,
@@ -4342,13 +4393,13 @@ mod tests {
     fn a_behavior_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             behavior_symbol("calculation", "add"),
-            "souther12.calculation.add"
+            "souther13.calculation.add"
         );
     }
 
     #[test]
     fn a_dotted_module_keeps_its_dots() {
-        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther12.lib.pub.bill");
+        assert_eq!(behavior_symbol("lib.pub", "bill"), "souther13.lib.pub.bill");
     }
 
     /// What the reading rests on. Were this admitted, `a.b` / `c` and `a` / `b.c` would be spelt
@@ -4388,7 +4439,7 @@ mod tests {
     fn each_row_of_a_behavior_is_its_own_symbol() {
         assert_eq!(
             example_symbol("calculation", "add", 0),
-            "souther12.calculation.add$example$0"
+            "souther13.calculation.add$example$0"
         );
         assert_ne!(
             example_symbol("calculation", "add", 0),
@@ -4403,7 +4454,7 @@ mod tests {
     #[test]
     fn an_entry_and_its_boundary_are_two_symbols() {
         let entry = behavior_symbol("shop", "quote");
-        assert_eq!(boundary_symbol(&entry), "souther12.shop.quote$boundary");
+        assert_eq!(boundary_symbol(&entry), "souther13.shop.quote$boundary");
         assert_ne!(boundary_symbol(&entry), entry);
         assert_ne!(
             boundary_symbol(&example_symbol("shop", "quote", 0)),
@@ -4474,7 +4525,7 @@ mod tests {
     fn a_published_value_is_reached_by_its_module_and_its_name() {
         assert_eq!(
             value_symbol("pricing", "standard"),
-            "souther12.pricing$value$standard"
+            "souther13.pricing$value$standard"
         );
     }
 
@@ -4512,7 +4563,7 @@ mod tests {
     fn a_type_is_built_through_its_module_and_its_name() {
         assert_eq!(
             constructor_symbol("pricing", "Amount"),
-            "souther12.pricing$construct$Amount"
+            "souther13.pricing$construct$Amount"
         );
     }
 
@@ -4532,7 +4583,7 @@ mod tests {
     fn what_decides_a_construction_is_reached_by_the_types_module_and_name() {
         assert_eq!(
             checked_constructor_symbol("pricing", "Amount"),
-            "souther12.pricing$checked$Amount"
+            "souther13.pricing$checked$Amount"
         );
     }
 
@@ -4562,23 +4613,23 @@ mod tests {
     fn a_host_reaches_a_type_under_its_module_and_its_name() {
         assert_eq!(
             host_constructor_symbol("pricing", "Amount"),
-            "souther12_m_pricing_t_Amount_construct"
+            "souther13_m_pricing_t_Amount_construct"
         );
         assert_eq!(
             host_field_symbol("pricing", "Amount", "value"),
-            "souther12_m_pricing_t_Amount_f_value"
+            "souther13_m_pricing_t_Amount_f_value"
         );
         assert_eq!(
             host_case_symbol("pricing", "Result"),
-            "souther12_m_pricing_t_Result_case"
+            "souther13_m_pricing_t_Result_case"
         );
         assert_eq!(
             host_decode_symbol("pricing", "Amount"),
-            "souther12_m_pricing_t_Amount_decode"
+            "souther13_m_pricing_t_Amount_decode"
         );
         assert_eq!(
             host_encode_symbol("pricing", "Amount"),
-            "souther12_m_pricing_t_Amount_encode"
+            "souther13_m_pricing_t_Amount_encode"
         );
     }
 
@@ -4586,15 +4637,15 @@ mod tests {
     fn a_host_reaches_a_behavior_and_a_value_under_their_module() {
         assert_eq!(
             host_behavior_symbol("lib.shop", "quote"),
-            "souther12_m_lib_m_shop_b_quote"
+            "souther13_m_lib_m_shop_b_quote"
         );
         assert_eq!(
             host_value_symbol("lib.shop", "standard"),
-            "souther12_m_lib_m_shop_v_standard"
+            "souther13_m_lib_m_shop_v_standard"
         );
         assert_eq!(
             host_behavior_answer_case_symbol("lib.shop", "find"),
-            "souther12_m_lib_m_shop_b_find_answer_case"
+            "souther13_m_lib_m_shop_b_find_answer_case"
         );
     }
 
@@ -4607,7 +4658,7 @@ mod tests {
                 &HostShape::Leaf(Value),
                 HostListOperation::Construct
             ),
-            "souther12_m_shop_l_value_construct"
+            "souther13_m_shop_l_value_construct"
         );
         assert_eq!(
             host_list_symbol(
@@ -4615,7 +4666,7 @@ mod tests {
                 &HostShape::Option(Box::new(HostShape::Leaf(Int))),
                 HostListOperation::At
             ),
-            "souther12_m_lib_m_shop_l_o_int_at"
+            "souther13_m_lib_m_shop_l_o_int_at"
         );
         assert_eq!(
             host_list_symbol(
@@ -4626,7 +4677,7 @@ mod tests {
                 ]))),
                 HostListOperation::Length
             ),
-            "souther12_m_shop_l_l_t2_int_o_bool_length"
+            "souther13_m_shop_l_l_t2_int_o_bool_length"
         );
     }
 
@@ -4639,11 +4690,11 @@ mod tests {
         };
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Call),
-            "souther12_m_shop_fn_f2_int_string_o_int_call"
+            "souther13_m_shop_fn_f2_int_string_o_int_call"
         );
         assert_eq!(
             host_function_symbol("shop", &function, HostFunctionOperation::Implement),
-            "souther12_m_shop_fn_f2_int_string_o_int_implement"
+            "souther13_m_shop_fn_f2_int_string_o_int_implement"
         );
     }
 
@@ -4727,11 +4778,11 @@ mod tests {
     fn a_name_that_is_not_ascii_letters_and_digits_is_escaped() {
         assert_eq!(
             host_behavior_symbol("shop", "foo_bar"),
-            "souther12_m_shop_b_foo__bar"
+            "souther13_m_shop_b_foo__bar"
         );
         assert_eq!(
             host_behavior_symbol("shop", "数量"),
-            "souther12_m_shop_b__u6570__u91cf_"
+            "souther13_m_shop_b__u6570__u91cf_"
         );
     }
 
@@ -4741,7 +4792,7 @@ mod tests {
     fn a_type_is_read_through_its_module_and_its_name() {
         assert_eq!(
             reader_symbol("pricing", "Amount"),
-            "souther12.pricing$read$Amount"
+            "souther13.pricing$read$Amount"
         );
     }
 

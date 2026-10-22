@@ -144,7 +144,7 @@ class AManifestIsReadAsTheDriverPromisesItTest {
         assertThatThrownBy(() -> ManifestReader.read(earlier))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("is version 3 of souther-native-interface for ABI generation"
-                        + " 3, and this generator reads version 15")
+                        + " 3, and this generator reads version 16")
                 .hasMessageNotContaining("answers");
     }
 

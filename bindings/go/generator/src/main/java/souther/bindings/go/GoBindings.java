@@ -53,7 +53,7 @@ public final class GoBindings {
      * The protocol of the runtime module this writes for: what its public surface is, as recorded
      * under {@code bindings/go/runtime/protocol}. A test holds it to the runtime's own.
      */
-    static final int RUNTIME_PROTOCOL = 6;
+    static final int RUNTIME_PROTOCOL = 7;
 
     /**
      * The version of Raoh the runtime module asks for, which a package that imports it asks for as
@@ -1107,7 +1107,7 @@ public final class GoBindings {
     private static List<String> generated(BehaviorType it) {
         return it.injected()
                 ? List.of(it.type(), it.capability(), "Implement" + it.type(), "hosted" + it.type(),
-                        "dispatch" + it.type())
+                        "dispatch" + it.type(), it.type() + "Examples")
                 : List.of(it.capability(), "Bind" + it.type());
     }
 
@@ -1193,6 +1193,77 @@ public final class GoBindings {
         hostCallback(at, GoNames.hostSymbol('i', importPath, module.name(), injection.name()),
                 "dispatch" + trait, hosted, "impl.Apply", injection.implementation(),
                 injection.implement(), false, takes, answers, names);
+        examples(at, injection, it);
+    }
+
+    /**
+     * {@code <Behavior>Examples}: the rows of {@code injection}, in the order they are written, each
+     * a {@code souther.Row} a host evaluates against an implementation of its own. A row is listed
+     * whatever it is, so that one with nothing to run is reported and not missing; one that runs is
+     * run through the library's function for it, which holds the answer to the row in the library.
+     *
+     * <p>Nothing here runs every row: what an implementation answers from belongs to the test that
+     * loops over them, as in the JVM's {@code BoundExamples}.
+     */
+    private void examples(GoModule at, Manifest.Injection injection, BehaviorType it) {
+        Body.Imports imports = at.imports;
+        String souther = imports.souther();
+        String lib = imports.lib();
+        String trait = it.type();
+        String row = lib + ".Row[" + trait + "]";
+        StringBuilder go = new StringBuilder();
+        go.append("\n// ").append(trait).append("Examples are the rows of `").append(it.key())
+                .append("`, in the order they are written, each\n// run against an implementation of")
+                .append(" the behavior with Evaluate. Whether an answer keeps a row\n// is the")
+                .append(" library's to say, by the language's equality.\n")
+                .append("func ").append(trait).append("Examples() []").append(row).append(" {\n");
+        if (injection.examples().isEmpty()) {
+            at.items.append(go).append("\treturn nil\n}\n");
+            return;
+        }
+        go.append("\trows := ").append(souther).append(".RowsOf(func(r *").append(lib)
+                .append(".Run, impl ").append(trait).append(") ").append(lib)
+                .append(".Capability { return Implement").append(trait).append("(r, impl).Cap__ })\n")
+                .append("\treturn []").append(row).append("{\n");
+        for (Manifest.Example example : injection.examples()) {
+            String identity = souther + "." + switch (example.identity()) {
+                case Manifest.RowIdentity.Named named -> "RowNamed(" + GoNames.quoted(named.name()) + ")";
+                case Manifest.RowIdentity.Unnamed unnamed -> "RowUnnamed(" + unnamed.ordinal() + ")";
+            };
+            String place = example.at() + ", " + identity;
+            switch (example.row()) {
+                case Manifest.Row.Asserted asserted when asserted.run().available() != null -> {
+                    Function run = Objects.requireNonNull(asserted.run().available());
+                    go.append("\t\trows.Asserted(").append(place).append(", ")
+                            .append(rowCall(at, run, true)).append("),\n");
+                }
+                case Manifest.Row.Asserted asserted ->
+                        go.append("\t\trows.NotComparable(").append(place).append("),\n");
+                case Manifest.Row.Owed owed -> go.append("\t\trows.Owed(").append(place).append(", ")
+                        .append(rowCall(at, owed.run(), false)).append("),\n");
+                case Manifest.Row.Unreproducible unreproducible ->
+                        go.append("\t\trows.Unreproducible(").append(place).append(", ")
+                                .append(GoNames.quoted(unreproducible.why())).append("),\n");
+            }
+        }
+        at.items.append(go).append("\t}\n}\n");
+    }
+
+    /**
+     * The function that calls a row's function through its address, handed the capabilities the
+     * row runs with and room for what it writes: whether the answer keeps the row where
+     * {@code verdict}, and the answer.
+     */
+    private String rowCall(GoModule at, Function run, boolean verdict) {
+        Body.Imports imports = at.imports;
+        String unsafe = imports.unsafe();
+        String souther = imports.souther();
+        String lib = imports.lib();
+        return "func(r *" + lib + ".Run, capabilities " + unsafe + ".Pointer, "
+                + (verdict ? "kept *uint8, " : "") + "answer *" + unsafe + ".Pointer) " + souther
+                + ".Status {\n\t\t\treturn " + souther + ".Status(" + at.shim(run) + "(r.Library().Symbol(\""
+                + run.name() + "\"), capabilities, " + (verdict ? "(*C.uint8_t)(kept), " : "")
+                + "answer))\n\t\t}";
     }
 
     /**
@@ -1657,6 +1728,9 @@ public final class GoBindings {
                 + "type Ref = souther.Ref[binding.Tag]\n\n"
                 + "// Capability stands for a behavior another requires, made in a run.\n"
                 + "type Capability = souther.Capability[binding.Tag]\n\n"
+                + "// Row is a row of a behavior a host implements, of the behavior I is the interface"
+                + " of.\n"
+                + "type Row[I any] = souther.Row[binding.Tag, I]\n\n"
                 + "// Load opens the library file at path.\n//\n"
                 + "// It refuses a library of another ABI generation, and checks that every function this"
                 + " binding\n// calls is there. That path is the library this binding was generated from is"

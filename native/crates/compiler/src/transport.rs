@@ -122,6 +122,13 @@ pub const MOVES: &[(u32, &str)] = &[
         "a list's uniqueness names the type its repeated elements are reported as in an issue's \
          metadata (`element`), which the checker gives only where they have one, in place of none",
     ),
+    (
+        34,
+        "a row says what it names itself (`identity`) and what it states of the answer as the \
+         checker resolved it (`expects`: a call computing the stated value, the case stated, or \
+         that the answer is owed), and a row the compile could not read is carried with why \
+         (`unreproducible`) rather than left out",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -225,7 +232,19 @@ impl Program {
                     )
                 })
         });
-        let modules = self.modules.iter().flat_map(|written| {
+        // What a row states of the answer is run only where a host's answer is held to it, in the
+        // rows of a behavior a host implements. A row of a behavior with a body is held to what it
+        // states by whoever ran it, so its stated value is nobody's to run here, and checking and
+        // specializing it would refuse an object over a value nothing calls.
+        let held: std::rc::Rc<std::collections::HashSet<String>> = std::rc::Rc::new(
+            self.behaviors
+                .iter()
+                .filter(|it| it.is == Answers::Injected)
+                .map(|it| it.declared())
+                .collect(),
+        );
+        let modules = self.modules.iter().flat_map(move |written| {
+            let held = std::rc::Rc::clone(&held);
             let Module {
                 name,
                 // What the module publishes of its data names declarations and holds no body.
@@ -235,6 +254,8 @@ impl Program {
                 entries,
                 definitions,
                 examples,
+                // A row the compile could not read hands over nothing, so it has no body.
+                unreproducible: _,
             } = written;
             let module = name.as_str();
             let helpers = helpers
@@ -269,7 +290,17 @@ impl Program {
                             Body::at(module, Owner::StoodIn { example: it, at }, value)
                         })
                     });
-                std::iter::once(Body::at(module, Owner::Example(it), &it.body)).chain(stood)
+                let expected = match &it.expects {
+                    Expects::Value { value }
+                        if held.contains(&format!("{module}.{}", it.behavior)) =>
+                    {
+                        Some(Body::at(module, Owner::Expected(it), value))
+                    }
+                    Expects::Value { .. } | Expects::Case { .. } | Expects::Owed => None,
+                };
+                std::iter::once(Body::at(module, Owner::Example(it), &it.body))
+                    .chain(stood)
+                    .chain(expected)
             });
             helpers
                 .chain(values)
@@ -366,6 +397,8 @@ pub enum Owner<'p> {
     /// A behavior's own body, by the name it defines.
     Definition(&'p str),
     Example(&'p Example),
+    /// What computes the value the row states its behavior answers ([`Expects::Value`]).
+    Expected(&'p Example),
     /// A value the row `example` states its stand-in at `at` is asked with or answers.
     StoodIn {
         example: &'p Example,
@@ -394,6 +427,7 @@ impl<'p> Owner<'p> {
             | Owner::Entry(_)
             | Owner::Definition(_)
             | Owner::Example(_)
+            | Owner::Expected(_)
             | Owner::StoodIn { .. }
             | Owner::Invariant { .. }
             | Owner::Ensures { .. } => None,
@@ -601,6 +635,10 @@ pub struct Module {
     pub definitions: Vec<Definition>,
     /// The `example` rows of this module's behaviors that the object runs.
     pub examples: Vec<Example>,
+    /// The rows of this module's behaviors the compile could not read, which hand over no values
+    /// and so have nothing to run: carried so that a reader counting a behavior's rows counts the
+    /// ones that were written.
+    pub unreproducible: Vec<Unreproducible>,
 }
 
 /// A value this module declares: the one place it runs.
@@ -828,10 +866,49 @@ pub struct Example {
     pub behavior: String,
     pub at: usize,
     pub body: Node,
+    /// What the row names itself.
+    pub identity: RowIdentity,
     /// What the row states each dependency of the behavior answers, in the order the behavior
     /// requires them, and none where it states nothing of any (upstream `CheckedRow.WithStandIns`).
     #[serde(rename = "standsIn")]
     pub stands_in: Vec<StandIn>,
+    /// What the row states of the answer, as the checker resolved it (upstream
+    /// `CheckedAssertion`).
+    pub expects: Expects,
+}
+
+/// What a row names itself (upstream `RowIdentity`): the name it was written with, or which of its
+/// behavior's rows it is where it was written with none. What a report says, and not a key.
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+pub enum RowIdentity {
+    Named(String),
+    Unnamed(u32),
+}
+
+/// What a row states of the answer.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "is", rename_all = "lowercase", deny_unknown_fields)]
+pub enum Expects {
+    /// A whole value, which `value` computes, built where the answer is and not at the answer's
+    /// type: an answer keeps the row where the two are the same value by the language's equality.
+    Value { value: Node },
+    /// The case the answer is, and nothing under it.
+    Case { case: Case },
+    /// Nothing: the answer is owed, so there is nothing an answer keeps or does not.
+    Owed,
+}
+
+/// A row the compile could not read, and why, which hands over no values (upstream
+/// `CheckedRow.NotReproducible`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Unreproducible {
+    pub behavior: String,
+    pub at: usize,
+    pub identity: RowIdentity,
+    /// Why, as the checker says it.
+    pub why: String,
 }
 
 /// What a row states one dependency answers (upstream `StandsIn`): the first of `entries` stating

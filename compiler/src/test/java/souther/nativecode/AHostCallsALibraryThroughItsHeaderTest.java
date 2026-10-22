@@ -91,6 +91,10 @@ class AHostCallsALibraryThroughItsHeaderTest {
             example twice
                 | "two" : (1) -> 2
 
+            example discountFor
+                | "nothing off a line of one" : (Line { price = Money(1), quantity = 1, note = None }) -> 0
+                | (Line { price = Money(2), quantity = 1, note = None }) -> <?>
+
             let pair: (Int, Bool) = (3, true)
 
             let deep = List.get(0, [Line { price = Money(1), quantity = 1, note = None }.note])
@@ -585,9 +589,9 @@ class AHostCallsALibraryThroughItsHeaderTest {
             rated: status 0, case 0, 299850 at 5, status 0, case 1, nought 0 at 7
             """;
 
-    /** What version 15 of the manifest is, for the program above. */
-    private static final Path INTERFACE_V15 =
-            Repository.file("native", "crates", "compiler", "tests", "interface-v15.json");
+    /** What version 16 of the manifest is, for the program above. */
+    private static final Path INTERFACE_V16 =
+            Repository.file("native", "crates", "compiler", "tests", "interface-v16.json");
 
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -621,21 +625,21 @@ class AHostCallsALibraryThroughItsHeaderTest {
     }
 
     /**
-     * The manifest a binding is written against, as version 15 says it for this program. A change
+     * The manifest a binding is written against, as version 16 says it for this program. A change
      * to what the manifest says is a change here, and whether it moves the version is decided
      * looking at it.
      */
     @Test
-    void theManifestIsWhatVersionFifteenSays(@TempDir Path into) throws Exception {
+    void theManifestIsWhatVersionSixteenSays(@TempDir Path into) throws Exception {
         NativeCompiler.Library library =
                 NativeCompiler.library(Checked.of(List.of(SHOP)), into);
 
         String written = Files.readString(library.manifest(), StandardCharsets.UTF_8);
-        String fixed = Files.exists(INTERFACE_V15)
-                ? Files.readString(INTERFACE_V15, StandardCharsets.UTF_8) : "";
+        String fixed = Files.exists(INTERFACE_V16)
+                ? Files.readString(INTERFACE_V16, StandardCharsets.UTF_8) : "";
         if (!written.equals(fixed)) {
             // Kept where it can be compared with the fixture, and copied over it once it is read.
-            Files.writeString(Path.of("target", "interface-v15.written.json"), written,
+            Files.writeString(Path.of("target", "interface-v16.written.json"), written,
                     StandardCharsets.UTF_8);
         }
         assertThat(written).isEqualTo(fixed);

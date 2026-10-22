@@ -258,8 +258,9 @@ It writes the library into `build/native` and its binding into `build/go`, as th
 `example.com/go-cart/model`, which `go.mod` replaces with that directory. The module is
 `com.example.cart.domain`, so its types are in the package
 `example.com/go-cart/model/com/example/cart/domain`, under the names the model spells them with, the
-first letter a capital (`item.ProductId()`). The runtime the binding calls comes from
-`bindings/go/runtime`, replaced in until it is published.
+first letter a capital (`item.ProductId()`). The runtime the binding calls is the module
+`github.com/souther-lang/souther-native-compiler/bindings/go/runtime`, which `go.mod` requires at the
+version the binding does and Go fetches from the module proxy.
 
 The rows of the five injected behaviors state what an implementation should answer and are owed by
 one; nothing in the model can answer them.

@@ -88,7 +88,8 @@ Cargo, and runs it in place of an installed one.
 It writes the library into `build/native` and its binding into `build/php`, under the namespace
 `Model`, which `composer.json` maps as it maps the application's own classes. The module is
 `com.example.cart.domain`, so its classes are `Model\Com\Example\Cart\Domain\*`. The runtime the
-binding calls comes from `bindings/php/runtime` as a Composer path repository.
+binding calls is the package `souther-lang/php-runtime`, which `composer.json` requires and Composer
+installs from Packagist.
 
 The rows of the five injected behaviors state what an implementation should answer and are owed by
 one; nothing in the model can answer them.

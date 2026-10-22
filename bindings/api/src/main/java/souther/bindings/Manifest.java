@@ -841,18 +841,92 @@ public final class Manifest {
     /**
      * A behavior a host implements, the shape each value it takes and answers crosses in, and what
      * a host makes a capability of an implementation of its own through: {@code (room for a
-     * capability, room for a souther_hosted, the implementation, what it is handed first)}.
+     * capability, room for a souther_hosted, the implementation, what it is handed first)}. Its
+     * rows, in the order they are written, are what an implementation is held to.
      */
     public record Injection(String name, List<NamedParameter> parameters, Type answers,
-                            Crossings crossings, Implementation implementation, String implement) {
+                            Crossings crossings, Implementation implementation, String implement,
+                            List<Example> examples) {
 
         public Injection {
             parameters = List.copyOf(parameters);
+            examples = List.copyOf(examples);
             implementation.answering(crossings.signature());
             agree(ValueCrossing.types(crossings.takes()),
                     parameters.stream().map(NamedParameter::type).toList(),
                     "what " + name + " takes");
             agree(crossings.answers().type(), answers, "what " + name + " answers");
+        }
+    }
+
+    /**
+     * One row of a behavior a host implements: where it stands among the behavior's rows, which is
+     * what its function is spelt under and not a key, what it names itself, and what a host does
+     * with it.
+     */
+    public record Example(int at, RowIdentity identity, Row row) {
+    }
+
+    /** What a row names itself: the name it was written with, or which row it is, from one. */
+    public sealed interface RowIdentity {
+
+        /** What a report calls the row. */
+        String shown();
+
+        record Named(String name) implements RowIdentity {
+
+            @Override
+            public String shown() {
+                return name;
+            }
+        }
+
+        record Unnamed(int ordinal) implements RowIdentity {
+
+            @Override
+            public String shown() {
+                return "row " + ordinal;
+            }
+        }
+    }
+
+    /**
+     * What a host does with one row. Three kinds and not one with parts that may be missing, so that
+     * a row whose answer is owed has no verdict to read and a row with nothing to run cannot be run.
+     */
+    public sealed interface Row {
+
+        /**
+         * The row states an answer: run through {@code (capabilities, room for whether the answer
+         * keeps the row, room for the answer in external form) -> status}, or, where the library
+         * cannot hold an answer to what the row states, nothing.
+         */
+        record Asserted(Reach<Function> run) implements Row {
+
+            public Asserted {
+                if (run.available() instanceof Function function) {
+                    function.takes(List.of(Parameter.given(Word.REQUIREMENTS)), List.of(),
+                            List.of(), List.of(Parameter.room(Word.BOOL),
+                                    Parameter.room(Word.STRING)), Word.STATUS);
+                }
+            }
+        }
+
+        /**
+         * The row's answer is owed: run through {@code (capabilities, room for the answer in
+         * external form) -> status}, which says nothing of whether the answer keeps the row, since
+         * the row states nothing it could keep.
+         */
+        record Owed(Function run) implements Row {
+
+            public Owed {
+                run.takes(List.of(Parameter.given(Word.REQUIREMENTS)), List.of(), List.of(),
+                        List.of(Parameter.room(Word.STRING)), Word.STATUS);
+            }
+        }
+
+        /** The compile could not read the row, so there is nothing to run; why, as it says it. */
+        record Unreproducible(String why) implements Row {
         }
     }
 
