@@ -148,6 +148,13 @@ Nothing is published from CI. The release workflow keeps the publication and cre
 release, and what goes to a registry is published by hand, once the Souther the backend names is on
 Maven Central.
 
+A release is numbered after the Souther it is built against: `v0.4.1` is built against Souther
+0.4.1. The CLI runs a backend only under exactly that Souther, so each Souther release has one of
+these, and a number of the backend's own would say nothing the Souther's does not. A fix here
+between two Souther releases is tagged `v<souther>-<n>`, `v0.4.1-1` after `v0.4.1`, which the CLI
+takes as the newer of the two built against Souther 0.4.1. The runtimes and the bindings' modules
+keep numbers of their own, since they move only when they change.
+
 The version a release has is the tag's. The workflow sets every module to it
 (`versions:set`) before it builds anything, so the poms of the tagged commit keep their snapshot
 version, and nothing is committed for the release but what it is built against: `souther.version` in
@@ -161,7 +168,7 @@ The publication reaches Maven Central from the workflow's `maven-repository` art
 nowhere else, because it is the only copy of a compiler carrying the checksums. The owner downloads
 it and runs [`scripts/publish-to-central.sh`](../scripts/publish-to-central.sh) on it:
 
-    git tag v0.1.0 <commit> && git push origin v0.1.0
+    git tag v0.4.1 <commit> && git push origin v0.4.1
     gh run list --workflow release.yml --limit 1
     gh run watch <run> --exit-status
     gh run download <run> -n maven-repository -D <directory>

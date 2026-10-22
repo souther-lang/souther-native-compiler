@@ -64,7 +64,7 @@ it, which the CLI needs anyway.
     souther compile --target native --help
 
 The backend is the jar `souther-native-compiler-<version>-backend.jar`, released on Maven Central
-beside the compiler at this repository's own version. Its descriptor,
+beside the compiler at the version of the Souther it is built against. Its descriptor,
 `META-INF/souther/backend.properties`, names the target `native` and the Souther it was built
 against, and the CLI runs a backend only where that Souther is exactly its own, so a backend is
 released again for each Souther. A package manager installs it where its `souther` looks; by hand,
