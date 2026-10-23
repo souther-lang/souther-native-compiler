@@ -6,14 +6,21 @@ name: build
 #
 # Also what a release runs on the commit it is made from (release.yml calls it): a release is not
 # replaced once it is out, and a commit that once passed is not shown to be this one.
+#
+# Each tree is built once before that. main is not built on a push: it moves only by a pull request
+# from develop, whose tree develop's push already built, and the release builds the commit it is
+# tagged on. A pull request from develop is not built either, for the same reason: what it shows is
+# the run of its head, develop's push. Every other pull request is, a feature's or one that targets
+# main from elsewhere, since nothing else builds its tree.
 on:
   push:
-    branches: [main, develop]
+    branches: [develop]
   pull_request:
   workflow_call:
 
 jobs:
   build:
+    if: github.event_name != 'pull_request' || github.head_ref != 'develop'
     strategy:
       fail-fast: false
       matrix:
@@ -63,14 +70,14 @@ jobs:
       # most of into a build from nothing. EveryRustCacheIsKeptUnderWhatDecidesTheBuildTest holds
       # every virtual root in the repository to this list.
       #
-      # Saved by develop and main only. A pull request reads what they saved and keeps nothing of its
-      # own: each push of one saved some 800MB under a key no other branch reads, the repository's
-      # 10GB of caches filled, and GitHub let go of develop's first, so the next pull request found
-      # no cache at all and built every crate from nothing.
+      # Saved by develop only, the one branch built on a push. A pull request reads what it saved and
+      # keeps nothing of its own: each push of one saved some 800MB under a key no other branch reads,
+      # the repository's 10GB of caches filled, and GitHub let go of develop's first, so the next pull
+      # request found no cache at all and built every crate from nothing.
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ hashFiles('native/Cargo.toml', '**/.cargo/config.toml', '**/.cargo/config') }}
-          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/develop' }}
           workspaces: |
             native
             bindings/rust/runtime
