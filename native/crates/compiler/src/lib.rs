@@ -118,6 +118,14 @@ const A_WALK_OUT_OF_ORDER: u8 = 4;
 /// [`NO_ARM`] is one: no document the checker wrote comes to this.
 const A_WHOLE_CLAUSE_MET: u8 = 5;
 
+/// A runtime function having no place to write an answer the language owes: a `Decimal` or a
+/// `Rational` the operation always has, at a scale or an exponent past what the runtime keeps one
+/// in. A trap and not a status, though this compiler did nothing wrong: the checker names no
+/// reason for the site, so nothing the program is ended here, and what ran short is what the run
+/// had to write the answer with. It ends as an arena that has run out does, which is the run
+/// failing and says nothing of a value.
+const NO_ROOM: u8 = 6;
+
 /// Every reason a Souther computation ends without a value, mapped to the wire number a generated
 /// function's status answers with. `souther_native_abi` reserves `ANSWERED`, the `HOST_STATUSES`
 /// and the `EXAMPLE_STATUSES`, so every member here gets one of what is left, which is held below at compile
@@ -6176,8 +6184,8 @@ fn lower_kernel(
         }
         // A zero divisor is answered as a case before the scale or anything else is looked at
         // (spec §a-division-that-does-not-run-needs-no-scale); every argument has been worked out
-        // all the same, as at any call. Past it the quotient is the union's `Decimal` case, or the
-        // run ends where the scale or the quotient has no place.
+        // all the same, as at any call. Past it the quotient is the union's `Decimal` case, which
+        // there is one of at every scale.
         LoweredKernel::DecimalDivide => {
             let [_, divisor, _, _] = values[..] else {
                 unreachable!("`Coherent` held decimal.divide to the four arguments it takes");
@@ -6402,10 +6410,33 @@ fn runtime_call(
     builder.inst_results(called)[0]
 }
 
+/// Ends the run where a runtime function wrote nothing, for what the site names: the one reason
+/// it ends without a value for, or none.
+///
+/// A site that names none is one the language owes an answer at whatever it is handed, a sum of
+/// two `Decimal`s say, so nothing written there is the runtime with no place to write it and not
+/// a value refused: the run fails ([`NO_ROOM`]) and no status says a reason the checker never
+/// gave. Which of the two a site is, is read off what it names and nowhere else.
+fn ended_where_nothing_was_written(
+    builder: &mut FunctionBuilder,
+    abort: ir::Block,
+    aborts: &[AbortKind],
+    nothing: ir::Value,
+) {
+    if aborts.is_empty() {
+        builder.ins().trapnz(
+            nothing,
+            TrapCode::user(NO_ROOM).expect("a trap code of its own"),
+        );
+    } else {
+        abort_where(builder, abort, one_reason_status(aborts), nothing);
+    }
+}
+
 /// A call of a runtime function that answers whether it wrote its value through room it is handed
-/// last, and the value, read back at `width`, where it did. Where it did not, the run ends for the
-/// one reason the call names: which reason that is, is the call's contract, and the runtime says
-/// nothing of why.
+/// last, and the value, read back at `width`, where it did. Where it did not, the run ends as
+/// [`ended_where_nothing_was_written`] says: which reason that is, or that there is none, is the
+/// call's contract, and the runtime says nothing of why.
 #[allow(clippy::too_many_arguments)]
 fn written_or_ended(
     builder: &mut FunctionBuilder,
@@ -6422,7 +6453,7 @@ fn written_or_ended(
     handed.push(room);
     let wrote = runtime_call(builder, lowering, module, name, &handed);
     let nothing = builder.ins().icmp_imm_s(IntCC::Equal, wrote, 0);
-    abort_where(builder, abort, one_reason_status(aborts), nothing);
+    ended_where_nothing_was_written(builder, abort, aborts, nothing);
     builder.ins().load(width, TRUSTED, room, 0)
 }
 
@@ -6905,8 +6936,9 @@ fn exact_number(
     }
 }
 
-/// The exact quotient of two exact values: a zero divisor ends the run for what that is, and a
-/// quotient the runtime has no place for ends it for the one reason that is.
+/// The exact quotient of two exact values: a zero divisor ends the run for what that is, the one
+/// reason a quotient names. Past it every pair has a quotient, so one the runtime has no place to
+/// write is the run failing ([`NO_ROOM`]).
 fn exact_quotient(
     builder: &mut FunctionBuilder,
     lowering: &Lowering,
@@ -6931,12 +6963,7 @@ fn exact_quotient(
         &[dividend, divisor, room],
     );
     let nothing = builder.ins().icmp_imm_s(IntCC::Equal, wrote, 0);
-    abort_where(
-        builder,
-        abort,
-        native_status(AbortKind::RequiredFormHasNoPlace),
-        nothing,
-    );
+    ended_where_nothing_was_written(builder, abort, &[], nothing);
     builder.ins().load(POINTER, TRUSTED, room, 0)
 }
 

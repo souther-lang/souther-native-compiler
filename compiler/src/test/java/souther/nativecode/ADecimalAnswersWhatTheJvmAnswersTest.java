@@ -268,23 +268,31 @@ class ADecimalAnswersWhatTheJvmAnswersTest {
     }
 
     /**
-     * A result whose scale is outside the 32-bit range ends the run, and so does a scale asked for
-     * outside it and a whole number no {@code Int} holds: each for the one reason the operation's
-     * contract names.
+     * A whole number no {@code Int} holds ends the run for the one reason the narrowing's contract
+     * names: the answer is an {@code Int}, and the language refuses a value one does not hold.
      */
     @Test
-    void aDecimalOperationEndsTheRunWhereItsContractSays() throws Exception {
+    void aNarrowingToAnIntEndsTheRunWhereNoIntHoldsTheValue() throws Exception {
+        Asked decimals = new Asked(DECIMALS);
+        assertThat(decimals.outcome("whole", integer(4), decimal("9223372036854775808")))
+                .isEqualTo(new RunOutcome.Aborted(AbortKind.REQUIRED_FORM_HAS_NO_PLACE));
+    }
+
+    /**
+     * A product, a rounding and a quotient always have an answer, so one at a scale outside the
+     * 32 bits the runtime keeps a scale in is no reason the language gives: the run fails for
+     * want of room, and no status says the program was refused.
+     */
+    @Test
+    void anAnswerTheRuntimeHasNoPlaceToWriteIsTheRunFailing() {
         Asked decimals = new Asked(DECIMALS);
         ObservedValue tiny = decimal("1E-2147483647");
-        RunOutcome noPlace = new RunOutcome.Aborted(AbortKind.REQUIRED_FORM_HAS_NO_PLACE);
-        assertThat(decimals.outcome("product", tiny, decimal("0.1"))).isEqualTo(noPlace);
-        assertThat(decimals.outcome("multiplied", tiny, decimal("0.1"))).isEqualTo(noPlace);
-        assertThat(decimals.outcome("rounded", integer(2147483648L), integer(0), decimal("1")))
-                .isEqualTo(noPlace);
-        assertThat(decimals.outcome("divided", decimal("1"), decimal("3"), integer(2147483648L),
-                integer(0))).isEqualTo(noPlace);
-        assertThat(decimals.outcome("whole", integer(4), decimal("9223372036854775808")))
-                .isEqualTo(noPlace);
+        Running.failsForWantOfRoom(() -> decimals.outcome("product", tiny, decimal("0.1")));
+        Running.failsForWantOfRoom(() -> decimals.outcome("multiplied", tiny, decimal("0.1")));
+        Running.failsForWantOfRoom(() -> decimals.outcome("rounded", integer(2147483648L),
+                integer(0), decimal("1")));
+        Running.failsForWantOfRoom(() -> decimals.outcome("divided", decimal("1"), decimal("3"),
+                integer(2147483648L), integer(0)));
     }
 
     /**

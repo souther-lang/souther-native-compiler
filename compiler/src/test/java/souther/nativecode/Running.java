@@ -14,6 +14,7 @@ import souther.compiler.program.Publication;
 import souther.compiler.program.StandsIn;
 import souther.compiler.types.Type;
 import souther.compiler.types.ValueName;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.jspecify.annotations.Nullable;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
@@ -27,6 +28,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
+
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * A behavior of this project's, linked and callable.
@@ -506,6 +509,20 @@ final class Running {
             return new AssertionError("the harness itself failed rather than answering a status ("
                     + ended + ") when asked " + words + ": " + said);
         }
+    }
+
+    /**
+     * Holds a question to ending as the run failing for want of room: no status, since a status is
+     * a reason the language gives and it gives none here, and the harness ended by the trap
+     * generated code raises where the runtime had no place to write an answer the language owes.
+     * The exit is the signal a trap is on both hosts the build runs on, which a panic of the
+     * runtime, an abort, is not.
+     */
+    static void failsForWantOfRoom(ThrowingCallable asked) {
+        assertThatThrownBy(asked)
+                .isInstanceOf(AssertionError.class)
+                .hasMessageContaining("the harness itself failed rather than answering a status "
+                        + "(exited 132)");
     }
 
     /**

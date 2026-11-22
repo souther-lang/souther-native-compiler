@@ -361,21 +361,32 @@ class ARationalAnswersWhatTheJvmAnswersTest {
     }
 
     /**
-     * A value with no place ends the run for the one reason there is: a whole number one past what
-     * an {@code Int} holds, a sum whose common exponent would have to be built two billion places
-     * wide, and a value rounded to an {@code Int} that is not one.
+     * A whole number no {@code Int} holds ends the run for the one reason there is, where the
+     * answer is an {@code Int}: one past what an {@code Int} holds, and a whole decimal far past
+     * it. The largest {@code Int} is one, and answers.
      */
     @Test
-    void aValueWithNoPlaceEndsTheRun() throws Exception {
+    void aWholeNumberNoIntHoldsEndsTheRun() throws Exception {
         Asked rationals = new Asked(RATIONALS);
         RunOutcome noPlace = new RunOutcome.Aborted(AbortKind.REQUIRED_FORM_HAS_NO_PLACE);
         assertThat(rationals.outcome("wholePlusOne", integer(Long.MAX_VALUE))).isEqualTo(noPlace);
-        assertThat(rationals.outcome("plusOne", decimal("1E-2147483647"))).isEqualTo(noPlace);
         assertThat(rationals.outcome("wholeDecimal", decimal("1E+100"))).isEqualTo(noPlace);
-        assertThat(rationals.outcome("roundedDecimal", integer(2147483648L), integer(0),
-                decimal("1"))).isEqualTo(noPlace);
         assertThat(rationals.outcome("rounded", integer(0), integer(Long.MAX_VALUE), integer(1)))
                 .isEqualTo(answered(new ObservedValue.Integer(Long.MAX_VALUE)));
+    }
+
+    /**
+     * A sum and a narrowing to a {@code Decimal} always have an answer, so one the runtime has no
+     * place to write is no reason the language gives: a sum whose common exponent would have to
+     * be built two billion places wide, and a decimal asked for at a scale outside the 32 bits a
+     * scale is kept in. The run fails for want of room, and no status says the program was refused.
+     */
+    @Test
+    void anAnswerTheRuntimeHasNoPlaceToWriteIsTheRunFailing() {
+        Asked rationals = new Asked(RATIONALS);
+        Running.failsForWantOfRoom(() -> rationals.outcome("plusOne", decimal("1E-2147483647")));
+        Running.failsForWantOfRoom(() -> rationals.outcome("roundedDecimal",
+                integer(2147483648L), integer(0), decimal("1")));
     }
 
     /**

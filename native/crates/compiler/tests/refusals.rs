@@ -38,9 +38,12 @@ fn over(op: &str, left: &str, right: &str) -> String {
 fn over_answering(op: &str, left: &str, right: &str, answers: &str) -> String {
     let read =
         |at: u32, ty: &str| format!(r#"{{"core":"read","binding":{at},"type":{ty},"aborts":[]}}"#);
-    // What the operator owes, as the checker names it: arithmetic ends a run that leaves its range,
-    // a quotient one with a zero divisor, and nothing else ends one.
+    // What the operator owes, as the checker names it: arithmetic ends a run that leaves the range
+    // its answer holds, which a `Decimal`'s and a `Rational`'s never does, a quotient one with a
+    // zero divisor, and nothing else ends one.
+    let always_answered = [r#"{"prim":"DECIMAL"}"#, r#"{"prim":"RATIONAL"}"#].contains(&answers);
     let owes = match op {
+        "ADD" | "SUB" | "MUL" if always_answered => "",
         "ADD" | "SUB" | "MUL" => r#""REQUIRED_FORM_HAS_NO_PLACE""#,
         "DIV" => r#""DIVISION_BY_ZERO""#,
         _ => "",

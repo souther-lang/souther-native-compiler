@@ -1434,7 +1434,7 @@ impl<'a> Walk<'_, 'a> {
                 self.node(right)?;
                 self.reading(*op, reading, left.ty(), right.ty())?;
                 self.ordered_by(*op, reading, ordering.as_ref(), left.ty())?;
-                self.operator(*op, reading, (left.ty(), right.ty()), ty, aborts)
+                self.operator(*op, reading, left.ty(), ty, aborts)
             }
             Node::Neg {
                 operand,
@@ -1781,7 +1781,7 @@ impl<'a> Walk<'_, 'a> {
         &mut self,
         op: Op,
         reading: &Reading,
-        (left, right): (&Ty, &Ty),
+        left: &Ty,
         ty: &Ty,
         aborts: &[AbortKind],
     ) -> Result<()> {
@@ -1797,22 +1797,13 @@ impl<'a> Walk<'_, 'a> {
             }
             Op::Div => {
                 self.same(&what, ty, &rational, "what a quotient is")?;
-                // A quotient ends a run for a zero divisor, and for an answer with no place where
-                // an operand is already exact.
-                let exact = |it: &Ty| {
-                    matches!(
-                        it,
-                        Ty::Prim {
-                            prim: Prim::Rational
-                        }
-                    )
-                };
-                let owed: &[AbortKind] = if exact(left) || exact(right) {
-                    &[AbortKind::DivisionByZero, AbortKind::RequiredFormHasNoPlace]
-                } else {
-                    &[AbortKind::DivisionByZero]
-                };
-                self.ends_for(&format!("a quotient of {}", left.spelt()), aborts, owed)
+                // A quotient ends a run for a zero divisor and for nothing else: every other pair
+                // has one, whatever its operands are.
+                self.ends_for(
+                    &format!("a quotient of {}", left.spelt()),
+                    aborts,
+                    &[AbortKind::DivisionByZero],
+                )
             }
             // Both sides stand at what it answers, which its slots hold; that is all a join says
             // of its types. What it says of how it ends is that the text or the list it makes can
@@ -1829,12 +1820,19 @@ impl<'a> Walk<'_, 'a> {
                     }
                     Reading::In { .. } | Reading::Opened { .. } => self.number(&what, ty)?,
                 }
-                // A sum, a difference or a product of numbers leaves the range its answer holds,
-                // whichever reading its operands have, and names the one reason for it.
+                // What a sum, a difference or a product can end without a value for is decided by
+                // the type it answers, whichever reading its operands have: one of `Int`s can
+                // leave the range an `Int` holds and names the one reason for it, and one of
+                // `Decimal`s or of `Rational`s always has an answer and names none.
+                let owed: &[AbortKind] = if matches!(ty, Ty::Prim { prim: Prim::Int }) {
+                    &[AbortKind::RequiredFormHasNoPlace]
+                } else {
+                    &[]
+                };
                 self.ends_for(
                     &format!("{} over {}", op.spelt(), left.spelt()),
                     aborts,
-                    &[AbortKind::RequiredFormHasNoPlace],
+                    owed,
                 )
             }
         }
@@ -2194,7 +2192,11 @@ impl<'a> Walk<'_, 'a> {
                             ),
                         }
                     }
-                    self.ends_for(&format!("a call of {kernel}"), aborts, &contract.aborts)?;
+                    self.ends_for(
+                        &format!("a call of {kernel}"),
+                        aborts,
+                        known.aborts_answering(&contract, ty),
+                    )?;
                     // What it answers is the one type what it takes bound. A kernel that takes
                     // nothing (`Set.empty`) binds nothing, and what it answers is held to its shape
                     // alone, with what the call is settled as binding what is left.
