@@ -645,6 +645,28 @@ impl LoweredKernel {
         })
     }
 
+    /// Every reason an application of it answering `answer` can end a run without a value, out of
+    /// what `contract`, its own, names over everything it answers.
+    ///
+    /// The two differ for a total alone: `List.sum` and `List.product` leave the range an `Int`
+    /// holds, and over `Decimal`s or `Rational`s always have an answer.
+    pub(crate) fn aborts_answering<'a>(
+        self,
+        contract: &'a Contract,
+        answer: &Ty,
+    ) -> &'a [AbortKind] {
+        let always_answered = matches!(
+            answer,
+            Ty::Prim {
+                prim: Prim::Decimal | Prim::Rational
+            }
+        );
+        match self {
+            LoweredKernel::ListSum | LoweredKernel::ListProduct if always_answered => &[],
+            _ => &contract.aborts,
+        }
+    }
+
     /// What this backend knows of it.
     pub(crate) fn contract(self) -> Contract {
         let int = || Shape::Prim(Prim::Int);
@@ -733,6 +755,8 @@ impl LoweredKernel {
             LoweredKernel::ListReverse => known(vec![list(a())], list(a()), Vec::new()),
             // Which numbers are summed is the checker's to decide: the signature states no
             // constraint, and what this backend has a lowering for is asked where it is lowered.
+            // The reason is the one a total over every number names, and which totals name it is
+            // `aborts_answering`'s.
             LoweredKernel::ListSum | LoweredKernel::ListProduct => known(
                 vec![list(a())],
                 a(),
@@ -838,15 +862,13 @@ impl LoweredKernel {
                 string(),
                 vec![AbortKind::RequiredFormHasNoPlace],
             ),
-            // A result whose scale leaves the range, or that is wider than a `Decimal` holds, ends
-            // the run where it is computed.
+            // A `Decimal` is any finite decimal, so two of them always have a sum, a difference
+            // and a product, and these end no run.
             LoweredKernel::DecimalAdd
             | LoweredKernel::DecimalSubtract
-            | LoweredKernel::DecimalMultiply => known(
-                vec![decimal(), decimal()],
-                decimal(),
-                vec![AbortKind::RequiredFormHasNoPlace],
-            ),
+            | LoweredKernel::DecimalMultiply => {
+                known(vec![decimal(), decimal()], decimal(), Vec::new())
+            }
             LoweredKernel::DecimalCompare => known(vec![decimal(), decimal()], int(), Vec::new()),
             LoweredKernel::DecimalFromInt => known(vec![int()], decimal(), Vec::new()),
             LoweredKernel::DecimalToInt => known(
@@ -854,24 +876,24 @@ impl LoweredKernel {
                 int(),
                 vec![AbortKind::RequiredFormHasNoPlace],
             ),
-            LoweredKernel::DecimalRound => known(
-                vec![int(), mode(), decimal()],
-                decimal(),
-                vec![AbortKind::RequiredFormHasNoPlace],
-            ),
-            // A zero divisor is a case of the answer, answered before the scale is looked at; a
-            // scale outside the range, or a quotient no `Decimal` holds at it, ends the run.
+            // A value rounds at every scale, and ends no run.
+            LoweredKernel::DecimalRound => {
+                known(vec![int(), mode(), decimal()], decimal(), Vec::new())
+            }
+            // A zero divisor is a case of the answer, answered before the scale is looked at, and
+            // past it there is a quotient at every scale, so this ends no run.
             LoweredKernel::DecimalDivide => known(
                 vec![decimal(), decimal(), int(), mode()],
                 decimal_or_division_by_zero(),
-                vec![AbortKind::RequiredFormHasNoPlace],
+                Vec::new(),
             ),
             // Every `Int` and every `Decimal` has one exact value, so neither way in ends a run
             // and neither states a policy.
             LoweredKernel::RationalFromInt => known(vec![int()], rational(), Vec::new()),
             LoweredKernel::RationalFromDecimal => known(vec![decimal()], rational(), Vec::new()),
-            // What a carrier does not hold is a case and not a value chosen for it; a value it does
-            // not hold for want of room ends the run.
+            // What a carrier does not hold is a case and not a value chosen for it. A whole number
+            // no `Int` holds ends the run, where the answer is an `Int`; every finite decimal is a
+            // `Decimal`, so a narrowing to one ends none.
             LoweredKernel::RationalToWholeNumber => known(
                 vec![rational()],
                 int_or_not_whole(),
@@ -880,33 +902,28 @@ impl LoweredKernel {
             LoweredKernel::RationalToFiniteDecimal => known(
                 vec![rational()],
                 decimal_or_not_a_finite_decimal(),
-                vec![AbortKind::RequiredFormHasNoPlace],
+                Vec::new(),
             ),
             LoweredKernel::RationalToInt => known(
                 vec![mode(), rational()],
                 int(),
                 vec![AbortKind::RequiredFormHasNoPlace],
             ),
-            LoweredKernel::RationalToDecimal => known(
-                vec![int(), mode(), rational()],
-                decimal(),
-                vec![AbortKind::RequiredFormHasNoPlace],
-            ),
-            // The exact sum always has a value, but writing it brings a common exponent out and
-            // builds the distance between the two, which can want more than a `Rational` holds.
+            LoweredKernel::RationalToDecimal => {
+                known(vec![int(), mode(), rational()], decimal(), Vec::new())
+            }
+            // A `Rational` is any rational, so two of them always have a sum, a difference and a
+            // product, and these end no run.
             LoweredKernel::RationalAdd
             | LoweredKernel::RationalSubtract
-            | LoweredKernel::RationalMultiply => known(
-                vec![rational(), rational()],
-                rational(),
-                vec![AbortKind::RequiredFormHasNoPlace],
-            ),
-            // A zero divisor ends the run outright, as `/` does, and so does a quotient with no
-            // place: the one kernel that ends for two reasons.
+            | LoweredKernel::RationalMultiply => {
+                known(vec![rational(), rational()], rational(), Vec::new())
+            }
+            // A zero divisor ends the run outright, as `/` does, and nothing else does.
             LoweredKernel::RationalDivide => known(
                 vec![rational(), rational()],
                 rational(),
-                vec![AbortKind::DivisionByZero, AbortKind::RequiredFormHasNoPlace],
+                vec![AbortKind::DivisionByZero],
             ),
             LoweredKernel::RationalCompare => {
                 known(vec![rational(), rational()], int(), Vec::new())

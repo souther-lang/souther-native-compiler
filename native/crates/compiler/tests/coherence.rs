@@ -997,7 +997,8 @@ fn numbers_of_two_types_are_told_apart_by_how_the_operator_reads_them() {
                 ),
                 rational,
             ),
-            r#""REQUIRED_FORM_HAS_NO_PLACE""#,
+            // A sum answering a `Rational` always has one, and names no reason.
+            "",
         )
     };
     reads_whole(&helpers(&[h(
@@ -1044,8 +1045,8 @@ fn arithmetic_that_can_overflow_names_one_reason() {
 }
 
 /// What every arithmetic site owes, by what decides it: a sum, a difference and a product name the
-/// one reason whatever type they are over, and a quotient names a zero divisor, and an answer with no
-/// place where an operand is already exact.
+/// one reason where they answer an `Int` and none where they answer a `Decimal` or a `Rational`,
+/// which always have one, and a quotient names a zero divisor whatever its operands are.
 #[test]
 fn every_arithmetic_site_names_exactly_the_reasons_it_owes() {
     let rational = r#"{"prim":"RATIONAL"}"#;
@@ -1081,15 +1082,31 @@ fn every_arithmetic_site_names_exactly_the_reasons_it_owes() {
             "where the checker names",
         );
     }
-    // A quotient of two Ints names a zero divisor, and of two Rationals a place too.
-    let _ = reads_whole_or_not_lowered(&helpers(&[h(
-        &[INT, INT],
-        &over("DIV", INT, rational, "astheystand", zero),
-    )]));
+    // Over the two that always have an answer, the reason an `Int`'s names is one the checker
+    // never gave.
+    for ty in [DECIMAL, rational] {
+        for op in ["ADD", "SUB", "MUL"] {
+            reads_whole(&helpers(&[h(
+                &[ty, ty],
+                &over(op, ty, ty, "astheystand", ""),
+            )]));
+            is_the_halves_disagreeing(
+                &helpers(&[h(&[ty, ty], &over(op, ty, ty, "astheystand", no_place))]),
+                "where the checker names",
+            );
+        }
+    }
+    // A quotient names a zero divisor, of two Ints and of two Rationals alike.
+    for ty in [INT, rational] {
+        let _ = reads_whole_or_not_lowered(&helpers(&[h(
+            &[ty, ty],
+            &over("DIV", ty, rational, "astheystand", zero),
+        )]));
+    }
     for (ty, right, wrong) in [
         (INT, zero, no_place),
         (INT, zero, ""),
-        (rational, both.as_str(), zero),
+        (rational, zero, both.as_str()),
     ] {
         let refused = object_for(&helpers(&[h(
             &[ty, ty],

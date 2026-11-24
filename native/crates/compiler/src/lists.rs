@@ -244,8 +244,8 @@ pub(crate) fn range_inclusive(
 
 /// The sum (`Op::Add`) or the product (`Op::Mul`) of the numbers `list` holds, from nought or one:
 /// `List.sum` and `List.product`, one element at a time through what `+` or `*` over the two is
-/// lowered as, so a total no number of the element's type holds ends the run for `aborts`' one
-/// reason as the operator's would.
+/// lowered as, so a total ends the run as the operator's would: for `aborts`' one reason where no
+/// `Int` holds it, and for none over `Decimal`s or `Rational`s, which always have a total.
 ///
 /// A total of `Decimal`s starts from nought or one at scale nought, as the JVM's does, so the
 /// elements' own scales carry through the walk: a sum is at the largest of them and a product at
@@ -261,7 +261,6 @@ pub(crate) fn total(
     element: &Ty,
     list: ir::Value,
 ) -> Lowered<ir::Value> {
-    let status = one_reason_status(aborts);
     match element {
         Ty::Prim { prim: Prim::Int } => {}
         Ty::Prim {
@@ -323,6 +322,7 @@ pub(crate) fn total(
             _ => 1,
         },
     );
+    let status = one_reason_status(aborts);
     let running = builder.declare_var(types::I64);
     builder.def_var(running, seed);
     let count = length(builder, list);
