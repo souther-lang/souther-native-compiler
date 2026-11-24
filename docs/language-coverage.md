@@ -19,11 +19,15 @@ so no behavior takes or answers one and the manifest names no way to make or rea
 that reads its operands at their exact values (`Int + Rational`, `Decimal < Rational`) takes each as
 the `Rational` it stands for, which is the operator's reading and not a conversion any position
 that asks for a `Rational` gets. `/` reads its operands so whatever it divides. A zero divisor ends
-the run, and so does an answer that has no place: an exponent past sixty-four bits, or a part wider
-than a `Decimal`'s integer, asked of the answer once it is in its one form and not of what was
-worked with on the way to it. An order or a rounding of values at exponents nothing can be built at
+the run, and it is the one reason arithmetic over `Rational`s names: a `Rational` is any rational, so
+a sum, a difference, a product and a quotient past a zero divisor always have an answer. One the
+runtime has no place to write — an exponent past sixty-four bits, or a part wider than a
+`Decimal`'s integer, asked of the answer once it is in its one form and not of what was worked with
+on the way to it — is the run failing for want of room, as an arena that has run out is, and no
+status says the program was refused. A whole number no `Int` holds is the language's refusal, and
+ends the run for that reason. An order or a rounding of values at exponents nothing can be built at
 is answered from what is known of them, to as many bits as it takes. Two `Rational`s whose order
-needs more room than the run has end it as an arena that has run out does.
+needs more room than the run has fail it the same way.
 
 ## Kernels and text
 
@@ -68,10 +72,14 @@ there; `num-bigint` works it out only past that, inside the `souther-exact` crat
 runtime reads too ([souther-runtime-rs](https://github.com/souther-lang/souther-runtime-rs)), and
 a test there holds every `u128` path to what `num-bigint` answers for the same operands.
 
-A result whose scale leaves the 32-bit range, or whose integer is wider than a JVM `BigInteger`
-holds, ends the run where it is computed; a value a long way below the unit it is rounded to is
-rounded from how many digits it has, without the power of ten its scale names. A plain notation
-longer than a string holds ends the run, measured before any of it is written. A boundary writes a
+A `Decimal` is any finite decimal, so a sum, a difference, a product, a rounding and a quotient
+always have an answer and name no reason a run ends for. A result whose scale leaves the 32-bit
+range the runtime keeps one in, or whose integer is wider than a JVM `BigInteger` holds, is one the
+runtime has no place to write: the run fails for want of room where it is computed, and no status
+says the program was refused. A value a long way below the unit it is rounded to is rounded from how
+many digits it has, without the power of ten its scale names. A whole number no `Int` holds
+(`Decimal.toInt`) and a plain notation longer than a string holds are the language's refusals, and
+end the run for that reason, the notation measured before any of it is written. A boundary writes a
 `Decimal` as its amount and not at its scale — `1.50` is written `1.5` and `100.00` is written
 `100`, an exponent spelt out into at most a thousand digits — and reads one at the scale the number
 was spelt at. The cases of `RoundingMode` are declared by the language and at home in no module's

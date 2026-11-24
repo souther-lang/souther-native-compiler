@@ -30,8 +30,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * manifest showed. So the key is held to exactly the roots this repository has, found here rather
  * than listed, and a root added later is a key to change.
  *
- * <p>And every one is saved by develop and main only. A cache a pull request or a tag saves is read
- * by no other ref, and each one saved took room the repository's caches have only so much of, until
+ * <p>And every one is saved by develop only, the one branch built on a push. A cache a pull request
+ * or a tag saves is read by no other ref, and each one saved took room the repository's caches have only so much of, until
  * GitHub let go of develop's and the next pull request built every crate from nothing.
  */
 class EveryRustCacheIsKeptUnderWhatDecidesTheBuildTest {
@@ -65,7 +65,7 @@ class EveryRustCacheIsKeptUnderWhatDecidesTheBuildTest {
     }
 
     @Test
-    void everyRustCacheStepIsSavedByDevelopAndMainOnly() throws IOException {
+    void everyRustCacheStepIsSavedByDevelopOnly() throws IOException {
         List<String> savedOtherwise = new ArrayList<>();
         int steps = 0;
         try (Stream<Path> workflows = Files.list(Repository.file(".github", "workflows"))) {
@@ -84,7 +84,7 @@ class EveryRustCacheIsKeptUnderWhatDecidesTheBuildTest {
     }
 
     private static final String SAVED =
-            "save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}";
+            "save-if: ${{ github.ref == 'refs/heads/develop' }}";
 
     /** The key every step is to carry: the virtual roots found, then Cargo's config files. */
     private static String key() throws IOException {

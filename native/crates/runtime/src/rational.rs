@@ -9,10 +9,11 @@
 //! answering whether it wrote its value (`kernels`), so that which reason the run ends for is read
 //! off the call and not decided here.
 //!
-//! A [`Failure`] is one of two, and they end a run two ways. A value with no place is an answer
-//! the language has an abort for, so it is answered as nothing written. The run having no room for
-//! what the answer needed is not a value at all, so it ends the run as an arena that has run out
-//! does ([`settled`]).
+//! A [`Failure`] is one of two, and they end a run two ways. A value with no place is answered as
+//! nothing written, and what that means is the call's: the reason its contract names, a whole
+//! number no `Int` holds say, or the run failing where it names none, as a sum does. The run
+//! having no room for what the answer needed is not a value at all, so it ends the run as an arena
+//! that has run out does ([`settled`]).
 //!
 //! The layout, in the arena and aligned to a slot as everything there is: the power of two in the
 //! first slot, the power of five in the second, the sign times how many bytes the numerator is in
