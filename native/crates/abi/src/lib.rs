@@ -307,6 +307,34 @@ pub fn home_symbol(module: &str, value: &str) -> String {
     format!("souther{ABI_GENERATION}.{module}$home${value}")
 }
 
+/// The symbol what holds a behavior's answer to what the behavior declares is reached by, where
+/// another build's object reaches it.
+///
+/// A behavior a host implements answers from outside wherever it is called, so every object that
+/// calls it holds the answer where it crosses in. The rules it is held to are the declaring
+/// module's, lowered in that module's object and nowhere else, since a rule may call what the
+/// module keeps to itself; an object of another build reaches them here.
+///
+/// `souther<abi>.<module>$ensures$<behavior>`, carrying the ABI generation as [`behavior_symbol`]
+/// does, for the same reason: it is an ordinary call across an object boundary.
+///
+/// # Panics
+///
+/// Where either name carries a dollar, or the behavior's name carries a dot, for the reason
+/// [`type_symbol`] gives.
+pub fn ensures_symbol(module: &str, behavior: &str) -> String {
+    assert!(
+        spells_a_module(module),
+        "a module's name carries no dollar, and the symbol is split on one: {module}"
+    );
+    assert!(
+        spells_a_name(behavior),
+        "a behavior's name carries neither dollar nor dot, and the symbol is split on both: \
+         {behavior}"
+    );
+    format!("souther{ABI_GENERATION}.{module}$ensures${behavior}")
+}
+
 /// The symbol the entry a module publishes for one of its values is reached by.
 ///
 /// Not a value's own executable home: a value has exactly one, in the module that declares it

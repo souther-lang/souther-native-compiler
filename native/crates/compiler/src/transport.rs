@@ -129,6 +129,12 @@ pub const MOVES: &[(u32, &str)] = &[
          that the answer is owed), and a row the compile could not read is carried with why \
          (`unreproducible`) rather than left out",
     ),
+    (
+        35,
+        "where another build's behavior is held to what it declares is what the build that \
+         declares it decided, at its callee (`callee-elsewhere`) or at each crossing by the rules \
+         that build's object offers (`crossing-elsewhere`), in place of undecided",
+    ),
 ];
 
 /// A document of [`TRANSPORT_VERSION`], and no other, read through [`Program::read`] and nothing
@@ -1104,30 +1110,41 @@ impl Target {
 /// Where a behavior's answer is held to what the behavior declares of it, as the checker placed
 /// the check (`EnsuresEnforcement`).
 ///
-/// Four answers and not a pair of flags. Whether the callee checks and whether a crossing does are
+/// One answer and not a pair of flags. Whether the callee checks and whether a crossing does are
 /// one decision with three meaningful outcomes, and two flags could also say that nothing checks a
-/// clause or that two places do. `None` and `Undecided` are apart for the same reason: one is a
-/// behavior read and found to declare nothing, the other one whose clause nobody here decided where
-/// to run.
+/// clause or that two places do.
+///
+/// The module declaring a behavior decides it, and that is the answer whoever calls. What differs
+/// by who builds the module is where the rules are: a rule is lowered where it stands, in the
+/// module that declares the behavior, and may call what that module keeps to itself, so the rules
+/// cross with a behavior of a module this document builds and with no other. Whether the rules
+/// are here is therefore said by the answer too, and not by a contract that is there or not beside
+/// it, which could say a behavior this document builds is held by rules nobody wrote down.
 #[derive(Debug, Deserialize)]
-#[serde(tag = "at", rename_all = "lowercase", deny_unknown_fields)]
+#[serde(tag = "at", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Ensures {
     /// Held where the behavior answers: its body is here, and every way in goes through it.
     Callee { contract: Contract },
-    /// Held at every call into this object's code, because the answer arrives from outside.
+    /// Held at every call into this object's code, because the answer arrives from outside. The
+    /// rules are this object's, and it offers them to every other build's object that calls the
+    /// behavior too.
     Crossing { contract: Contract },
     /// The behavior declares nothing of its answer.
     None,
-    /// The behavior is another build's, and this compile did not decide what is done about it.
-    Undecided,
+    /// Another build's behavior, held where that build's object answers it. Nothing here runs
+    /// anything: every way in reaches that object's symbol, which holds the answer.
+    CalleeElsewhere,
+    /// Another build's behavior a host implements, held at every call into this object's code as
+    /// it is at every call into that build's, by the rules that build's object offers.
+    CrossingElsewhere,
 }
 
 impl Ensures {
-    /// The rules, where something here runs them.
+    /// The rules, where this document carries them: of a behavior of a module it builds.
     pub fn contract(&self) -> Option<&Contract> {
         match self {
             Ensures::Callee { contract } | Ensures::Crossing { contract } => Some(contract),
-            Ensures::None | Ensures::Undecided => None,
+            Ensures::None | Ensures::CalleeElsewhere | Ensures::CrossingElsewhere => None,
         }
     }
 }

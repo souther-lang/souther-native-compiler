@@ -243,9 +243,45 @@ class AnAnswerIsHeldToWhatItsBehaviorDeclaresTest {
             """;
 
     /**
-     * Another build's behavior is held by that build's object, where it answers, and a call from
-     * here reaches the place it is held. Nothing here decides what is done about its rule, and
-     * nothing here runs it a second time.
+     * An answer a host supplies is held wherever it crosses in, in whichever build's code that is:
+     * the behavior is another build's here, and the body that calls for it is this one's.
+     *
+     * <p>The rule calls a helper the declaring module keeps to itself, so the calling build cannot
+     * lower the rule and does not try: its document carries neither the rule nor the helper, and
+     * its object holds the answer by what the declaring build's object offers.
+     */
+    @Test
+    void anAnswerFromOutsideIsHeldWhereAnotherBuildsBodyCallsForIt() throws Exception {
+        CheckedProgram program = Checked.of(List.of(CALLING_IT),
+                ModulePath.of(Compiler.compile(DECLARING_A_HELPER)));
+        byte[] declaring = NativeArtifacts.object(Checked.of(List.of(DECLARING_A_HELPER)));
+        String written = ProgramWriter.written(program);
+        assertThat(written).contains(
+                "\"module\":\"lib.declaring\",\"name\":\"lookUp\",\"is\":\"injected\"");
+        assertThat(written).contains("\"ensures\":{\"at\":\"crossing-elsewhere\"}");
+        assertThat(written).as("the rule and what it calls stay with the build that declares them")
+                .doesNotContain("\"name\":\"depth\"");
+        Running running = Running.of(program, List.of(declaring));
+        CheckedModule calling = program.modules().getFirst();
+        CheckedBehavior twice = named(calling, "twice");
+        List<StandsIn> standIns = switch (twice.rows().getFirst().statement()) {
+            case CheckedRow.WithStandIns it -> it.standsIn();
+            case CheckedRow.SelfContained it -> throw new AssertionError("no stand-in: " + it);
+            case CheckedRow.AnswerOwed it -> throw new AssertionError("no stand-in: " + it);
+            case CheckedRow.NotReproducible it -> throw new AssertionError("not run: " + it.why());
+        };
+
+        assertThat(running.answeredOrEnded(calling, twice, given(1L), standIns))
+                .as("nought answered for something one deep")
+                .isEqualTo(new RunOutcome.Aborted(AbortKind.ENSURES_NOT_HELD));
+        assertThat(running.answeredOrEnded(calling, twice, given(0L), standIns))
+                .as("nought answered for nothing deep")
+                .isEqualTo(new RunOutcome.Answered(new ObservedValue.Integer(0)));
+    }
+
+    /**
+     * Another build's behavior with a body is held by that build's object, where it answers, and
+     * a call from here reaches the place it is held. Nothing here runs its rule a second time.
      */
     @Test
     void anotherBuildsBehaviorIsHeldWhereThatBuildAnswersIt() throws Exception {
@@ -260,7 +296,7 @@ class AnAnswerIsHeldToWhatItsBehaviorDeclaresTest {
 
         assertThat(ProgramWriter.written(program)).contains(
                 "\"module\":\"lib.held\",\"name\":\"shrink\",\"is\":\"elsewhere\"");
-        assertThat(ProgramWriter.written(program)).contains("\"ensures\":{\"at\":\"undecided\"}");
+        assertThat(ProgramWriter.written(program)).contains("\"ensures\":{\"at\":\"callee-elsewhere\"}");
         Running running = Running.of(program, List.of(before));
         CheckedModule module = program.modules().getFirst();
         CheckedBehavior shrunk = named(module, "shrunk");

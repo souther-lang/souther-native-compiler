@@ -3,7 +3,6 @@ package souther.nativecode.transport;
 import souther.nativecode.Checked;
 import org.junit.jupiter.api.Test;
 import souther.compiler.program.CheckedProgram;
-import souther.nativecode.NotLowered;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -42,7 +41,7 @@ class AnAdditionCrossesAsWhatTheCheckerSettledTest {
         String written = ProgramWriter.written(Checked.of(List.of(ADDING)));
 
         assertThat(written).isEqualTo("""
-                {"transport":34,"declarations":[],\
+                {"transport":35,"declarations":[],\
                 "behaviors":[{"module":"calculation","name":"add","is":"body",\
                 "parameters":{"named":[{"name":"a","input":{"is":"scalar","scalar":"INT"}},\
                 {"name":"b","input":{"is":"scalar","scalar":"INT"}}]},\

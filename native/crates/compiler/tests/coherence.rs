@@ -1383,14 +1383,12 @@ fn a_module_defines_only_the_behaviors_it_declares() {
 /// A behavior another build implements is one of a module this document does not build.
 #[test]
 fn a_behavior_implemented_elsewhere_is_of_a_module_this_document_does_not_build() {
-    // What is done about another build's clause is nobody's here to decide, and what is done
-    // about one of this document's own is.
     let target = |module: &str, ensures: &str| {
         format!(
             r#"{{"module":"{module}","name":"b","is":"elsewhere","parameters":{{"named":[]}},"output":{{"is":"scalar","scalar":"INT"}},"requirements":[],"ensures":{{"at":"{ensures}"}}}}"#
         )
     };
-    reads_whole(&document(&[target("other", "undecided")], &[], &[]));
+    reads_whole(&document(&[target("other", "callee-elsewhere")], &[], &[]));
     is_the_halves_disagreeing(&document(&[target("m", "none")], &[behind()], &[]), "m.b");
 }
 
@@ -3127,27 +3125,62 @@ fn a_composition_holds_its_answer_to_nothing() {
     );
 }
 
-/// What is done about a behavior's rule is decided for every behavior of a module this document
-/// builds and for no other. Undecided for one of its own is a table nobody filled; decided for
-/// another build's is this document deciding what that build's clause is.
+/// Where a behavior's answer is held is the same whoever builds its module, and the rules cross
+/// with a behavior of a module this document builds and with no other. One of its own held by
+/// another build's object is rules nobody wrote down; another build's held by rules written here
+/// is this document restating what only that build's object can lower.
 #[test]
-fn a_rule_is_decided_for_this_documents_behaviors_and_no_others() {
-    is_the_halves_disagreeing(
-        &document(
-            &[held("body", ANSWERS_INT, r#"{"at":"undecided"}"#)],
-            &[],
-            &[defined(&read(0, INT))],
-        ),
-        "m.b",
-    );
-    let foreign = |ensures: &str| {
+fn the_rules_cross_with_this_documents_behaviors_and_no_others() {
+    for elsewhere in ["callee-elsewhere", "crossing-elsewhere"] {
+        is_the_halves_disagreeing(
+            &document(
+                &[held(
+                    "body",
+                    ANSWERS_INT,
+                    &format!(r#"{{"at":"{elsewhere}"}}"#),
+                )],
+                &[],
+                &[defined(&read(0, INT))],
+            ),
+            "m.b",
+        );
+    }
+    let foreign = |is: &str, ensures: &str| {
         format!(
-            r#"{{"module":"other","name":"b","is":"elsewhere","parameters":{{"named":[]}},"output":{ANSWERS_INT},"requirements":[],"ensures":{ensures}}}"#
+            r#"{{"module":"other","name":"b","is":"{is}","parameters":{{"named":[]}},"output":{ANSWERS_INT},"requirements":[],"ensures":{ensures}}}"#
         )
     };
-    reads_whole(&document(&[foreign(r#"{"at":"undecided"}"#)], &[], &[]));
+    reads_whole(&document(
+        &[foreign("elsewhere", r#"{"at":"callee-elsewhere"}"#)],
+        &[],
+        &[],
+    ));
+    reads_whole(&document(
+        &[foreign("injected", r#"{"at":"crossing-elsewhere"}"#)],
+        &[],
+        &[],
+    ));
+    reads_whole(&document(
+        &[foreign("elsewhere", r#"{"at":"none"}"#)],
+        &[],
+        &[],
+    ));
+    // Where the answer is held follows how the behavior answers, in another build as in this one:
+    // one with a body is held where it answers, and one a host answers where it crosses in.
     is_the_halves_disagreeing(
-        &document(&[foreign(r#"{"at":"none"}"#)], &[], &[]),
+        &document(
+            &[foreign("elsewhere", r#"{"at":"crossing-elsewhere"}"#)],
+            &[],
+            &[],
+        ),
+        "other.b",
+    );
+    is_the_halves_disagreeing(
+        &document(
+            &[foreign("injected", r#"{"at":"callee-elsewhere"}"#)],
+            &[],
+            &[],
+        ),
         "other.b",
     );
 }
