@@ -1,5 +1,6 @@
 package souther.nativecode;
 
+import souther.compiler.command.Environment;
 import souther.compiler.program.CheckedProgram;
 import souther.nativecode.transport.ProgramWriter;
 
@@ -50,10 +51,13 @@ public final class NativeCompiler {
         return driven(ProgramWriter.written(program));
     }
 
-    /** As {@link #compile(CheckedProgram)}, handed to {@code driver}. */
-    public static byte[] compile(CheckedProgram program, Path driver)
+    /**
+     * As {@link #compile(CheckedProgram)}, handed to {@code driver}, which is started as
+     * {@code environment} says a process a run starts is: in its directory, with its variables.
+     */
+    public static byte[] compile(CheckedProgram program, Path driver, Environment environment)
             throws IOException, InterruptedException {
-        return run(ProgramWriter.written(program), List.of(), driver);
+        return run(ProgramWriter.written(program), List.of(), driver, environment);
     }
 
     /**
@@ -97,7 +101,18 @@ public final class NativeCompiler {
      */
     public static Library library(CheckedProgram program, List<byte[]> alongside, Path into,
                                   Path driver) throws IOException, InterruptedException {
-        return library(ProgramWriter.written(program), alongside, into, driver);
+        return library(program, alongside, into, driver, Environment.ofThisProcess());
+    }
+
+    /**
+     * As {@link #library(CheckedProgram, List, Path, Path)}, for a caller that is itself run in an
+     * environment it was given, as the command is: the driver is started in that environment's
+     * directory, with its variables.
+     */
+    public static Library library(CheckedProgram program, List<byte[]> alongside, Path into,
+                                  Path driver, Environment environment)
+            throws IOException, InterruptedException {
+        return library(ProgramWriter.written(program), alongside, into, driver, environment);
     }
 
     /**
@@ -109,7 +124,7 @@ public final class NativeCompiler {
      * compiler would get the wrong one.
      */
     public static ReleasedDriver releasedDriver(String release) throws IOException {
-        Fetching fetching = Fetching.standard();
+        Fetching fetching = Fetching.of(Environment.ofThisProcess());
         if (!release.equals(fetching.version())) {
             throw new NotFetched("the driver of " + release + " is asked of souther-native-compiler "
                     + fetching.version() + ": the testkit, the compiler and the API are to be of one"
@@ -157,11 +172,13 @@ public final class NativeCompiler {
 
     private static Library library(String document, List<byte[]> alongside, Path into)
             throws IOException, InterruptedException {
-        return library(document, alongside, into, driver());
+        Environment process = Environment.ofThisProcess();
+        return library(document, alongside, into, namedDriver(process), process);
     }
 
     private static Library library(String document, List<byte[]> alongside, Path into,
-                                   Path driver) throws IOException, InterruptedException {
+                                   Path driver, Environment environment)
+            throws IOException, InterruptedException {
         Path handed = Files.createTempDirectory("souther-native-alongside");
         try {
             List<String> arguments = new ArrayList<>(
@@ -172,7 +189,7 @@ public final class NativeCompiler {
                 arguments.add("--with");
                 arguments.add(object.toString());
             }
-            byte[] said = run(document, arguments, driver);
+            byte[] said = run(document, arguments, driver, environment);
             // Where the driver wrote each, one to a line, which is how what a shared library is
             // called on this host is said by the side that named it.
             List<Path> written =
@@ -197,27 +214,36 @@ public final class NativeCompiler {
      * driver does with a document no checked program of today's language writes.
      */
     static byte[] driven(String document) throws IOException, InterruptedException {
-        return run(document, List.of(), driver());
+        Environment process = Environment.ofThisProcess();
+        return run(document, List.of(), namedDriver(process), process);
     }
 
-    /** What the driver writes on stdout when handed the document with these arguments. */
-    private static byte[] run(String document, List<String> arguments, Path driver)
-            throws IOException, InterruptedException {
+    /**
+     * What the driver writes on stdout when handed the document with these arguments. It is a
+     * process the run starts, so it is started where {@code environment} says the run is, with the
+     * variables the run was given and no others: what it starts in turn, a linker among it, finds
+     * what the run would.
+     */
+    private static byte[] run(String document, List<String> arguments, Path driver,
+                              Environment environment) throws IOException, InterruptedException {
         if (!Files.isExecutable(driver)) {
             throw new IOException("no driver at " + driver.toAbsolutePath()
                     + ", which `cargo build` in native/ writes");
         }
         List<String> command = new ArrayList<>();
-        command.add(driver.toString());
+        command.add(driver.toAbsolutePath().toString());
         command.addAll(arguments);
 
         // What the driver says goes to a file rather than to a pipe this side reads second: two
         // pipes read one after the other deadlock where the one not being read fills up first.
         Path said = Files.createTempFile("souther-native-", ".problems");
         try {
-            Process process = new ProcessBuilder(command)
-                    .redirectError(said.toFile())
-                    .start();
+            ProcessBuilder builder = new ProcessBuilder(command)
+                    .directory(environment.workingDirectory().toAbsolutePath().toFile())
+                    .redirectError(said.toFile());
+            builder.environment().clear();
+            builder.environment().putAll(environment.variables());
+            Process process = builder.start();
 
             byte[] object;
             try (OutputStream to = process.getOutputStream()) {
@@ -241,21 +267,18 @@ public final class NativeCompiler {
         }
     }
 
-    private static Path driver() throws IOException {
-        return namedDriver();
-    }
-
     /**
-     * The driver {@link #DRIVER_PROPERTY} names, which a build that is not a release runs: the one
-     * its clone built. A release reads no such property, and runs the driver of its own release.
+     * The driver {@link #DRIVER_PROPERTY} names among {@code environment}'s properties, which a
+     * build that is not a release runs: the one its clone built. A release reads no such property,
+     * and runs the driver of its own release.
      */
-    static Path namedDriver() throws IOException {
-        String named = System.getProperty(DRIVER_PROPERTY);
+    static Path namedDriver(Environment environment) throws IOException {
+        String named = environment.property(DRIVER_PROPERTY);
         if (named == null) {
             throw new IOException("no driver is named: " + DRIVER_PROPERTY + " is the one place a"
                     + " build that is not a release looks for one (scripts/souther-native names a"
                     + " clone's, and a release runs its own)");
         }
-        return Path.of(named);
+        return environment.path(named);
     }
 }

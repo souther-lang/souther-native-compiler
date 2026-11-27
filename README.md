@@ -30,7 +30,7 @@ The build is one Maven reactor of seven modules. `bindings/api` (`souther-bindin
 binding generator is written against: the interface a generator implements and the model of a
 library it is handed. `compiler` (`souther-native-compiler`) is the compiler and the command, which
 reads the manifest a build writes into that model and puts each binding in place; it also builds the
-backend jar, the command with everything it runs with, which `souther compile --target native` runs.
+backend jar, the command and that API in one jar, which `souther compile --target native` loads.
 `bindings/testkit` (`souther-bindings-testkit`) is what a generator is tested with: sources built
 into a library by the compiler and driver of its release. `bindings/php/generator`,
 `bindings/rust/generator` and `bindings/go/generator` are the generators, each beside the runtime in
@@ -48,9 +48,10 @@ which only the JDK, the API and the jar itself resolve.
 
 What the API builds, the command line builds too, so an application needs no Java of its own to
 build what it runs. The command is `souther compile --target native`: the Souther CLI finds this
-backend among those installed beside it, checks that it was built against the CLI's own Souther, and
-runs it as a process of its own with every argument after the target. Only a JVM is needed to run
-it, which the CLI needs anyway.
+backend among those installed beside it, checks that it was built against the CLI's own Souther,
+loads its jar beside the CLI's own compiler, and runs it in the CLI's JVM with every argument after
+the target. So the backend is no program of its own, and its jar holds no compiler: the Souther that
+reads the program is the CLI's.
 
     souther compile --target native --library build/native \
         --binding php build/php --binding-option 'namespace=Acme\Shop' model
@@ -134,6 +135,6 @@ stands:
         --binding php build/php --binding-option 'namespace=Acme\Shop' model
 
 The script builds what the command needs and runs it in the directory it was started in, so the
-paths are read from there. The jar is also run directly with `java -jar`, which is how the CLI starts
-it, for working on the backend and for finding out what it does. How an application then depends on
-what was written is each binding's own README.
+paths are read from there. It starts the command through the launcher's module, which stands where
+the CLI does for this one target, with the compiler on the class path beside it. How an application
+then depends on what was written is each binding's own README.

@@ -2656,33 +2656,36 @@ fn holds_and_builds_nothing(owner: &str, condition: &Node) -> Result<()> {
 
 /// That where a behavior's answer is held to what it declares is a place the behavior has.
 ///
-/// The checker decides it for every behavior of a module it checked, and for no other: another
-/// build's behavior is one nobody here decided about, and one of this document's own is one
-/// somebody did. Where it is decided, a check at the callee needs a callee whose answer is this
-/// object's to hold, and a check at each crossing an answer that arrives from outside; a composition
-/// carries no rule at all (spec §a-composition-carries-no-ensures).
-fn placed(name: &str, target: &Target, decided_here: bool) -> Result<()> {
+/// The module declaring a behavior decides it, and the answer is the same for every build that
+/// calls the behavior. What follows the build is where the rules are: with a behavior of a module
+/// this document builds, and with no other. So a behavior this document builds is held by rules it
+/// carries, another build's by none it carries, and either way a check at the callee needs a callee
+/// with a body to hold its answer and a check at each crossing an answer that arrives from
+/// outside; a composition carries no rule at all (spec §a-composition-carries-no-ensures).
+fn placed(name: &str, target: &Target, declared_here: bool) -> Result<()> {
     let placement = match &target.ensures {
-        Ensures::Callee { .. } => "at the callee",
-        Ensures::Crossing { .. } => "where it crosses in",
+        Ensures::Callee { .. } => "at the callee, by rules this document carries",
+        Ensures::Crossing { .. } => "where it crosses in, by rules this document carries",
         Ensures::None => "nowhere, since it declares nothing",
-        Ensures::Undecided => "",
+        Ensures::CalleeElsewhere => "at the callee, by another build's object",
+        Ensures::CrossingElsewhere => "where it crosses in, by rules another build's object offers",
     };
-    match (&target.ensures, decided_here, target.is) {
-        (Ensures::Undecided, false, _) => {}
-        (Ensures::Undecided, true, _) => bail!(
-            "{name} is declared by {}, which this document builds, and nothing decided where its \
-             answer is held to what it declares: the two halves disagree",
-            target.module
-        ),
-        (_, false, _) => bail!(
+    match (&target.ensures, declared_here, target.is) {
+        (Ensures::None, _, _)
+        | (Ensures::Callee { .. }, true, Answers::Body | Answers::Unwritten)
+        | (Ensures::Crossing { .. }, true, Answers::Injected | Answers::Unwritten)
+        | (Ensures::CalleeElsewhere, false, Answers::Elsewhere)
+        | (Ensures::CrossingElsewhere, false, Answers::Injected) => {}
+        (Ensures::Callee { .. } | Ensures::Crossing { .. }, false, _) => bail!(
             "{name} is another build's, and this document says its answer is held {placement}: \
              the two halves disagree"
         ),
-        (Ensures::None, true, _)
-        | (Ensures::Callee { .. }, true, Answers::Body | Answers::Unwritten)
-        | (Ensures::Crossing { .. }, true, Answers::Injected | Answers::Unwritten) => {}
-        (Ensures::Callee { .. } | Ensures::Crossing { .. }, true, is) => bail!(
+        (Ensures::CalleeElsewhere | Ensures::CrossingElsewhere, true, _) => bail!(
+            "{name} is declared by {}, which this document builds, and this document says its \
+             answer is held {placement}: the two halves disagree",
+            target.module
+        ),
+        (_, _, is) => bail!(
             "{name} answers as {is:?} and its answer is held {placement}: the two halves disagree"
         ),
     }

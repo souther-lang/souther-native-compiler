@@ -83,22 +83,22 @@ workflow's artifact `maven-repository`, with the compiler in it carrying those c
 creates the GitHub release with the bundles and the checksums file.
 
 What `souther compile --target native` runs is the backend jar, which the compiler's module attaches
-beside its own jar with the classifier `backend`: the compiler and everything it runs with, carrying
-the compiler's manifest, and so its version, which is the release it fetches at. Its descriptor,
+beside its own jar with the classifier `backend`: the compiler's classes and the binding API's, and
+nothing else, carrying the compiler's manifest, and so its version, which is the release it fetches
+at. The CLI loads the jar beside its own compiler and calls the one
+`souther.compiler.command.TargetCommand` the jar provides
+(`META-INF/services/souther.compiler.command.TargetCommand`, which names `souther.nativecode.Main`)
+in its own JVM, so Souther's compiler and the libraries it runs with, Jackson, Raoh and
+notation-199x among them, are the CLI's and are not in the jar; their versions are the ones the
+Souther named by `souther.version` manages, and none is written in this build. Its descriptor,
 `META-INF/souther/backend.properties`, holds the target `native` and the `souther.version` of the
-top-level `pom.xml`, written in when it is packaged (`compiler/src/backend`). A class asks what it is
-through its package, which the JVM answers from the manifest of the jar it was loaded from, and
-shading leaves one manifest for every package; so after shading,
-[`compiler/src/build/BackendManifest.java`](../compiler/src/build/BackendManifest.java) gives each
-package a section of its own holding what its own jar's manifest says, and leaves the main section
-saying nothing of what anything is. Souther's compiler inside the jar still says it is Souther's
-release, the API beside the compiler says it is the backend's, and a package that came from no jar,
-or from two jars of different releases, refuses the build. The CLI runs a backend
+top-level `pom.xml`, written in when it is packaged (`compiler/src/backend`). The CLI runs a backend
 only where that version is exactly its own, so each Souther release needs a release of this backend
 built against it, and a release of this backend leaves the Souther it names alone. A test in the
-launcher's module holds the descriptor to the Souther compiler the build compiles against, holds
-every package of the jar to a section of its own, and runs the jar alone as the CLI runs it; `verify-release-build.sh` holds the published jar to the
-checksums, as it holds the compiler's.
+launcher's module holds the descriptor to the Souther compiler the build compiles against, holds the
+jar to the classes of this repository alone, and loads and runs it as the CLI does, under a loader
+that has Souther's compiler and nothing of this build; `verify-release-build.sh` holds the published
+jar to the checksums, as it holds the compiler's.
 
 The CLI that runs an installed backend is not published for the Souther snapshot a clone builds
 against, so in a clone the examples' `bin/build` is run with `$SOUTHER` naming

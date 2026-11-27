@@ -2,6 +2,7 @@ package souther.nativecode;
 
 import org.jspecify.annotations.Nullable;
 import souther.bindings.BindingApi;
+import souther.compiler.command.Environment;
 
 import java.net.URI;
 import java.nio.file.Path;
@@ -54,18 +55,20 @@ record Fetching(Path cache, boolean offline, URI maven, URI releases, @Nullable 
     }
 
     /**
-     * As the environment says: the cache in {@code $SOUTHER_HOME} or {@code ~/.souther}; refused where
-     * the compiler and the API beside it are not of one release.
+     * As {@code environment} says: the cache in {@code $SOUTHER_HOME} or {@code ~/.souther}; refused
+     * where the compiler and the API beside it are not of one release.
      */
-    static Fetching standard() throws NotFetched {
-        String home = System.getenv(HOME_VARIABLE);
-        Path cache = home != null && !home.isBlank() ? Path.of(home)
-                : Path.of(System.getProperty("user.home"), ".souther");
+    static Fetching of(Environment environment) throws NotFetched {
+        String home = environment.variable(HOME_VARIABLE);
+        Path cache = (home != null && !home.isBlank()) ? environment.path(home)
+                : environment.userHome().resolve(".souther");
+        String maven = environment.property(MAVEN_PROPERTY);
+        String releases = environment.property(RELEASES_PROPERTY);
         try {
             return new Fetching(cache, false,
-                    URI.create(System.getProperty(MAVEN_PROPERTY, "https://repo1.maven.org/maven2")),
-                    URI.create(System.getProperty(RELEASES_PROPERTY,
-                            "https://github.com/souther-lang/souther-native-compiler/releases/download")),
+                    URI.create(maven != null ? maven : "https://repo1.maven.org/maven2"),
+                    URI.create(releases != null ? releases
+                            : "https://github.com/souther-lang/souther-native-compiler/releases/download"),
                     Main.class.getPackage().getImplementationVersion(),
                     BindingApi.class.getPackage().getImplementationVersion(),
                     ReleaseChecksums.carried(), Downloads.http());

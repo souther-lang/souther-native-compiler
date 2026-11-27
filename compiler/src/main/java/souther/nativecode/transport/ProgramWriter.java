@@ -10,7 +10,6 @@ import souther.compiler.core.Contract;
 import souther.compiler.core.Core;
 import souther.compiler.core.EnsuresEnforcement;
 import souther.compiler.core.ConstraintProjection;
-import souther.compiler.core.Kernel;
 import souther.compiler.diag.Region;
 import souther.compiler.observe.RowIdentity;
 import souther.compiler.core.ValueShape;
@@ -98,19 +97,9 @@ public final class ProgramWriter {
      * written moves, so that a driver and a writer that disagree say so rather than producing an
      * object that is wrong quietly.
      */
-    public static final int TRANSPORT_VERSION = 34;
+    public static final int TRANSPORT_VERSION = 35;
 
     private final CheckedProgram program;
-
-    /**
-     * What is done about each behavior's {@code ensures}, as the checker answered it for every
-     * behavior of a module this compile checked.
-     *
-     * <p>Gathered off the modules and not asked of {@link BehaviorTarget}, which does not carry it:
-     * a target is answered for a behavior of a module this compile never checked too, and what is
-     * done about that one's clause is not this compile's to say ({@link #enforcement}).
-     */
-    private final Map<ValueName.Behavior, EnsuresEnforcement> enforcements = new HashMap<>();
 
     /**
      * Where a {@link Core.Block} written into the document stands, counted document-wide rather
@@ -213,7 +202,6 @@ public final class ProgramWriter {
         for (CheckedModule module : program.modules()) {
             for (CheckedBehavior behavior : module.behaviors()) {
                 behaviorsMet.add(behavior.name());
-                enforcements.put(behavior.name(), behavior.ensures());
             }
             // Every declaration a module of this compile declares, whether a body here meets it
             // or not: its token and its constructor are this build's to define, and another build
@@ -1088,7 +1076,7 @@ public final class ProgramWriter {
                 + ",\"is\":" + quoted(how)
                 + ",\"parameters\":" + parameters(behavior.signature())
                 + ",\"output\":" + output(behavior.signature().output())
-                + ",\"ensures\":" + ensures(enforcement(name))
+                + ",\"ensures\":" + ensures(name, behavior.ensures())
                 + ",\"requirements\":" + requirements(behavior.requirements())
                 + "}";
     }
@@ -1119,43 +1107,30 @@ public final class ProgramWriter {
     }
 
     /**
-     * What is done about a behavior's {@code ensures}, as the checker answered it for a behavior of
-     * a module this compile checked, and {@link EnsuresEnforcement.NotDecidedHere} for one of a
-     * module it did not — which is the reading {@link EnsuresEnforcement#in} gives a miss.
+     * Where a behavior's answer is held to what it declares, as the module that declares it
+     * decided, which is the answer for every caller ({@link BehaviorTarget#ensures}).
      *
-     * <p>A miss for a behavior of a module this compile checked is not an answer: every behavior of
-     * such a module was walked above, so it is this writer having missed one, and it stops.
+     * <p>The rules cross with a behavior of a module this compile builds, and with no other. A
+     * rule is lowered where it stands, in the module that declares the behavior, and may call
+     * what that module keeps to itself; so the object of the build that declares a behavior is
+     * the one object that holds its rules, and what another build's object does about them is
+     * said without them. Held at the callee, that build's object holds the answer where the
+     * behavior answers, and nothing here runs anything ({@code callee-elsewhere}). Held at each
+     * crossing, the answer arrives from a host wherever it is called, here as there, so this
+     * object holds it at its own crossings by the rules that object offers
+     * ({@code crossing-elsewhere}).
      */
-    private EnsuresEnforcement enforcement(ValueName.Behavior name) {
-        EnsuresEnforcement decided = enforcements.get(name);
-        if (decided != null) {
-            return decided;
-        }
-        for (CheckedModule module : program.modules()) {
-            if (module.name().equals(name.module())) {
-                throw new IllegalStateException("no enforcement decision for `" + name.name()
-                        + "`, which `" + module.name() + "` declares");
-            }
-        }
-        return EnsuresEnforcement.NotDecidedHere.INSTANCE;
-    }
-
-    /**
-     * Where a behavior's answer is held to what it declares, with the rules that say what that is.
-     *
-     * <p>The four answers the checker has, each as itself. Two of them carry the rules and say where
-     * they run; the other two carry none, and they are not one answer: {@code none} is a behavior
-     * that was read and declares nothing, {@code undecided} one whose clause this compile does not
-     * run because nobody here decided where it would be run.
-     */
-    private String ensures(EnsuresEnforcement enforcement) {
+    private String ensures(ValueName.Behavior name, EnsuresEnforcement enforcement) {
+        boolean here = program.modules().stream()
+                .anyMatch(module -> module.name().equals(name.module()));
         return switch (enforcement) {
-            case EnsuresEnforcement.AtTheCallee it ->
-                    "{\"at\":\"callee\",\"contract\":" + contract(it.contract()) + "}";
-            case EnsuresEnforcement.AtEachCrossing it ->
-                    "{\"at\":\"crossing\",\"contract\":" + contract(it.contract()) + "}";
+            case EnsuresEnforcement.AtTheCallee it -> here
+                    ? "{\"at\":\"callee\",\"contract\":" + contract(it.contract()) + "}"
+                    : "{\"at\":\"callee-elsewhere\"}";
+            case EnsuresEnforcement.AtEachCrossing it -> here
+                    ? "{\"at\":\"crossing\",\"contract\":" + contract(it.contract()) + "}"
+                    : "{\"at\":\"crossing-elsewhere\"}";
             case EnsuresEnforcement.NoContract it -> "{\"at\":\"none\"}";
-            case EnsuresEnforcement.NotDecidedHere it -> "{\"at\":\"undecided\"}";
         };
     }
 

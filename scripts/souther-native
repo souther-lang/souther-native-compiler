@@ -8,6 +8,9 @@
 # The driver and each generator's jar are named by their place in the clone, since that is not where
 # the caller is. The generators are not on the class path: the command loads each jar it is handed as
 # it loads any generator's, and a clone's build is not a release, so it reads these names.
+#
+# The backend is no program of its own: a user's `souther compile --target native` loads its jar into
+# the CLI's JVM. The launcher's module stands where that CLI does, and is what is started here.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,4 +36,5 @@ done
 
 exec java "-Dsouther.native.driver=$root/native/target/debug/souther-native-driver" \
     "${generators[@]}" \
-    -cp "$(cat "$root/launcher/target/runtime-classpath.txt")" souther.nativecode.Main "$@"
+    -cp "$root/launcher/target/classes:$(cat "$root/launcher/target/runtime-classpath.txt")" \
+    souther.nativecode.launcher.Launcher "$@"

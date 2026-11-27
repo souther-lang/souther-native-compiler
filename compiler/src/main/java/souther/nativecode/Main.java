@@ -3,10 +3,11 @@ package souther.nativecode;
 import souther.bindings.BindingGenerator;
 import souther.bindings.BindingInput;
 import souther.bindings.Declarations;
-import souther.bindings.Manifest;
 import souther.bindings.NotBindable;
 import souther.compiler.CompilationSources;
 import souther.compiler.CompilationSources.SourceFile;
+import souther.compiler.command.Environment;
+import souther.compiler.command.TargetCommand;
 import souther.compiler.diag.CompileException;
 import souther.compiler.meta.ModulePath;
 import souther.compiler.program.CheckedProgram;
@@ -28,6 +29,11 @@ import java.util.Optional;
  * Compiles the sources named on the command line into one object file, or builds them into a
  * library for a host and, if asked, the bindings of it.
  *
+ * <p>The command {@code souther compile --target native} runs: the souther command line loads this
+ * backend's jar beside its own compiler and calls {@link #run} in its own JVM, with what follows
+ * the target and the environment its own run was given. So nothing here reads the process: a path,
+ * a variable, a property and a stream are each the environment's.
+ *
  * <p>Nothing here decides what a library or a binding is. The program is checked once, the driver
  * writes the library from it ({@link NativeCompiler#library}), and each binding is generated from
  * the manifest the driver wrote ({@link BindingGenerator#generate}), never from the program a
@@ -41,7 +47,7 @@ import java.util.Optional;
  * will not take or a directory holding what no generation wrote, is refused before the library is
  * built.
  */
-public final class Main {
+public final class Main implements TargetCommand {
 
     private static final int WROTE_IT = 0;
     private static final int REFUSED = 1;
@@ -140,12 +146,12 @@ public final class Main {
          * reads. An id holds neither a {@code :} nor ends in {@code .jar}, so none is taken for a
          * jar's coordinate or path.
          */
-        static Asked of(String generator) {
+        static Asked of(String generator, Environment environment) {
             Optional<KnownBindings.Kind> kind = KnownBindings.named(generator);
             if (kind.isPresent()) {
                 return new Standard(kind.get());
             }
-            return new External(GeneratorRef.parse(generator));
+            return new External(GeneratorRef.parse(generator, environment));
         }
     }
 
@@ -187,19 +193,17 @@ public final class Main {
         }
     }
 
-    private Main() {
+    /** Made by the {@code ServiceLoader} of the command line that loaded this backend's jar. */
+    public Main() {
     }
 
-    public static void main(String[] args) {
-        System.exit(run(args, System.out, System.err));
+    @Override
+    public int run(List<String> arguments, Environment environment) {
+        return run(arguments, environment, () -> Fetching.of(environment));
     }
 
-    static int run(String[] args, PrintStream out, PrintStream problems) {
-        return run(args, out, problems, Fetching::standard);
-    }
-
-    static int run(String[] args, PrintStream out, PrintStream problems, Fetching allowed) {
-        return run(args, out, problems, () -> allowed);
+    static int run(List<String> arguments, Environment environment, Fetching allowed) {
+        return run(arguments, environment, () -> allowed);
     }
 
     /** Where what a command may fetch is read from, asked only once there is a command to run. */
@@ -207,10 +211,12 @@ public final class Main {
         Fetching fetching() throws NotFetched;
     }
 
-    private static int run(String[] args, PrintStream out, PrintStream problems, Allowed allowed) {
+    private static int run(List<String> arguments, Environment environment, Allowed allowed) {
+        PrintStream out = environment.out();
+        PrintStream problems = environment.err();
         Command command;
         try {
-            command = read(args);
+            command = read(arguments.toArray(String[]::new), environment);
         } catch (NotACommand e) {
             problems.println(e.getMessage());
             problems.print(USAGE);
@@ -224,10 +230,10 @@ public final class Main {
                     out.print(USAGE);
                     yield WROTE_IT;
                 }
-                case Output.Fetch fetch -> fetched(out, problems,
+                case Output.Fetch fetch -> fetched(environment,
                         fetching(allowed, command, problems));
                 case Output.Build build -> built(command, build,
-                        fetching(allowed, command, problems), out, problems);
+                        fetching(allowed, command, problems), environment);
             };
         } catch (NotFetched e) {
             problems.println(e.getMessage());
@@ -242,7 +248,9 @@ public final class Main {
 
     /** What {@code build} asks for, built from the sources the command named. */
     private static int built(Command command, Output.Build build, Fetching fetching,
-                             PrintStream out, PrintStream problems) {
+                             Environment environment) {
+        PrintStream out = environment.out();
+        PrintStream problems = environment.err();
         CompilationSources read;
         try {
             read = readSources(command.sources());
@@ -261,7 +269,7 @@ public final class Main {
                     byte[] written;
                     try (Holding held = new Holding()) {
                         written = NativeCompiler.compile(command.checked(read),
-                                driver(held, fetching));
+                                driver(held, fetching, environment), environment);
                     }
                     if (object.into().getParent() != null) {
                         Files.createDirectories(object.into().getParent());
@@ -270,7 +278,7 @@ public final class Main {
                     out.println("wrote " + object.into() + " from " + sources(read));
                 }
                 case Output.Library library -> {
-                    return written(command, library, read, fetching, out, problems);
+                    return written(command, library, read, fetching, environment);
                 }
             }
         } catch (GeneratorFailed e) {
@@ -304,13 +312,15 @@ public final class Main {
      * place dropped.
      */
     private static int written(Command command, Output.Library library, CompilationSources read,
-                               Fetching fetching, PrintStream out, PrintStream problems)
+                               Fetching fetching, Environment environment)
             throws IOException, GeneratorFailed, InterruptedException {
+        PrintStream out = environment.out();
+        PrintStream problems = environment.err();
         try (Holding held = new Holding()) {
             List<Bindings.Generator> generators = new ArrayList<>();
             for (HostBinding binding : library.bindings()) {
-                Bindings.Generator generator =
-                        Bindings.load(fetching, GeneratorSpec.of(binding.asked(), fetching));
+                Bindings.Generator generator = Bindings.load(fetching,
+                        GeneratorSpec.of(binding.asked(), fetching, environment));
                 held.hold(generator, () -> closed(generator, problems));
                 generators.add(generator);
                 try {
@@ -321,13 +331,13 @@ public final class Main {
                     return WRONG_COMMAND;
                 }
             }
-            Path driver = driver(held, fetching);
+            Path driver = driver(held, fetching, environment);
             List<byte[]> alongside = new ArrayList<>(library.alongside().size());
             for (Path object : library.alongside()) {
                 alongside.add(Files.readAllBytes(object));
             }
             NativeCompiler.Library built = NativeCompiler.library(
-                    command.checked(read), alongside, library.into(), driver);
+                    command.checked(read), alongside, library.into(), driver, environment);
             out.println("wrote the library " + library.into() + " from " + sources(read));
             BindingInput input = new BindingInput(ManifestReader.read(built.manifest()),
                     Declarations.at(built.declarations()));
@@ -376,26 +386,30 @@ public final class Main {
      * is not a release has no bundle, and runs the driver its clone built, named by
      * {@link NativeCompiler#DRIVER_PROPERTY}, which is not this command's to delete.
      */
-    private static Path driver(Holding held, Fetching fetching) throws IOException {
+    private static Path driver(Holding held, Fetching fetching, Environment environment)
+            throws IOException {
         if (fetching.isRelease()) {
             return NativeBundle.unpacked(held, fetching);
         }
-        return NativeCompiler.namedDriver();
+        return NativeCompiler.namedDriver(environment);
     }
 
     /**
      * {@code --fetch}: what a command may need and this does not have, fetched and kept, and nothing
      * built. It prepares the cache and nothing that runs: no copy of a jar and no driver unpacked.
      */
-    private static int fetched(PrintStream out, PrintStream problems, Fetching fetching) {
+    private static int fetched(Environment environment, Fetching fetching) {
+        PrintStream out = environment.out();
+        PrintStream problems = environment.err();
         try {
             if (fetching.isRelease()) {
                 out.println("the driver " + NativeBundle.kept(fetching));
             } else {
-                out.println("the driver is this build's own, " + NativeCompiler.namedDriver());
+                out.println("the driver is this build's own, "
+                        + NativeCompiler.namedDriver(environment));
             }
             for (KnownBindings.Kind kind : KnownBindings.all()) {
-                GeneratorSpec spec = GeneratorSpec.standard(kind, fetching);
+                GeneratorSpec spec = GeneratorSpec.standard(kind, fetching, environment);
                 switch (spec.ref()) {
                     case GeneratorRef.Local local ->
                             out.println(spec.display() + " is this build's own, " + local.path());
@@ -413,9 +427,10 @@ public final class Main {
     /**
      * The command {@code args} say, or why they say none: an option that belongs to one output
      * named with the other, or with what it goes with missing, is refused here rather than read as
-     * something the command did not mean.
+     * something the command did not mean. A path among them is read as {@code environment} reads
+     * one, from the directory the command is run in.
      */
-    static Command read(String[] args) throws NotACommand {
+    static Command read(String[] args, Environment environment) throws NotACommand {
         Path object = null;
         Path library = null;
         List<Path> alongside = new ArrayList<>();
@@ -432,21 +447,23 @@ public final class Main {
                 case "--help", "-h" -> {
                     return new Command(new Output.Usage(), List.of(), List.of(), false);
                 }
-                case "-o" -> object = once(held, object, Path.of(valueOf(args, ++at, held)));
-                case "--library" -> library = once(held, library, Path.of(valueOf(args, ++at, held)));
+                case "-o" -> object = once(held, object,
+                        environment.path(valueOf(args, ++at, held)));
+                case "--library" -> library = once(held, library,
+                        environment.path(valueOf(args, ++at, held)));
                 case "-cp", "--class-path" -> {
                     for (String entry : valueOf(args, ++at, held).split(File.pathSeparator)) {
                         if (!entry.isBlank()) {
-                            classPath.add(Path.of(entry));
+                            classPath.add(environment.path(entry));
                         }
                     }
                 }
-                case "--with" -> alongside.add(Path.of(valueOf(args, ++at, held)));
+                case "--with" -> alongside.add(environment.path(valueOf(args, ++at, held)));
                 case "--binding" -> {
                     String generator = valueOf(args, ++at, held);
                     Asked asking;
                     try {
-                        asking = Asked.of(generator);
+                        asking = Asked.of(generator, environment);
                     } catch (IllegalArgumentException e) {
                         throw new NotACommand(held + ": " + e.getMessage());
                     }
@@ -454,7 +471,8 @@ public final class Main {
                             .anyMatch(before -> before.asked().equals(standard))) {
                         throw new NotACommand(held + " " + generator + " is named twice");
                     }
-                    named.add(new Named(asking, Path.of(valueOf(args, ++at, held + " " + generator)),
+                    named.add(new Named(asking,
+                            environment.path(valueOf(args, ++at, held + " " + generator)),
                             new LinkedHashMap<>()));
                 }
                 case "--binding-option" -> {
@@ -484,7 +502,7 @@ public final class Main {
                     if (held.startsWith("-")) {
                         throw new NotACommand("no such option: " + held);
                     } else {
-                        sources.add(Path.of(held));
+                        sources.add(environment.path(held));
                     }
                 }
             }

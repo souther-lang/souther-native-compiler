@@ -40,6 +40,13 @@ record GeneratorDescriptor(String id, int api, Set<Integer> abiGenerations) {
                     + " which generator it is");
         }
         Attributes main = manifest.getMainAttributes();
+        // The jar is the bytes that were hashed, and a class path it names beside itself would
+        // have its loader read others that were not.
+        if (main.getValue(Attributes.Name.CLASS_PATH) != null) {
+            throw new NotAGenerator(jar.ref() + " names a " + Attributes.Name.CLASS_PATH
+                    + " in its manifest, and a generator is one jar: what it runs with is in it"
+                    + " or is the API's");
+        }
         String id = attribute(jar, main, BindingApi.ID, ID);
         String api = attribute(jar, main, BindingApi.API, MAJOR);
         String generations = attribute(jar, main, BindingApi.ABI_GENERATIONS, GENERATIONS);

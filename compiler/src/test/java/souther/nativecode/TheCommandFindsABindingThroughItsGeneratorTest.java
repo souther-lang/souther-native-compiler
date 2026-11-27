@@ -368,8 +368,9 @@ class TheCommandFindsABindingThroughItsGeneratorTest {
         } catch (IOException e) {
             throw new java.io.UncheckedIOException(e);
         }
-        int ended = Main.run(args, new PrintStream(printed, true, StandardCharsets.UTF_8),
-                new PrintStream(said, true, StandardCharsets.UTF_8), unreleased(cache));
+        int ended = Main.run(List.of(args), ThisProcess.writing(
+                new PrintStream(printed, true, StandardCharsets.UTF_8),
+                new PrintStream(said, true, StandardCharsets.UTF_8)), unreleased(cache));
         return new Ran(ended, printed.toString(StandardCharsets.UTF_8),
                 said.toString(StandardCharsets.UTF_8));
     }

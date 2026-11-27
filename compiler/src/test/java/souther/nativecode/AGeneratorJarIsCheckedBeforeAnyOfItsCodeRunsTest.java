@@ -67,6 +67,7 @@ class AGeneratorJarIsCheckedBeforeAnyOfItsCodeRunsTest {
         refused.put("an unqualified id", watched().saying(BindingApi.ID, "swift"));
         refused.put("an id with an empty part", watched().saying(BindingApi.ID, "com..kotlin"));
         refused.put("an id in capitals", watched().saying(BindingApi.ID, "com.Acme.kotlin"));
+        refused.put("a class path beside itself", watched().saying("Class-Path", "another.jar"));
         refused.put("no manifest", watched().withNoManifest());
         for (Map.Entry<String, GeneratorJar> each : refused.entrySet()) {
             Path jar = each.getValue().writtenTo(into.resolve(each.getKey() + ".jar"));

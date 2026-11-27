@@ -155,9 +155,14 @@ hands each stage the capabilities of what the stage requires, picked out of its 
 
 A value a module declares runs in that module's object, which is its one home, and another build
 reaches a published value through an entry that object defines for it. What a behavior declares of
-its answer (`ensures`) is held where the checker placed the check: where the behavior answers, for
-one whose body is here, and where the answer crosses into this object's code, for one whose answer
-arrives from outside. An answer that does not keep it ends the run with `EnsuresNotHeld`.
+its answer (`ensures`) is held where the module that declares the behavior placed the check, which
+is the same for every build that calls it: where the behavior answers, for one with a body, and
+where the answer crosses into an object's code, for one whose answer arrives from outside. The rules
+are lowered in the object of the build that declares the behavior and nowhere else, since a rule
+may call what its module keeps to itself. So a behavior with a body is held by that object,
+whichever build calls it, and a behavior a host implements is held at each crossing in every
+object that calls it, by the rules the declaring build's object offers under a symbol of its own.
+An answer that does not keep it ends the run with `EnsuresNotHeld`.
 
 What a call may reach is wider than what the object defines — a body may name a behavior, or a
 type, that a module built before this one declares — so the document says the two apart.

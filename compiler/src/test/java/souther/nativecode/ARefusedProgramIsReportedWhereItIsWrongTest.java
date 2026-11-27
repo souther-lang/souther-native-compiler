@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.List;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -206,8 +207,9 @@ class ARefusedProgramIsReportedWhereItIsWrongTest {
     private static Ran run(String... args) {
         ByteArrayOutputStream printed = new ByteArrayOutputStream();
         ByteArrayOutputStream said = new ByteArrayOutputStream();
-        int ended = Main.run(args, new PrintStream(printed, true, StandardCharsets.UTF_8),
-                new PrintStream(said, true, StandardCharsets.UTF_8));
+        int ended = new Main().run(List.of(args), ThisProcess.writing(
+                new PrintStream(printed, true, StandardCharsets.UTF_8),
+                new PrintStream(said, true, StandardCharsets.UTF_8)));
         return new Ran(ended, printed.toString(StandardCharsets.UTF_8),
                 said.toString(StandardCharsets.UTF_8));
     }

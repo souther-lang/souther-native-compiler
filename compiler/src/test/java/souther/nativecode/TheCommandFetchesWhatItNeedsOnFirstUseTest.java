@@ -7,7 +7,6 @@ import org.junit.jupiter.api.parallel.Isolated;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.PrintStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -19,8 +18,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -86,18 +83,30 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             return URI.create("http://127.0.0.1:" + server.getAddress().getPort() + path);
         }
 
-        /** Serves the generator's jar, and answers the checksum the release carries for it. */
         /**
-         * Serves the generator's jar, and the bundle of the driver this build made as the release's,
-         * and answers the checksums the release carries for them: a release runs its own driver and
-         * no other, so a release a test builds with is one whose driver it fetches.
+         * Serves the generator's jar and a bundle for this platform, and answers the checksums the
+         * release carries for them. The bundle holds a driver that drives nothing: what is asked
+         * with it is which files are fetched and kept, and a test that runs the driver a release
+         * fetched serves the one this build made ({@link #serveTheDriverThisBuildMade}).
          */
         Map<String, String> serveGenerator() throws Exception {
             byte[] jar = jar();
+            byte[] bundle = bundle(Map.of(NativeBundle.DRIVER, "#!/bin/sh\n",
+                    NativeBundle.ARCHIVE, "archive", NativeBundle.REQUIREMENTS, "-lm\n"));
             files.put(JAR, jar);
-            files.put(bundleAt(), BUILT.bundle());
+            files.put(bundleAt(), bundle);
             return Map.of(ReleaseChecksums.generator("php"), Fetching.sha256(jar),
-                    ReleaseChecksums.bundle(NativeBundle.platform()), BUILT.sha256());
+                    ReleaseChecksums.bundle(NativeBundle.platform()), Fetching.sha256(bundle));
+        }
+
+        /**
+         * Serves the driver this build made as the release's bundle, and answers the checksum the
+         * release carries for it: a release runs its own driver and no other, so a release a test
+         * compiles with is one whose driver it fetches.
+         */
+        Map<String, String> serveTheDriverThisBuildMade() throws Exception {
+            files.put(bundleAt(), BUILT.bundle());
+            return Map.of(ReleaseChecksums.bundle(NativeBundle.platform()), BUILT.sha256());
         }
 
         @Override
@@ -134,17 +143,15 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             Map<String, String> checksums = served.serveGenerator();
             Fetching fetching = fetching(served, into.resolve("cache"), VERSION, checksums);
 
-            Ran first = build(into, "first", fetching);
-            Ran second = build(into, "second", fetching);
+            Ran first = asked(into, "first", fetching);
+            Ran second = asked(into, "second", fetching);
 
-            assertThat(first.ended()).as(first.said()).isZero();
+            assertThat(reached(first)).as(first.said()).isTrue();
             assertThat(first.said()).contains("fetching " + served.at(JAR));
-            assertThat(into.resolve("first/out/fetched.txt")).exists();
-            assertThat(second.ended()).as(second.said()).isZero();
-            assertThat(into.resolve("second/out/fetched.txt")).exists();
-            assertThat(served.asked).as("the jar and the driver are asked for once, and nothing beside")
-                    .containsOnlyKeys(JAR, bundleAt()).containsEntry(JAR, 1)
-                    .containsEntry(bundleAt(), 1);
+            assertThat(reached(second)).as(second.said()).isTrue();
+            assertThat(second.said()).doesNotContain("fetching");
+            assertThat(served.asked).as("the jar is asked for once, and nothing beside")
+                    .containsOnlyKeys(JAR).containsEntry(JAR, 1);
             assertThat(kept(into, "php", checksums.get(ReleaseChecksums.generator("php"))))
                     .as("kept under its coordinate and its digest").exists();
         }
@@ -162,14 +169,16 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             Fetching fetching = fetching(served, into.resolve("cache"), VERSION, checksums);
             Path kept = kept(into, "php", checksums.get(ReleaseChecksums.generator("php")));
 
-            assertThat(build(into, "first", fetching).ended()).isZero();
+            Ran first = asked(into, "first", fetching);
+            assertThat(reached(first)).as(first.said()).isTrue();
             Files.write(kept, bytes("changed where it was kept"));
-            Ran offline = build(into, "offline", fetching, "--offline");
-            Ran again = build(into, "again", fetching);
+            Ran offline = asked(into, "offline", fetching, "--offline");
+            Ran again = asked(into, "again", fetching);
 
             assertThat(offline.ended()).isEqualTo(2);
-            assertThat(offline.said()).contains("is not kept, and this is offline");
-            assertThat(again.ended()).as(again.said()).isZero();
+            assertThat(offline.said()).contains("is not kept, and this is offline")
+                    .doesNotContain(FetchedGenerator.ASKED);
+            assertThat(reached(again)).as(again.said()).isTrue();
             assertThat(served.asked).containsEntry(JAR, 2);
             assertThat(Fetching.sha256(Files.readAllBytes(kept)))
                     .isEqualTo(checksums.get(ReleaseChecksums.generator("php")));
@@ -241,17 +250,18 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
             Map<String, String> checksums = served.serveGenerator();
             Fetching fetching = fetching(served, into.resolve("cache"), VERSION, checksums);
 
-            Ran nothingKept = build(into, "a", fetching, "--offline");
-            Ran fetched = build(into, "b", fetching);
-            Ran kept = build(into, "c", fetching, "--offline");
+            Ran nothingKept = asked(into, "a", fetching, "--offline");
+            Ran fetched = asked(into, "b", fetching);
+            Ran kept = asked(into, "c", fetching, "--offline");
 
             assertThat(nothingKept.ended()).isEqualTo(2);
             assertThat(nothingKept.said()).contains("offline")
-                    .contains("org.souther-lang:souther-binding-php:" + VERSION);
+                    .contains("org.souther-lang:souther-binding-php:" + VERSION)
+                    .doesNotContain(FetchedGenerator.ASKED);
             assertThat(served.asked).as("offline asked for nothing, and the fetch once")
-                    .containsEntry(JAR, 1);
-            assertThat(fetched.ended()).as(fetched.said()).isZero();
-            assertThat(kept.ended()).as(kept.said()).isZero();
+                    .containsOnlyKeys(JAR).containsEntry(JAR, 1);
+            assertThat(reached(fetched)).as(fetched.said()).isTrue();
+            assertThat(reached(kept)).as(kept.said()).isTrue();
         }
     }
 
@@ -302,7 +312,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     void fetchIsACommandOfItsOwn() throws Exception {
         for (String[] command : new String[][] {{"--fetch", "--offline"}, {"--fetch", "m.sou"},
                 {"--fetch", "--library", "out"}, {"--fetch", "-o", "a.o"}}) {
-            assertThatThrownBy(() -> Main.read(command)).isInstanceOf(Main.NotACommand.class);
+            assertThatThrownBy(() -> ThisProcess.read(command)).isInstanceOf(Main.NotACommand.class);
         }
     }
 
@@ -618,7 +628,7 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
         Files.writeString(decoy, "#!/bin/sh\ntouch '" + ran + "'\nexit 1\n");
         assertThat(decoy.toFile().setExecutable(true)).isTrue();
         try (Served served = new Served()) {
-            Map<String, String> checksums = served.serveGenerator();
+            Map<String, String> checksums = served.serveTheDriverThisBuildMade();
             Fetching fetching = fetching(served, into.resolve("cache"), VERSION, checksums);
             Path model = Files.createDirectories(into.resolve("model"));
             Files.writeString(model.resolve("money.sou"), MONEY, StandardCharsets.UTF_8);
@@ -687,13 +697,34 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
 
     private static Ran build(Path into, String name, Fetching fetching, String... options)
             throws Exception {
+        return bound(into, name, "Acme", fetching, options);
+    }
+
+    /**
+     * The command as far as the generator it comes to run, and no further: the generator is asked
+     * for a namespace it refuses, so the command ends with what it said ({@link #reached}) before
+     * a driver is fetched or a library built. For a test that asks which jar the command runs,
+     * which is settled by then.
+     */
+    private static Ran asked(Path into, String name, Fetching fetching, String... options)
+            throws Exception {
+        return bound(into, name, FetchedGenerator.STOPPING, fetching, options);
+    }
+
+    /** Whether {@code ran} came to the served generator, which then ended it. */
+    private static boolean reached(Ran ran) {
+        return ran.ended() == 2 && ran.said().contains(FetchedGenerator.ASKED);
+    }
+
+    private static Ran bound(Path into, String name, String namespace, Fetching fetching,
+                             String... options) throws Exception {
         Path model = into.resolve(name + "/model");
         Files.createDirectories(model);
         Files.writeString(model.resolve("money.sou"), MONEY, StandardCharsets.UTF_8);
         String[] command = Stream.concat(Stream.of(options), Stream.of("--library",
                 into.resolve(name + "/native").toString(), "--binding", "php",
-                into.resolve(name + "/out").toString(), "--binding-option", "namespace=Acme",
-                model.toString())).toArray(String[]::new);
+                into.resolve(name + "/out").toString(), "--binding-option",
+                "namespace=" + namespace, model.toString())).toArray(String[]::new);
         return run(fetching, command);
     }
 
@@ -706,8 +737,9 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
     private static Ran run(Fetching fetching, String... command) {
         ByteArrayOutputStream printed = new ByteArrayOutputStream();
         ByteArrayOutputStream said = new ByteArrayOutputStream();
-        int ended = Main.run(command, new PrintStream(printed, true, StandardCharsets.UTF_8),
-                new PrintStream(said, true, StandardCharsets.UTF_8), fetching);
+        int ended = Main.run(List.of(command), ThisProcess.writing(
+                new PrintStream(printed, true, StandardCharsets.UTF_8),
+                new PrintStream(said, true, StandardCharsets.UTF_8)), fetching);
         return new Ran(ended, printed.toString(StandardCharsets.UTF_8),
                 said.toString(StandardCharsets.UTF_8));
     }
@@ -734,27 +766,34 @@ class TheCommandFetchesWhatItNeedsOnFirstUseTest {
         return out.toByteArray();
     }
 
-    /** The driver this build made, bundled as a release bundles it, once for every test here. */
+    /**
+     * The driver this build made, bundled as a release bundles it, for the test that runs it. The
+     * runtime archive beside it stands in for the one a release holds: a driver writing an object
+     * links nothing, and the archive is most of a bundle's bytes, hashed and unpacked each time.
+     */
     private static final Bundled BUILT = new Bundled();
 
     private static final class Bundled {
         private byte[] bundle;
+        private String sha256;
 
         synchronized byte[] bundle() throws IOException {
             if (bundle == null) {
                 Map<String, byte[]> files = new LinkedHashMap<>();
-                for (String name : List.of(NativeBundle.DRIVER, NativeBundle.ARCHIVE,
-                        NativeBundle.REQUIREMENTS)) {
-                    files.put(name, Files.readAllBytes(
-                            Repository.file("native", "target", "debug", name)));
-                }
+                files.put(NativeBundle.DRIVER, Files.readAllBytes(
+                        Repository.file("native", "target", "debug", NativeBundle.DRIVER)));
+                files.put(NativeBundle.ARCHIVE, bytes("archive"));
+                files.put(NativeBundle.REQUIREMENTS, bytes("-lm\n"));
                 bundle = zip(files);
             }
             return bundle;
         }
 
-        String sha256() throws IOException {
-            return Fetching.sha256(bundle());
+        synchronized String sha256() throws IOException {
+            if (sha256 == null) {
+                sha256 = Fetching.sha256(bundle());
+            }
+            return sha256;
         }
     }
 

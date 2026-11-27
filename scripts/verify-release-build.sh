@@ -45,8 +45,8 @@ if [ "$generators" -eq 0 ]; then
     exit 1
 fi
 
-# The compiler, and the backend jar `souther compile --target native` runs, which is the compiler with
-# what it runs with: both are published, and a user of either fetches what these checksums are of.
+# The compiler, and the backend jar `souther compile --target native` loads, which is the compiler
+# with the binding API: both are published, and a user of either fetches what these checksums are of.
 for compiler in "$repository/org/souther-lang/souther-native-compiler/$version/souther-native-compiler-$version.jar" \
         "$repository/org/souther-lang/souther-native-compiler/$version/souther-native-compiler-$version-backend.jar"; do
     if [ ! -f "$compiler" ]; then

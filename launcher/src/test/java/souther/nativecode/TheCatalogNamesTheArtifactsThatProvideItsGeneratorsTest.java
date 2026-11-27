@@ -1,6 +1,7 @@
 package souther.nativecode;
 
 import org.junit.jupiter.api.Test;
+import souther.compiler.command.Environment;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -50,9 +51,10 @@ class TheCatalogNamesTheArtifactsThatProvideItsGeneratorsTest {
 
             Path services = named.getFirst()
                     .resolve("src/main/resources/META-INF/services/souther.bindings.BindingGenerator");
-            Fetching fetching = Fetching.standard();
-            try (Bindings.Generator generator =
-                         Bindings.load(fetching, GeneratorSpec.standard(kind, fetching))) {
+            Environment process = Environment.ofThisProcess();
+            Fetching fetching = Fetching.of(process);
+            try (Bindings.Generator generator = Bindings.load(fetching,
+                    GeneratorSpec.standard(kind, fetching, process))) {
                 assertThat(Files.readAllLines(services)).as("what %s provides", kind.artifact())
                         .containsExactly(generator.implementation());
             }

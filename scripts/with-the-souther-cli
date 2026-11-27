@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Runs a command with $SOUTHER naming a Souther CLI, and this clone's backend jar installed where that
 # CLI looks for one: what `souther compile --target native` is to a user, the CLI choosing the jar by
-# its descriptor and running it as a process of its own, with a clone's build in place of a release.
+# its descriptor and running it in its own JVM, with a clone's build in place of a release.
 #
 # The jar goes into backends/ of a $SOUTHER_HOME of its own, which the CLI searches first. A backend
 # built from a clone is not a release, so it fetches nothing and is told where the driver and the
-# generators this build made are; the CLI passes the environment through and no property, so they
-# reach it in JAVA_TOOL_OPTIONS, which the JVM announces on every start.
+# generators this build made are, by properties of the JVM it runs in. That JVM is the CLI's, which
+# its launcher starts with no property of the caller's, so they reach it in JAVA_TOOL_OPTIONS, which
+# the JVM announces on every start.
 #
 # usage: scripts/with-the-souther-cli <souther> <command> [<argument>...]
 #   e.g. scripts/with-the-souther-cli ~/souther/souther-cli/target/souther scripts/rust-cart-example.sh

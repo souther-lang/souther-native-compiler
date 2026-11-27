@@ -80,10 +80,11 @@ use souther_native_abi::{
     STRING_STARTS_WITH, STRING_TO_DECIMAL, STRING_TO_INT, STRING_TRIM, STRING_UPPERCASE,
     STRING_WORDS, Status, TIME_COMPARE, TIME_FROM_PARTS, TIME_HASH, TIME_HOUR, TIME_LITERAL,
     TIME_MINUTE, TIME_SECOND, TOKEN, WHICH, Word, behavior_symbol, boundary_symbol,
-    built_in_case_symbol, checked_constructor_symbol, constructor_symbol, example_symbol, field_at,
-    generated_call, held_symbol, home_symbol, list_at, member_at, requirement_at,
-    room_for_capability, room_for_carried, room_for_fields, room_for_list, room_for_members,
-    room_for_requirements, spells_a_module, spells_a_name, type_symbol, value_symbol,
+    built_in_case_symbol, checked_constructor_symbol, constructor_symbol, ensures_symbol,
+    example_symbol, field_at, generated_call, held_symbol, home_symbol, list_at, member_at,
+    requirement_at, room_for_capability, room_for_carried, room_for_fields, room_for_list,
+    room_for_members, room_for_requirements, spells_a_module, spells_a_name, type_symbol,
+    value_symbol,
 };
 use specialize::{Instance, InstanceId, Specializations};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -681,22 +682,24 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
             reachable.behavior(&target.declared(), id);
         }
 
-        // What holds the answer to what the behavior declares of it, one for each behavior that
-        // declares something here: private to this object, since the rules are this object's
-        // modules' and a caller elsewhere is held by its own build. Where it is held at the
-        // callee, the body moves under a name of its own and the behavior's symbol is what runs it
-        // and then holds its answer, so that a call, a stage, a row, a host and a boundary all go
-        // through the one place the answer is held.
-        if target.ensures.contract().is_some() {
-            let name = target.declared();
-            let holding = holding_signature(&target.takes(), &target.answers(), call_conv)?;
-            let rules = accepted(module.declare_function(
-                &format!("$ensures${name}"),
-                Linkage::Local,
-                &holding,
-            ));
-            reachable.rules(&name, rules);
-            if let Ensures::Callee { .. } = target.ensures {
+        // What holds the answer to what the behavior declares of it, one for each behavior whose
+        // answer something in this object holds. The rules are the declaring module's and are
+        // defined in the object that builds it, so who reaches them follows where the answer is
+        // held.
+        let name = target.declared();
+        let holding = || holding_signature(&target.takes(), &target.answers(), call_conv);
+        match target.ensures {
+            // Held at the callee, which is here: the body moves under a name of its own and the
+            // behavior's symbol is what runs it and then holds its answer, so that a call, a
+            // stage, a row, a host and a boundary all go through the one place the answer is held.
+            // Nothing outside this object holds it, so the rules are private to it.
+            Ensures::Callee { .. } => {
+                let rules = accepted(module.declare_function(
+                    &format!("$ensures${name}"),
+                    Linkage::Local,
+                    &holding()?,
+                ));
+                reachable.rules(&name, rules);
                 let unheld = accepted(module.declare_function(
                     &format!("$unheld${name}"),
                     Linkage::Local,
@@ -704,6 +707,29 @@ fn emit(program: &Program, coherent: Coherent, mut module: ObjectModule) -> Lowe
                 ));
                 reachable.unheld(&name, unheld);
             }
+            // Held wherever the answer crosses in, which is in every object that calls the
+            // behavior. This object defines the rules and offers them; `crosses_objects` was
+            // asked of it above, as of every behavior a host answers.
+            Ensures::Crossing { .. } => {
+                let rules = accepted(module.declare_function(
+                    &ensures_symbol(&target.module, &target.name),
+                    Linkage::Export,
+                    &holding()?,
+                ));
+                reachable.rules(&name, rules);
+            }
+            // The same, of a behavior another build declares: that build's object defines the
+            // rules, and this one calls them at its own crossings.
+            Ensures::CrossingElsewhere => {
+                crosses_objects(target)?;
+                let rules = accepted(module.declare_function(
+                    &ensures_symbol(&target.module, &target.name),
+                    Linkage::Import,
+                    &holding()?,
+                ));
+                reachable.rules(&name, rules);
+            }
+            Ensures::None | Ensures::CalleeElsewhere => {}
         }
     }
     // Every copy of a helper, each under where the helper stands. Held and not exported: a
@@ -4603,16 +4629,16 @@ fn call_behavior(
         }
     };
     match target.ensures {
-        Ensures::Crossing { .. } => {
+        // An answer from outside, held here where it crosses in, whichever build declares the
+        // behavior: by this object's rules, or by the ones the declaring build's object offers.
+        Ensures::Crossing { .. } | Ensures::CrossingElsewhere => {
             let rules = lowering.reachable.of_rules(declared);
             hold(builder, module, abort, rules, arguments, answer);
         }
-        // Held by the callee, on its way out: every way in reaches its symbol, which holds it.
-        Ensures::Callee { .. } => {}
+        // Held by the callee, on its way out: every way in reaches its symbol, which holds it,
+        // in this object or in the one of the build that declares it.
+        Ensures::Callee { .. } | Ensures::CalleeElsewhere => {}
         Ensures::None => {}
-        // Another build's behavior, whose clause nothing in this compile runs: what is done about
-        // it is not decided here, and a check made up here would be this compile deciding it.
-        Ensures::Undecided => {}
     }
     Ok(answer)
 }
