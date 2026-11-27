@@ -53,7 +53,6 @@
         <jspecify.version>1.0.0</jspecify.version>
         <junit.version>5.14.0</junit.version>
         <assertj.version>3.27.6</assertj.version>
-        <jackson.version>3.2.2</jackson.version>
         <!-- What every file a jar holds is dated, so that building the same sources twice writes the same
              jar. The release embeds the checksum of each generator's jar in the compiler, and what it
              publishes has to be what it checksummed. -->
@@ -107,23 +106,20 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-            <!-- Souther's own versions: of its modules, and of what they share a class path with here
-                 and inside the backend jar, Raoh and notation-199x (which writes a pattern's machine as
-                 the image the runtime reads with the Rust crate of the same repository). A version of
-                 one of those that is not Souther's puts two releases of a library under one Souther, so
-                 none is written here: they are what the Souther named by souther.version manages, and
-                 move with it. -->
+            <!-- Souther's own versions: of its modules, and of the libraries the backend uses beside
+                 them, Jackson, Raoh and notation-199x (which writes a pattern's machine as the image
+                 the runtime reads with the Rust crate of the same repository). The backend's jar
+                 holds none of them: the souther command line loads it beside its own compiler, and
+                 the backend runs with the libraries that compiler runs with. So none has a version
+                 written here: they are what the Souther named by souther.version manages, and a
+                 version of this build's own would be one the backend is tested with and never run
+                 with. -->
             <dependency>
                 <groupId>org.souther-lang</groupId>
                 <artifactId>souther-parent</artifactId>
                 <version>${souther.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
-            </dependency>
-            <dependency>
-                <groupId>tools.jackson.core</groupId>
-                <artifactId>jackson-databind</artifactId>
-                <version>${jackson.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

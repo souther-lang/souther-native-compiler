@@ -13,7 +13,7 @@
 
     <artifactId>souther-native-launcher</artifactId>
     <name>Souther Native Launcher</name>
-    <description>The command as a clone runs it: the compiler, handed the jars of the PHP, the Rust and the Go generator this build made, which it loads as it loads any generator's jar. Not published.</description>
+    <description>The command as a clone runs it: what starts the compiler's command where the souther command line would, handed the jars of the PHP, the Rust and the Go generator this build made, which it loads as it loads any generator's jar. Not published.</description>
 
     <properties>
         <!-- What the release publishes is what a user of the compiler fetches, and a launcher is what a
@@ -61,17 +61,17 @@
                         <souther.generator.php>${maven.multiModuleProjectDirectory}/bindings/php/generator/target/souther-binding-php-${project.version}.jar</souther.generator.php>
                         <souther.generator.rust>${maven.multiModuleProjectDirectory}/bindings/rust/generator/target/souther-binding-rust-${project.version}.jar</souther.generator.rust>
                         <souther.generator.go>${maven.multiModuleProjectDirectory}/bindings/go/generator/target/souther-binding-go-${project.version}.jar</souther.generator.go>
-                        <!-- The backend jar the compiler's module attaches, which a test runs as the CLI
-                             runs it, and the version it is to say it is. -->
+                        <!-- The backend jar the compiler's module attaches, which a test loads as the CLI
+                             loads it, and the version it is to say it is. -->
                         <souther.backend.jar>${maven.multiModuleProjectDirectory}/compiler/target/souther-native-compiler-${project.version}-backend.jar</souther.backend.jar>
                         <souther.native.version>${project.version}</souther.native.version>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>
             <!-- What the command runs with, written down for `scripts/souther-native`: the compiler as
-                 this build has it, and what it needs, and no generator. A launcher that is a set of
-                 dependencies has nothing to package, and the command is run from where the modules
-                 are built rather than from an installed copy of them. -->
+                 this build has it, and what it needs, and no generator. The script puts this module's
+                 own classes before it, which hold what starts the command, and the command is run
+                 from where the modules are built rather than from an installed copy of them. -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-dependency-plugin</artifactId>

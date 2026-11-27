@@ -117,7 +117,7 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
 
     @Test
     void aCommandIsReadAsTheOutputItNames() throws Exception {
-        Main.Command command = Main.read(new String[]{"-cp", "a" + File.pathSeparator + "b",
+        Main.Command command = ThisProcess.read(new String[]{"-cp", "a" + File.pathSeparator + "b",
                 "--library", "out", "--with", "x.o", "--with", "y.o", "--binding", "php", "php",
                 "--binding-option", "namespace=N", "m.sou"});
 
@@ -133,7 +133,7 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
      */
     @Test
     void aCommandAsksForEachBindingItNames() throws Exception {
-        Main.Command command = Main.read(new String[]{"--library", "out", "--binding", "rust",
+        Main.Command command = ThisProcess.read(new String[]{"--library", "out", "--binding", "rust",
                 "rust", "--binding-option", "crate=acme", "--binding", "go", "go",
                 "--binding-option", "package=example.com/shop", "--binding", "php", "php",
                 "--binding-option", "namespace=Acme\\Shop", "m.sou"});
@@ -147,7 +147,7 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
     /** A generator of someone else's takes its place among the catalog's where the line names it. */
     @Test
     void aBindingOfSomeoneElsesKeepsItsPlaceAmongTheCatalogs() throws Exception {
-        Main.Command command = Main.read(new String[]{"--library", "out", "--binding", "go", "go",
+        Main.Command command = ThisProcess.read(new String[]{"--library", "out", "--binding", "go", "go",
                 "--binding-option", "package=example.com/shop", "--binding", "build/kotlin.jar",
                 "kotlin", "--binding", "php", "php", "--binding-option", "namespace=N", "m.sou"});
 
@@ -199,7 +199,7 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
     @Test
     void aBindingIsReadWithTheOptionsThatFollowIt() throws Exception {
         String digest = "ab".repeat(32);
-        Main.Command command = Main.read(new String[]{"--library", "out",
+        Main.Command command = ThisProcess.read(new String[]{"--library", "out",
                 "--binding", "com.acme:souther-binding-kotlin:1.2.0@sha256:" + digest, "kotlin",
                 "--binding-option", "package=com.acme.shop", "--binding-option", "style=a=b",
                 "--binding", "build/generator.jar", "local",
@@ -264,7 +264,7 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
 
     /** Refused, and told why before the usage: a refusal that says only the usage says nothing. */
     private static void refused(String what, String... args) {
-        assertThatThrownBy(() -> Main.read(args)).as(what).isInstanceOf(Main.NotACommand.class);
+        assertThatThrownBy(() -> ThisProcess.read(args)).as(what).isInstanceOf(Main.NotACommand.class);
         Ran ran = run(args);
         assertThat(ran.ended()).as(what).isEqualTo(2);
         assertThat(ran.said()).as(what).doesNotStartWith("usage:").contains("\nusage: ");
@@ -282,8 +282,9 @@ class TheCommandLineBuildsALibraryAndItsBindingTest {
     private static Ran run(String... args) {
         ByteArrayOutputStream printed = new ByteArrayOutputStream();
         ByteArrayOutputStream said = new ByteArrayOutputStream();
-        int ended = Main.run(args, new PrintStream(printed, true, StandardCharsets.UTF_8),
-                new PrintStream(said, true, StandardCharsets.UTF_8));
+        int ended = new Main().run(List.of(args), ThisProcess.writing(
+                new PrintStream(printed, true, StandardCharsets.UTF_8),
+                new PrintStream(said, true, StandardCharsets.UTF_8)));
         return new Ran(ended, printed.toString(StandardCharsets.UTF_8),
                 said.toString(StandardCharsets.UTF_8));
     }

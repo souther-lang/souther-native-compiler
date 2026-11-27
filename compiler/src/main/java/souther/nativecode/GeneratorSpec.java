@@ -1,6 +1,6 @@
 package souther.nativecode;
 
-import java.nio.file.Path;
+import souther.compiler.command.Environment;
 
 /**
  * A generator as the command is to run it, whichever way it was asked for: the jar, and which
@@ -21,9 +21,10 @@ record GeneratorSpec(GeneratorRef ref, IdRule rule, String display) {
     static final String DEVELOPMENT_PROPERTY = "souther.generator.";
 
     /** What {@code asked} is run as, in the build {@code fetching} is of. */
-    static GeneratorSpec of(Main.Asked asked, Fetching fetching) throws NotFetched {
+    static GeneratorSpec of(Main.Asked asked, Fetching fetching, Environment environment)
+            throws NotFetched {
         return switch (asked) {
-            case Main.Asked.Standard standard -> standard(standard.kind(), fetching);
+            case Main.Asked.Standard standard -> standard(standard.kind(), fetching, environment);
             case Main.Asked.External external -> new GeneratorSpec(external.ref(),
                     new IdRule.External(), "the generator " + external.ref());
         };
@@ -32,21 +33,23 @@ record GeneratorSpec(GeneratorRef ref, IdRule rule, String display) {
     /**
      * The generator of {@code kind}: in a release, the artifact the catalog names at this compiler's
      * version, held to the SHA-256 the release carries for it; in a build that is not one, the jar
-     * named by {@value #DEVELOPMENT_PROPERTY}{@code <id>}.
+     * named by {@value #DEVELOPMENT_PROPERTY}{@code <id>} among {@code environment}'s properties.
      */
-    static GeneratorSpec standard(KnownBindings.Kind kind, Fetching fetching) throws NotFetched {
+    static GeneratorSpec standard(KnownBindings.Kind kind, Fetching fetching,
+                                  Environment environment) throws NotFetched {
         IdRule rule = new IdRule.Exactly(kind.id());
         String display = "the " + kind.display() + " generator";
         if (!fetching.isRelease()) {
             String version = fetching.version();
-            String named = System.getProperty(DEVELOPMENT_PROPERTY + kind.id());
+            String named = environment.property(DEVELOPMENT_PROPERTY + kind.id());
             if (named == null) {
                 throw new NotFetched("--binding " + kind.id() + " needs " + display + ", and this is not a release"
                         + (version == null ? "" : " (" + version + ")") + ", so there is none to"
                         + " fetch: a clone names the jar its build made with -D"
                         + DEVELOPMENT_PROPERTY + kind.id() + ", as scripts/souther-native does");
             }
-            return new GeneratorSpec(new GeneratorRef.Local(Path.of(named)), rule, display);
+            return new GeneratorSpec(new GeneratorRef.Local(environment.path(named)), rule,
+                    display);
         }
         String version = fetching.release();
         String sha256 = fetching.checksums().get(ReleaseChecksums.generator(kind.id()));

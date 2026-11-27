@@ -1,5 +1,7 @@
 package souther.nativecode;
 
+import souther.compiler.command.Environment;
+
 import java.nio.file.Path;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -47,11 +49,12 @@ sealed interface GeneratorRef {
      * What {@code --binding} names when it is not an id of the catalog, which is one of two forms that
      * cannot be taken for each other: a path to a jar, which ends in {@code .jar}, whatever else it
      * holds; or {@code groupId:artifactId:version@sha256:<hex>}, which cannot end so. Anything else is
-     * refused, a coordinate without its digest among it, since nothing is trusted on first use.
+     * refused, a coordinate without its digest among it, since nothing is trusted on first use. A
+     * path is read as {@code environment} reads one.
      */
-    static GeneratorRef parse(String named) {
+    static GeneratorRef parse(String named, Environment environment) {
         if (named.endsWith(".jar")) {
-            return new Local(Path.of(named));
+            return new Local(environment.path(named));
         }
         Matcher coordinate = COORDINATE.matcher(named);
         if (coordinate.matches()) {

@@ -3,6 +3,7 @@ package souther.nativecode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import souther.compiler.Compiler;
+import souther.compiler.command.Environment;
 import souther.compiler.jvm.ClassFileImage;
 
 import java.io.ByteArrayOutputStream;
@@ -10,6 +11,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,10 +56,11 @@ class TheLauncherWritesTheBindingsItFindsTest {
      */
     @Test
     void everyBindingTheCatalogNamesIsAJarThisBuildMade() throws Exception {
-        Fetching fetching = Fetching.standard();
+        Environment process = Environment.ofThisProcess();
+        Fetching fetching = Fetching.of(process);
         for (KnownBindings.Kind kind : KnownBindings.all()) {
-            try (Bindings.Generator generator =
-                         Bindings.load(fetching, GeneratorSpec.standard(kind, fetching))) {
+            try (Bindings.Generator generator = Bindings.load(fetching,
+                    GeneratorSpec.standard(kind, fetching, process))) {
                 assertThat(generator.id()).isEqualTo(kind.id());
                 assertThat(generator.implementation()).isNotBlank();
                 assertThatThrownBy(() -> Class.forName(Main.class.getName(), false,
@@ -185,8 +188,11 @@ class TheLauncherWritesTheBindingsItFindsTest {
     private static Ran run(String... args) {
         ByteArrayOutputStream printed = new ByteArrayOutputStream();
         ByteArrayOutputStream said = new ByteArrayOutputStream();
-        int ended = Main.run(args, new PrintStream(printed, true, StandardCharsets.UTF_8),
-                new PrintStream(said, true, StandardCharsets.UTF_8));
+        Environment process = Environment.ofThisProcess();
+        int ended = new Main().run(List.of(args), new Environment(process.variables(),
+                process.properties(), process.workingDirectory(), process.in(),
+                new PrintStream(printed, true, StandardCharsets.UTF_8),
+                new PrintStream(said, true, StandardCharsets.UTF_8), false, process.today()));
         return new Ran(ended, printed.toString(StandardCharsets.UTF_8),
                 said.toString(StandardCharsets.UTF_8));
     }
